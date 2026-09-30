@@ -30,11 +30,19 @@ export class SocketManager {
       cors: { origin: '*', methods: ['GET', 'POST'] }
     });
 
-    const pubClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-    const subClient = pubClient.duplicate();
+    try {
+      const pubClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+      const subClient = pubClient.duplicate();
 
-    await Promise.all([pubClient.connect(), subClient.connect()]);
-    this.io.adapter(createAdapter(pubClient, subClient));
+      pubClient.on('error', () => {});
+      subClient.on('error', () => {});
+
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      this.io.adapter(createAdapter(pubClient, subClient));
+      console.log('✅ [SocketManager] Redis adapter connected successfully.');
+    } catch (err) {
+      console.warn('⚠️ [SocketManager] Redis is not available locally. Running Socket.IO with built-in in-memory adapter.');
+    }
 
     this.gameService.setSocketServer(this.io);
 

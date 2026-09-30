@@ -14,8 +14,12 @@ export class RedisService {
 
   public async connect(): Promise<void> {
     if (!this.client.isOpen) {
-      await this.client.connect();
-      console.log('Redis connected for operations');
+      try {
+        await this.client.connect();
+        console.log('Redis connected for operations');
+      } catch (err: any) {
+        console.warn('⚠️ [Redis] Redis server is not running locally. Running in memory fallback mode.');
+      }
     }
   }
 
