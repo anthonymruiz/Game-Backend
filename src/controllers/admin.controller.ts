@@ -1,92 +1,150 @@
 import { Request, Response } from 'express';
 import { injectable } from 'tsyringe';
-import { AppDataSource } from '../config/database.config.js';
-import { User } from '../models/user.entity.js';
-import { MatchHistory } from '../models/match-history.entity.js';
+import { AdminService } from '../services/admin.service.js';
 
 @injectable()
 export class AdminController {
-  
-  public async getMetrics(req: Request, res: Response) {
+  constructor(private adminService: AdminService) {}
+
+  public getMetrics = async (req: Request, res: Response): Promise<void> => {
     try {
-      const userRepo = AppDataSource.getRepository(User);
-      const matchRepo = AppDataSource.getRepository(MatchHistory);
-
-      const totalUsers = await userRepo.count();
-      const totalMatches = await matchRepo.count();
-      
-      const onlineUsers = Math.floor(Math.random() * 100); // Mocked for simplicity right now
-
-      return res.status(200).json({
-        totalUsers,
-        totalMatches,
-        onlineUsers
-      });
-    } catch (error) {
-      return res.status(500).json({ message: 'Internal server error' });
+      const metrics = await this.adminService.getMetrics();
+      res.status(200).json(metrics);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
     }
-  }
+  };
 
-  public async getUsers(req: Request, res: Response) {
+  public getUsers = async (req: Request, res: Response): Promise<void> => {
     try {
-      const currentUser = req.user!;
-      const userRepo = AppDataSource.getRepository(User);
-      
-      let users = await userRepo.find({
-        select: ['id', 'username', 'email', 'role', 'createdAt']
-      });
+      const currentUserRole = req.user!.role;
+      const roleFilter = req.query.role as string;
+      const presenceFilter = req.query.presenceStatus as string;
 
-      if (currentUser.role === 'admin') {
-        // Admins cannot see other admins or superadmins
-        users = users.filter(u => u.role === 'user');
-      }
+      const paginationOptions = {
+        page: Number(req.query.page) || 1,
+        limit: Number(req.query.limit) || 10,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+      };
 
-      return res.status(200).json(users);
-    } catch (error) {
-      return res.status(500).json({ message: 'Internal server error' });
+      const result = await this.adminService.getUsers(currentUserRole, roleFilter, presenceFilter, paginationOptions);
+      res.status(200).json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
     }
-  }
+  };
 
-  public async banUser(req: Request, res: Response) {
+  public getReports = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { id } = req.params;
-      const userRepo = AppDataSource.getRepository(User);
-      const targetUser = await userRepo.findOne({ where: { id }});
-      
-      if (!targetUser) return res.status(404).json({ message: 'User not found' });
-      
-      if (targetUser.role === 'superadmin' || targetUser.role === 'admin') {
-        return res.status(403).json({ message: 'Cannot ban admins' });
-      }
+      const statusFilter = req.query.status as string;
+      const categoryFilter = req.query.category as string;
 
-      targetUser.role = 'banned'; 
-      await userRepo.save(targetUser);
+      const paginationOptions = {
+        page: Number(req.query.page) || 1,
+        limit: Number(req.query.limit) || 10,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+      };
 
-      return res.status(200).json({ message: 'User banned' });
-    } catch (error) {
-      return res.status(500).json({ message: 'Internal server error' });
+      const result = await this.adminService.getReports(statusFilter, categoryFilter, paginationOptions);
+      res.status(200).json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
     }
-  }
+  };
 
-  public async createAdmin(req: Request, res: Response) {
+  public getMatches = async (req: Request, res: Response): Promise<void> => {
     try {
-      const currentUser = req.user!;
-      if (currentUser.role !== 'superadmin') {
-        return res.status(403).json({ message: 'Only superadmin can create admins' });
-      }
+      const modeFilter = req.query.mode as string;
 
+      const paginationOptions = {
+        page: Number(req.query.page) || 1,
+        limit: Number(req.query.limit) || 10,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+      };
+
+      const result = await this.adminService.getMatches(modeFilter, paginationOptions);
+      res.status(200).json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public getSettings = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const settings = this.adminService.getSystemSettings();
+      res.status(200).json(settings);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public updateSettings = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const updated = this.adminService.updateSystemSettings(req.body);
+      res.status(200).json({ message: 'Settings updated successfully', settings: updated });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public banUser = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const id = req.params.id as string;
+      await this.adminService.banUser(id);
+      res.status(200).json({ message: 'User banned successfully' });
+    } catch (error: any) {
+      const status = error.message.includes('not found') ? 404 : error.message.includes('Cannot ban') ? 403 : 400;
+      res.status(status).json({ message: error.message });
+    }
+  };
+
+  public unbanUser = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const id = req.params.id as string;
+      await this.adminService.unbanUser(id);
+      res.status(200).json({ message: 'User unbanned successfully' });
+    } catch (error: any) {
+      const status = error.message.includes('not found') ? 404 : 400;
+      res.status(status).json({ message: error.message });
+    }
+  };
+
+  public createAdmin = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const currentUserId = req.user!.sub || req.user!.id;
+      const currentUserRole = req.user!.role;
       const { id } = req.body;
-      const userRepo = AppDataSource.getRepository(User);
-      const targetUser = await userRepo.findOne({ where: { id }});
 
-      if (!targetUser) return res.status(404).json({ message: 'User not found' });
-      
-      targetUser.role = 'admin';
-      await userRepo.save(targetUser);
-
-      return res.status(200).json({ message: 'User promoted to admin' });
-    } catch (error) {
-      return res.status(500).json({ message: 'Internal server error' });
+      await this.adminService.promoteToAdmin(currentUserId, currentUserRole, id);
+      res.status(200).json({ message: 'User promoted to admin' });
+    } catch (error: any) {
+      const status = error.message.includes('Only superadmin') ? 403 : error.message.includes('not found') ? 404 : 400;
+      res.status(status).json({ message: error.message });
     }
-  }
+  };
+
+  public getActiveUsers = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const activeUsers = await this.adminService.getActiveUsers();
+      res.status(200).json(activeUsers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public getUserReports = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.params.userId as string;
+      const reports = await this.adminService.getUserReports(userId);
+      res.status(200).json(reports);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
 }

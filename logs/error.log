@@ -1,0 +1,1 @@
+2026-09-29 22:52:01 [ERROR]: [GET] /api/notifications - Undefined value encountered in nested relation 'Notification.user' of a where condition. All properties of the nested object are undefined. Set 'invalidWhereValuesBehavior.undefined' to 'ignore' in connection options to skip properties with undefined values.

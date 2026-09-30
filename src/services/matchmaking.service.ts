@@ -2,7 +2,7 @@ import { singleton, inject } from 'tsyringe';
 import { RedisService } from './redis.service.js';
 import { v4 as uuidv4 } from 'uuid';
 
-export type GameMode = '1v1' | '4way' | '2v2';
+export type GameMode = '1v1' | '2v2' | '4way' | '4-FFA' | '6-FFA' | '6-3v3';
 
 @singleton()
 export class MatchmakingService {
@@ -17,7 +17,10 @@ export class MatchmakingService {
       await client.rPush(queueKey, userId);
     }
 
-    const requiredPlayers = mode === '1v1' ? 2 : 4;
+    let requiredPlayers = 2;
+    if (mode === '2v2' || mode === '4way' || mode === '4-FFA') requiredPlayers = 4;
+    if (mode === '6-FFA' || mode === '6-3v3') requiredPlayers = 6;
+
     const currentLen = await client.lLen(queueKey);
 
     if (currentLen >= requiredPlayers) {
@@ -33,7 +36,7 @@ export class MatchmakingService {
         players: JSON.stringify(players),
         status: 'starting'
       });
-      await client.expire(`match:${matchId}`, 3600); // 1 hour TTL
+      await client.expire(`match:${matchId}`, 3600);
       
       return matchId;
     }

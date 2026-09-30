@@ -17,7 +17,7 @@ export class GameLogService {
       for (const playerId of allPlayers) {
         const user = await queryRunner.manager.findOne(User, { 
           where: { id: playerId },
-          relations: ['stats']
+          relations: { stats: true }
         });
 
         if (!user) continue;

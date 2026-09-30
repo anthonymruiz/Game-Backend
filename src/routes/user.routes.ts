@@ -1,23 +1,13 @@
 import { Router } from 'express';
-import { AppDataSource } from '../config/database.config.js';
-import { User } from '../models/user.entity.js';
+import { container } from 'tsyringe';
+import { UserController } from '../controllers/user.controller.js';
 import { requireAuth } from '../middlewares/role.middleware.js';
 
-export const userRoutes = Router();
+export const userRoutes: Router = Router();
+const userController = container.resolve(UserController);
 
-userRoutes.put('/preferences', requireAuth, async (req, res) => {
-  try {
-    const userRepo = AppDataSource.getRepository(User);
-    const user = await userRepo.findOne({ where: { id: req.user!.id }, relations: ['preferences'] });
-    if (user && user.preferences) {
-      user.preferences.language = req.body.language || user.preferences.language;
-      if (req.body.fcmToken) {
-        user.preferences.fcmToken = req.body.fcmToken;
-      }
-      await userRepo.save(user);
-    }
-    return res.status(200).json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ error: 'Server error' });
-  }
-});
+userRoutes.put('/profile', requireAuth, userController.updateProfile);
+userRoutes.put('/preferences', requireAuth, userController.updatePreferences);
+userRoutes.get('/leaderboard', userController.getLeaderboard);
+
+export default userRoutes;

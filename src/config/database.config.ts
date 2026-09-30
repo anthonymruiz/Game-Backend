@@ -8,6 +8,8 @@ import { Stats } from '../models/stats.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { Ban } from '../models/ban.entity.js';
 import { Notification } from '../models/notification.entity.js';
+import { Report } from '../models/report.entity.js';
+import { SystemSettings } from '../models/system-settings.entity.js';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -16,9 +18,9 @@ export const AppDataSource = new DataSource({
   username: ENV.DB.USER,
   password: ENV.DB.PASS,
   database: ENV.DB.NAME,
-  synchronize: true, // Code-first approach: Auto-create tables on launch
+  synchronize: false,
   logging: ENV.NODE_ENV === 'development',
-  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification],
-  migrations: ['src/migrations/**/*.ts'],
+  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings],
+  migrations: ['dist/migrations/**/*.js', 'src/migrations/**/*.ts'],
   subscribers: [],
 });

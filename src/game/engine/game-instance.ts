@@ -1,6 +1,7 @@
 import { Board } from './board.js';
 import { Player, Wall } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
+import { IRoomPlayer } from '../../services/room.service.js';
 
 export class GameInstance {
   public id: string;
@@ -13,26 +14,58 @@ export class GameInstance {
   public winner: string | null = null;
   
   private turnTimer: NodeJS.Timeout | null = null;
-  
   public onStateChange: (event: string, data: any) => void;
 
-  constructor(id: string, mode: GameMode, players: string[], onStateChange: (event: string, data: any) => void) {
+  constructor(id: string, mode: GameMode, roomPlayers: IRoomPlayer[], onStateChange: (event: string, data: any) => void) {
     this.id = id;
     this.mode = mode;
     this.onStateChange = onStateChange;
 
-    const size = mode === '1v1' ? 11 : 11;
+    const size = 11; // Always 11x11
     this.board = new Board(size);
     
-    players.forEach((p, idx) => {
-      this.playersList.push(p);
-      const isTop = idx % 2 === 0;
-      const startY = isTop ? 0 : size - 1;
-      const targetY = isTop ? size - 1 : 0;
-      const startX = Math.floor(size / 2);
+    roomPlayers.forEach((p, idx) => {
+      this.playersList.push(p.id);
+
+      let startX = 5;
+      let startY = 0;
+      let targetY: number | undefined;
+      let targetX: number | undefined;
+
+      if (idx === 0) {
+        // Top side -> Target Bottom
+        startX = 5; startY = 0; targetY = size - 1;
+      } else if (idx === 1) {
+        // Bottom side -> Target Top
+        startX = 5; startY = size - 1; targetY = 0;
+      } else if (idx === 2) {
+        // Left side -> Target Right
+        startX = 0; startY = 5; targetX = size - 1;
+      } else if (idx === 3) {
+        // Right side -> Target Left
+        startX = size - 1; startY = 5; targetX = 0;
+      } else if (idx === 4) {
+        // Top-Left corner -> Target Bottom-Right
+        startX = 0; startY = 0; targetY = size - 1;
+      } else if (idx === 5) {
+        // Bottom-Right corner -> Target Top-Left
+        startX = size - 1; startY = size - 1; targetY = 0;
+      }
       
       const walls = mode === '1v1' ? 10 : 5;
-      const playerObj = new Player(p, `Player ${idx+1}`, startX, startY, targetY, walls, 0);
+      const playerObj = new Player(
+        p.id,
+        p.username,
+        p.isGuest,
+        startX,
+        startY,
+        targetY,
+        targetX,
+        walls,
+        0,
+        p.color,
+        p.team
+      );
       this.board.addPlayer(playerObj);
     });
   }
@@ -41,6 +74,38 @@ export class GameInstance {
     this.state = 'playing';
     this.startTurnTimer();
     this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board });
+    this.checkTriggerBotTurn();
+  }
+
+  private checkTriggerBotTurn() {
+    const currentId = this.getCurrentPlayer();
+    if (currentId && currentId.startsWith('bot_')) {
+      setTimeout(() => {
+        this.executeBotTurn();
+      }, 500);
+    }
+  }
+
+  private executeBotTurn() {
+    if (this.state !== 'playing') return;
+    const botId = this.getCurrentPlayer();
+    if (!botId || !botId.startsWith('bot_')) return;
+
+    const bestMove = this.board.getBestMove(botId);
+    if (bestMove) {
+      this.executeMove(botId, bestMove.x, bestMove.y);
+    } else {
+      const p = this.board.players.get(botId);
+      if (p) {
+        const neighbors = [
+          { x: p.x + 1, y: p.y }, { x: p.x - 1, y: p.y },
+          { x: p.x, y: p.y + 1 }, { x: p.x, y: p.y - 1 }
+        ];
+        for (const n of neighbors) {
+          if (this.executeMove(botId, n.x, n.y)) break;
+        }
+      }
+    }
   }
 
   private startTurnTimer() {
@@ -49,11 +114,30 @@ export class GameInstance {
     this.turnTimer = setTimeout(() => {
       this.handleTimeout();
     }, 30000); // 30 seconds turn limit
+    if (this.turnTimer && typeof this.turnTimer.unref === 'function') {
+      this.turnTimer.unref();
+    }
+  }
+
+  public stopTurnTimer() {
+    if (this.turnTimer) {
+      clearTimeout(this.turnTimer);
+      this.turnTimer = null;
+    }
+  }
+
+  public destroy() {
+    this.stopTurnTimer();
+    this.state = 'finished';
   }
 
   private handleTimeout() {
     const pId = this.getCurrentPlayer();
-    const player = this.board.players.get(pId)!;
+    const player = this.board.players.get(pId);
+    if (!player) {
+      this.nextTurn();
+      return;
+    }
     
     player.strikes++;
     this.onStateChange('playerStrike', { playerId: pId, strikes: player.strikes });
@@ -66,18 +150,19 @@ export class GameInstance {
   }
 
   public nextTurn() {
+    if (this.playersList.length === 0) return;
     this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
     this.startTurnTimer();
     
-    // Spawn boost randomly occasionally
     if (Math.random() < 0.1) {
       this.board.spawnRandomBoost();
     }
 
     this.onStateChange('turnChanged', { currentTurn: this.getCurrentPlayer(), board: this.board });
+    this.checkTriggerBotTurn();
   }
 
-  private getCurrentPlayer() {
+  public getCurrentPlayer() {
     return this.playersList[this.currentTurnIndex];
   }
 
@@ -124,8 +209,14 @@ export class GameInstance {
   }
 
   private checkWinCondition(playerId: string) {
-    const player = this.board.players.get(playerId)!;
-    if (player.y === player.targetY) {
+    const player = this.board.players.get(playerId);
+    if (!player) return;
+
+    let isWin = false;
+    if (player.targetY !== undefined && player.y === player.targetY) isWin = true;
+    if (player.targetX !== undefined && player.x === player.targetX) isWin = true;
+
+    if (isWin) {
       this.winner = playerId;
       this.endGame();
     }

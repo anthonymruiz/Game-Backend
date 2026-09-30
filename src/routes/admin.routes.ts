@@ -1,15 +1,23 @@
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { AdminController } from '../controllers/admin.controller.js';
-import { requireAuth, requireRoles } from '../middlewares/role.middleware.js';
+import { requireRole } from '../middlewares/role.middleware.js';
 
-export const adminRoutes = Router();
+export const adminRoutes: Router = Router();
 const adminController = container.resolve(AdminController);
 
-adminRoutes.use(requireAuth);
-adminRoutes.use(requireRoles(['admin', 'superadmin']));
+adminRoutes.use(requireRole(['admin', 'superadmin']));
 
-adminRoutes.get('/metrics', (req, res) => adminController.getMetrics(req, res));
-adminRoutes.get('/users', (req, res) => adminController.getUsers(req, res));
-adminRoutes.post('/users/:id/ban', (req, res) => adminController.banUser(req, res));
-adminRoutes.post('/admins', (req, res) => adminController.createAdmin(req, res));
+adminRoutes.get('/metrics', adminController.getMetrics);
+adminRoutes.get('/users', adminController.getUsers);
+adminRoutes.get('/active-users', adminController.getActiveUsers);
+adminRoutes.get('/reports', adminController.getReports);
+adminRoutes.get('/matches', adminController.getMatches);
+adminRoutes.get('/settings', adminController.getSettings);
+adminRoutes.put('/settings', adminController.updateSettings);
+adminRoutes.get('/users/:userId/reports', adminController.getUserReports);
+adminRoutes.post('/users/:id/ban', adminController.banUser);
+adminRoutes.post('/users/:id/unban', adminController.unbanUser);
+adminRoutes.post('/admins', adminController.createAdmin);
+
+export default adminRoutes;

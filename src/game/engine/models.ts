@@ -26,12 +26,15 @@ export class Player {
   constructor(
     public id: string,
     public username: string,
+    public isGuest: boolean = false,
     public x: number,
     public y: number,
-    public targetY: number, // Target row to win
+    public targetY?: number, // Target row to win (if vertical goal)
+    public targetX?: number, // Target column to win (if horizontal goal)
     public wallsLeft: number = 10,
     public strikes: number = 0,
-    public color: string = 'red'
+    public color: string = '#FF3B30',
+    public team?: number
   ) {}
 }
 

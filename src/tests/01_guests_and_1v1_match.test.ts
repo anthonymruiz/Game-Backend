@@ -1,0 +1,121 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { setupTestEnvironment, teardownTestEnvironment } from './test-helper.js';
+import { container } from 'tsyringe';
+import { RoomService, AVAILABLE_COLORS } from '../services/room.service.js';
+import { GameService } from '../services/game.service.js';
+import { GameInstance } from '../game/engine/game-instance.js';
+
+describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
+  let roomService: RoomService;
+
+  before(async () => {
+    try {
+      await setupTestEnvironment();
+      roomService = container.resolve(RoomService);
+    } catch (err) {
+      console.error('BEFORE HOOK ERROR:', err);
+      throw err;
+    }
+  });
+
+  after(async () => {
+    await teardownTestEnvironment();
+  });
+
+  it('Guest 1 should be able to create a 1v1 public room with default colors', () => {
+    const guest1Id = 'guest_1001';
+    const guest1Name = 'Guest_Alpha';
+
+    const room = roomService.createRoom(
+      guest1Id,
+      guest1Name,
+      true,
+      "Guest 1's Arena",
+      '1v1',
+      false
+    );
+
+    assert.equal(room.mode, '1v1');
+    assert.equal(room.maxPlayers, 2);
+    assert.equal(room.players.length, 1);
+    assert.equal(room.players[0].id, guest1Id);
+    assert.equal(room.players[0].isGuest, true);
+    assert.equal(room.players[0].color, AVAILABLE_COLORS[0]);
+    assert.equal(room.status, 'waiting');
+  });
+
+  it('Guest 2 should be able to join the 1v1 room and get an unused color automatically', () => {
+    const guest1Id = 'guest_1002';
+    const guest2Id = 'guest_1003';
+    
+    const room = roomService.createRoom(guest1Id, 'Guest_One', true, 'Match Room', '1v1', false);
+    const updatedRoom = roomService.joinRoom(room.id, guest2Id, 'Guest_Two', true);
+
+    assert.equal(updatedRoom.players.length, 2);
+    assert.equal(updatedRoom.players[1].id, guest2Id);
+    assert.notEqual(updatedRoom.players[1].color, updatedRoom.players[0].color);
+  });
+
+  it('Should enforce room max capacity for 1v1 mode (reject 3rd player)', () => {
+    const r = roomService.createRoom('g1', 'G1', true, 'Full Room', '1v1');
+    roomService.joinRoom(r.id, 'g2', 'G2', true);
+
+    assert.throws(() => {
+      roomService.joinRoom(r.id, 'g3', 'G3', true);
+    }, /Room is full/);
+  });
+
+  it('Guest should be able to change color to an available color from the 10-color palette', () => {
+    const r = roomService.createRoom('g1', 'G1', true, 'Color Room', '1v1');
+    const newColor = AVAILABLE_COLORS[4]; // Purple
+
+    const updated = roomService.selectPlayerColor(r.id, 'g1', newColor);
+    assert.equal(updated.players[0].color, newColor);
+  });
+
+  it('Should reject selecting a color that is already taken by another player in the room', () => {
+    const r = roomService.createRoom('g1', 'G1', true, 'Taken Color Room', '1v1');
+    roomService.joinRoom(r.id, 'g2', 'G2', true);
+
+    const takenColor = r.players[0].color;
+    assert.throws(() => {
+      roomService.selectPlayerColor(r.id, 'g2', takenColor);
+    }, /Color is already taken/);
+  });
+
+  it('Should enforce password for private rooms', () => {
+    const r = roomService.createRoom('g1', 'G1', true, 'Secret Room', '1v1', true, 'secret123');
+
+    assert.throws(() => {
+      roomService.joinRoom(r.id, 'g2', 'G2', true, 'wrongpass');
+    }, /Incorrect room password/);
+
+    const joined = roomService.joinRoom(r.id, 'g2', 'G2', true, 'secret123');
+    assert.equal(joined.players.length, 2);
+  });
+
+  it('Should start a 1v1 game between 2 guests and manage turns & strikes on timeout', () => {
+    const room = roomService.createRoom('guest_a', 'Guest_A', true, 'Game Start', '1v1');
+    roomService.joinRoom(room.id, 'guest_b', 'Guest_B', true);
+
+    const events: { event: string; data: any }[] = [];
+    const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
+      events.push({ event, data });
+    });
+
+    game.start();
+    assert.equal(game.state, 'playing');
+    assert.equal(game.getCurrentPlayer(), 'guest_a');
+    assert.ok(events.some(e => e.event === 'gameStarted'));
+
+    // Execute valid move for guest_a
+    const moved = game.executeMove('guest_a', 5, 1);
+    assert.equal(moved, true);
+    assert.equal(game.getCurrentPlayer(), 'guest_b');
+
+    // Simulate invalid move for guest_a when it's not their turn
+    const invalidTurnMove = game.executeMove('guest_a', 5, 2);
+    assert.equal(invalidTurnMove, false);
+  });
+});

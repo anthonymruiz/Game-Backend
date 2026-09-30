@@ -3,12 +3,12 @@ import { AbstractBaseEntity } from './base.entity.js';
 
 @Entity('preferences')
 export class Preferences extends AbstractBaseEntity {
-  @Column({ default: 'en' })
+  @Column({ type: 'varchar', default: 'en' })
   language!: string;
 
-  @Column({ default: 'light' })
+  @Column({ type: 'varchar', default: 'light' })
   theme!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   fcmToken?: string;
 }

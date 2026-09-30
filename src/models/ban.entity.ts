@@ -5,9 +5,9 @@ import { User } from './user.entity.js';
 @Entity('bans')
 export class Ban extends AbstractBaseEntity {
   @ManyToOne(() => User, (user) => user.bans)
-  user!: User;
+  user!: any;
 
-  @Column()
+  @Column({ type: 'varchar' })
   reason!: string;
 
   @Column({ type: 'datetime' })

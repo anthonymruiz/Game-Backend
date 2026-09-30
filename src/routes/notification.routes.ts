@@ -3,7 +3,7 @@ import { container } from 'tsyringe';
 import { NotificationController } from '../controllers/notification.controller.js';
 import { requireAuth } from '../middlewares/role.middleware.js';
 
-export const notificationRoutes = Router();
+export const notificationRoutes: Router = Router();
 const controller = container.resolve(NotificationController);
 
 notificationRoutes.use(requireAuth);

@@ -5,17 +5,17 @@ import { User } from './user.entity.js';
 @Entity('notifications')
 export class Notification extends AbstractBaseEntity {
   @ManyToOne(() => User)
-  user!: User;
+  user!: any;
 
-  @Column()
+  @Column({ type: 'varchar' })
   type!: string;
 
-  @Column()
+  @Column({ type: 'varchar' })
   title!: string;
 
-  @Column('text')
+  @Column({ type: 'text' })
   message!: string;
 
-  @Column({ default: false })
+  @Column({ type: 'boolean', default: false })
   isRead!: boolean;
 }

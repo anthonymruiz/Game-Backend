@@ -3,12 +3,14 @@ import { AppDataSource } from '../config/database.config.js';
 import { Notification } from '../models/notification.entity.js';
 import { User } from '../models/user.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
-import * as admin from 'firebase-admin';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
+import { SupportedLanguage, ITranslations, ITranslationKeys } from '../types/language.type.js';
 
 try {
   if (process.env.FIREBASE_CONFIG) {
-    admin.initializeApp({
-      credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_CONFIG))
+    initializeApp({
+      credential: cert(JSON.parse(process.env.FIREBASE_CONFIG))
     });
     console.log('Firebase Admin initialized for Mobile Push Notifications.');
   }
@@ -16,7 +18,7 @@ try {
   console.log('Firebase config not found. Mobile background pushes disabled.');
 }
 
-const TRANSLATIONS: any = {
+const TRANSLATIONS: ITranslations = {
   en: {
     MATCH_WON_TITLE: 'Match Won!',
     MATCH_WON_MSG: 'Congratulations, you won the match!',
@@ -40,7 +42,7 @@ export class NotificationService {
   }
 
   private startCleanupCron() {
-    setInterval(async () => {
+    const timer = setInterval(async () => {
       try {
         const repo = AppDataSource.getRepository(Notification);
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -53,14 +55,17 @@ export class NotificationService {
         console.error('Error cleaning up notifications', err);
       }
     }, 24 * 60 * 60 * 1000); // 24 hours
+    if (timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
   }
 
-  public async sendNotification(userId: string, type: string, translationKeyTitle: string, translationKeyMsg: string, dynamicData?: string): Promise<void> {
+  public async sendNotification(userId: string, type: string, translationKeyTitle: keyof ITranslationKeys, translationKeyMsg: keyof ITranslationKeys, dynamicData?: string): Promise<void> {
     const userRepo = AppDataSource.getRepository(User);
-    const user = await userRepo.findOne({ where: { id: userId }, relations: ['preferences'] });
+    const user = await userRepo.findOne({ where: { id: userId }, relations: { preferences: true } });
     if (!user) return;
 
-    const lang = user.preferences?.language || 'en';
+    const lang: SupportedLanguage = (user.preferences?.language as SupportedLanguage) || 'en';
     const dict = TRANSLATIONS[lang] || TRANSLATIONS['en'];
 
     const title = dict[translationKeyTitle] || translationKeyTitle;
@@ -76,12 +81,14 @@ export class NotificationService {
     await repo.save(notif);
 
     const socketManager = container.resolve(SocketManager);
-    socketManager.io.of('/matchmaking').to(userId).emit('newNotification', notif);
+    if (socketManager.io) {
+      socketManager.io.of('/matchmaking').to(userId).emit('newNotification', notif);
+    }
 
     // Send via FCM if they have a token (Background Mobile Push)
-    if (user.preferences?.fcmToken && admin.apps.length > 0) {
+    if (user.preferences?.fcmToken && getApps().length > 0) {
       try {
-        await admin.messaging().send({
+        await getMessaging().send({
           token: user.preferences.fcmToken,
           notification: {
             title: notif.title,

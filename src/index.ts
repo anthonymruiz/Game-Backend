@@ -6,11 +6,14 @@ import { AppDataSource } from './config/database.config.js';
 import { ENV } from './config/env.config.js';
 import { SocketManager } from './socket/socket.manager.js';
 import { RedisService } from './services/redis.service.js';
+import { seedSuperAdmin } from './utils/seed.utils.js';
 
 async function bootstrap() {
   try {
     await AppDataSource.initialize();
     console.log('Database connection established successfully.');
+
+    await seedSuperAdmin();
 
     const redisService = container.resolve(RedisService);
     await redisService.connect();

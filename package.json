@@ -6,6 +6,7 @@
   "scripts": {
     "start:dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "test": "tsx --test src/tests/**/*.test.ts",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\"",
     "typeorm": "tsx ./node_modules/typeorm/cli.js",
@@ -15,14 +16,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "12.8.1",
-      "onFail": "download"
-    }
-  },
-  "packageManager": "pnpm@12.8.1",
+
   "type": "module",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -42,11 +36,6 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "typescript-eslint": "^8.71.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

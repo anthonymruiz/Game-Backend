@@ -25,3 +25,5 @@ export const requireRole = (roles: string[]) => {
     }
   };
 };
+
+export const requireAuth = requireRole(['user', 'admin', 'superadmin']);

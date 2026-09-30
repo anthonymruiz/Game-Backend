@@ -2,10 +2,11 @@ import { injectable } from 'tsyringe';
 import nodemailer from 'nodemailer';
 import fs from 'fs/promises';
 import path from 'path';
+import { SupportedLanguage } from '../types/language.type.js';
 
 @injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: any;
 
   constructor() {
     this.transporter = nodemailer.createTransport({
@@ -18,7 +19,7 @@ export class EmailService {
     });
   }
 
-  public async sendTemplatedEmail(to: string, templateName: string, lang: string, context: Record<string, string>): Promise<void> {
+  public async sendTemplatedEmail(to: string, templateName: string, lang: SupportedLanguage, context: Record<string, string>): Promise<void> {
     try {
       // Fallback to 'en' if the requested language template doesn't exist
       let templatePath = path.resolve(process.cwd(), `src/langs/${lang}/${templateName}.json`);

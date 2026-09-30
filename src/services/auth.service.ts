@@ -9,6 +9,7 @@ import { User } from '../models/user.entity.js';
 import { ENV } from '../config/env.config.js';
 import { Preferences } from '../models/preferences.entity.js';
 import { Stats } from '../models/stats.entity.js';
+import { UserRole } from '../models/user-role.enum.js';
 
 @injectable()
 export class AuthService {
@@ -23,19 +24,22 @@ export class AuthService {
   }
 
   public async register(email: string, username: string, plainPassword?: string, provider: string = 'local'): Promise<User> {
+    if (!email || !username || (!plainPassword && provider === 'local')) {
+      throw new Error('Email, username, and password are required for registration.');
+    }
+    await this.userService.checkEmailAvailability(email);
     await this.userService.checkUsernameAvailability(username);
 
-    const existingEmail = await this.userRepository.findByEmail(email);
-    if (existingEmail) {
-      throw new Error('Email is already in use.');
-    }
-
     const user = new User();
-    user.email = email;
-    user.username = username;
+    user.email = email.trim().toLowerCase();
+    user.username = username.trim();
     user.provider = provider;
+    user.hasUsernameSet = true;
     
     if (plainPassword) {
+      if (plainPassword.length < 6) {
+        throw new Error('Password must be at least 6 characters long.');
+      }
       user.password = await bcrypt.hash(plainPassword, this.SALT_ROUNDS);
     }
 
@@ -45,38 +49,49 @@ export class AuthService {
     return this.userRepository.save(user);
   }
 
-  public async login(email: string, plainPassword?: string): Promise<{ user: User, token: string }> {
-    const user = await this.userRepository.findByEmail(email);
+  public async login(emailOrUsername: string, plainPassword?: string): Promise<{ user: User; token: string }> {
+    let user = await this.userRepository.findByEmail(emailOrUsername.trim().toLowerCase());
     if (!user) {
-      throw new Error('Invalid email or password.');
+      user = await this.userRepository.findByUsername(emailOrUsername.trim());
+    }
+
+    if (!user) {
+      throw new Error('Invalid credentials.');
+    }
+
+    if (user.role === UserRole.BANNED) {
+      throw new Error('Your account has been banned. Please contact support.');
     }
 
     if (user.provider === 'local' && plainPassword && user.password) {
       const isPasswordValid = await bcrypt.compare(plainPassword, user.password);
       if (!isPasswordValid) {
-        throw new Error('Invalid email or password.');
+        throw new Error('Invalid credentials.');
       }
     } else if (user.provider === 'local' && !plainPassword) {
-        throw new Error('Password is required for local login.');
+      throw new Error('Password is required for local login.');
     }
 
     const token = this.generateJwt(user);
     return { user, token };
   }
 
-  private generateJwt(user: User): string {
+  public generateJwt(user: User): string {
     const payload = {
+      id: user.id,
       sub: user.id,
       username: user.username,
-      role: user.role
+      email: user.email,
+      role: user.role,
+      hasUsernameSet: user.hasUsernameSet
     };
 
     return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn: '7d' });
   }
 
-  public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User, jwtToken: string }> {
+  public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
     let email: string;
-    let username: string;
+    let socialName: string = '';
 
     if (provider === 'google') {
       const ticket = await this.googleClient.verifyIdToken({
@@ -86,28 +101,38 @@ export class AuthService {
       const payload = ticket.getPayload();
       if (!payload || !payload.email) throw new Error('Invalid Google Token');
       email = payload.email;
-      username = payload.name?.replace(/\s+/g, '_').toLowerCase() || email.split('@')[0];
+      socialName = payload.name || '';
     } else if (provider === 'facebook') {
       const { data } = await axios.get(`https://graph.facebook.com/me?fields=id,name,email&access_token=${token}`);
       if (!data || !data.email) throw new Error('Invalid Facebook Token');
       email = data.email;
-      username = data.name.replace(/\s+/g, '_').toLowerCase();
+      socialName = data.name || '';
     } else {
       throw new Error('Unsupported provider');
     }
 
-    let user = await this.userRepository.findByEmail(email);
+    let isNewUser = false;
+    let user = await this.userRepository.findByEmail(email.toLowerCase());
+    
     if (!user) {
+      isNewUser = true;
       user = new User();
-      user.email = email;
-      user.username = username + '_' + Math.floor(Math.random() * 1000);
+      user.email = email.toLowerCase();
+      // Generate a temporary unique username if social user hasn't set one yet
+      const tempSuffix = Math.floor(1000 + Math.random() * 9000);
+      user.username = `user${tempSuffix}`;
       user.provider = provider;
+      user.hasUsernameSet = false; // Mark that user must set their username
       user.preferences = new Preferences();
       user.stats = new Stats();
       user = await this.userRepository.save(user);
     }
 
+    if (user.role === UserRole.BANNED) {
+      throw new Error('Your account has been banned.');
+    }
+
     const jwtToken = this.generateJwt(user);
-    return { user, jwtToken };
+    return { user, jwtToken, isNewUser };
   }
 }
