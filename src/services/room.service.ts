@@ -4,16 +4,16 @@ import { GameMode } from './matchmaking.service.js';
 import { RoomStatus } from '../models/room-status.enum.js';
 
 export const AVAILABLE_COLORS: string[] = [
-  '#FF3B30', // Red
-  '#007AFF', // Blue
-  '#FFCC00', // Yellow
-  '#34C759', // Green
-  '#AF52DE', // Purple
-  '#FF9500', // Orange
-  '#5AC8FA', // Cyan
-  '#FF2D55', // Pink
-  '#E5E5EA', // Silver
-  '#1C1C1E'  // Midnight
+  '#3b82f6', // Blue (Local Player / Host)
+  '#ef4444', // Red (Opponent / Bot)
+  '#f59e0b', // Yellow
+  '#10b981', // Green
+  '#8b5cf6', // Purple
+  '#f97316', // Orange
+  '#06b6d4', // Cyan
+  '#ec4899', // Pink
+  '#94a3b8', // Silver
+  '#1e293b'  // Midnight
 ];
 
 export interface IRoomPlayer {
