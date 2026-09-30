@@ -9,8 +9,8 @@ export const ENV = {
     HOST: process.env.DB_HOST || 'localhost',
     PORT: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
     USER: process.env.DB_USER || 'root',
-    PASS: process.env.DB_PASS || '',
-    NAME: process.env.DB_NAME || 'wallrush_db',
+    PASS: process.env.DB_PASSWORD || process.env.DB_PASS || '',
+    NAME: process.env.DB_NAME || 'game',
   },
   JWT_SECRET: process.env.JWT_SECRET || 'fallback_secret',
 };

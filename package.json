@@ -7,7 +7,10 @@
     "start:dev": "tsx watch src/index.ts",
     "build": "tsc",
     "lint": "eslint .",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "typeorm": "tsx ./node_modules/typeorm/cli.js",
+    "migration:generate": "pnpm typeorm migration:generate -d src/config/database.config.ts src/migrations/Init",
+    "migration:run": "pnpm typeorm migration:run -d src/config/database.config.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +29,7 @@
     "@types/bcryptjs": "^3.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/express-rate-limit": "^6.0.2",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.3",
     "@types/nodemailer": "^8.0.2",
@@ -52,6 +56,7 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
     "google-auth-library": "^11.1.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",

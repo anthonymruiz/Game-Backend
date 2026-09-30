@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { injectable } from 'tsyringe';
 import authRouter from './routes/auth.routes.js';
+import { adminRoutes } from './routes/admin.routes.js';
 
 @injectable()
 export class App {
@@ -23,6 +24,7 @@ export class App {
 
   private initializeRoutes(): void {
     this.expressApp.use('/api/auth', authRouter);
+    this.expressApp.use('/api/admin', adminRoutes);
     this.expressApp.get('/health', (req, res) => {
       res.status(200).json({ status: 'OK' });
     });
