@@ -1,5 +1,5 @@
 import { injectable } from 'tsyringe';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserService } from './user.service.js';
 import { UserRepository } from '../repositories/user.repository.js';
