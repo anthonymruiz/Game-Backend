@@ -1,10 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, Column } from 'typeorm';
+import { AbstractBaseEntity } from './base.entity.js';
 
 @Entity('stats')
-export class Stats {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
-
+export class Stats extends AbstractBaseEntity {
   @Column({ default: 0 })
   wins!: number;
 

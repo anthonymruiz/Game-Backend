@@ -1,10 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, Column } from 'typeorm';
+import { AbstractBaseEntity } from './base.entity.js';
 
 @Entity('preferences')
-export class Preferences {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
-
+export class Preferences extends AbstractBaseEntity {
   @Column({ default: 'en' })
   language!: string;
 

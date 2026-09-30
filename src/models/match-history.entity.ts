@@ -1,11 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } from 'typeorm';
+import { Entity, Column, ManyToOne } from 'typeorm';
+import { AbstractBaseEntity } from './base.entity.js';
 import { User } from './user.entity.js';
 
 @Entity('match_history')
-export class MatchHistory {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
-
+export class MatchHistory extends AbstractBaseEntity {
   @ManyToOne(() => User, (user) => user.matchHistory)
   user!: User;
 
@@ -17,7 +15,4 @@ export class MatchHistory {
 
   @Column({ nullable: true })
   eloChange?: number;
-
-  @CreateDateColumn()
-  playedAt!: Date;
 }

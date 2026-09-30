@@ -1,14 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, Column, OneToOne, JoinColumn, OneToMany } from 'typeorm';
+import { AbstractBaseEntity } from './base.entity.js';
 import { Preferences } from './preferences.entity.js';
 import { Stats } from './stats.entity.js';
 import { MatchHistory } from './match-history.entity.js';
 import { Ban } from './ban.entity.js';
 
 @Entity('users')
-export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
-
+export class User extends AbstractBaseEntity {
   @Column({ unique: true })
   email!: string;
 
@@ -37,10 +35,4 @@ export class User {
 
   @OneToMany(() => Ban, (ban) => ban.user)
   bans!: Ban[];
-
-  @CreateDateColumn()
-  createdAt!: Date;
-
-  @UpdateDateColumn()
-  updatedAt!: Date;
 }
