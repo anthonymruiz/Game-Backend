@@ -1,8 +1,10 @@
 import 'reflect-metadata';
 import { container } from 'tsyringe';
+import { createServer } from 'http';
 import { App } from './app.js';
 import { AppDataSource } from './config/database.config.js';
 import { ENV } from './config/env.config.js';
+import { SocketManager } from './socket/socket.manager.js';
 
 async function bootstrap() {
   try {
@@ -10,9 +12,13 @@ async function bootstrap() {
     console.log('Database connection established successfully.');
 
     const appInstance = container.resolve(App);
+    const httpServer = createServer(appInstance.expressApp);
+
+    const socketManager = container.resolve(SocketManager);
+    await socketManager.initialize(httpServer);
     
-    appInstance.expressApp.listen(ENV.PORT, () => {
-      console.log(`Server is running on port ${ENV.PORT}`);
+    httpServer.listen(ENV.PORT, () => {
+      console.log(`Server and WebSockets are running on port ${ENV.PORT}`);
     });
   } catch (error) {
     console.error('Error during bootstrap:', error);
