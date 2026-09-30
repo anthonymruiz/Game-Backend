@@ -28,20 +28,73 @@ export class Board {
     }
   }
 
+  public getValidMoves(playerId: string): Coordinate[] {
+    const player = this.players.get(playerId);
+    if (!player) return [];
+
+    const validMoves: Coordinate[] = [];
+    const directions = [
+      { dx: 0, dy: -1 }, // Up
+      { dx: 0, dy: 1 },  // Down
+      { dx: -1, dy: 0 }, // Left
+      { dx: 1, dy: 0 }   // Right
+    ];
+
+    for (const dir of directions) {
+      const nx = player.x + dir.dx;
+      const ny = player.y + dir.dy;
+
+      // Check bounds & wall block between player and adjacent cell
+      if (nx >= 0 && nx < this.size && ny >= 0 && ny < this.size) {
+        if (!this.isWallBlocking(player.x, player.y, nx, ny)) {
+          const occupant = this.grid[ny][nx].hasPlayer;
+
+          if (!occupant) {
+            // Unoccupied cell: standard move
+            validMoves.push({ x: nx, y: ny });
+          } else {
+            // Occupied cell by opponent: PAWN JUMPING RULES!
+            const straightX = nx + dir.dx;
+            const straightY = ny + dir.dy;
+
+            const isStraightInBounds = straightX >= 0 && straightX < this.size && straightY >= 0 && straightY < this.size;
+            const isStraightWallBlocked = isStraightInBounds ? this.isWallBlocking(nx, ny, straightX, straightY) : true;
+            const isStraightOccupied = isStraightInBounds ? !!this.grid[straightY][straightX].hasPlayer : false;
+
+            if (isStraightInBounds && !isStraightWallBlocked && !isStraightOccupied) {
+              // Straight jump over opponent
+              validMoves.push({ x: straightX, y: straightY });
+            } else {
+              // Straight jump is blocked by wall, board edge, or another player -> Diagonal / Side jumps!
+              const sideDirs = dir.dx !== 0 ? [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }] : [{ dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+
+              for (const sideDir of sideDirs) {
+                const sideX = nx + sideDir.dx;
+                const sideY = ny + sideDir.dy;
+
+                if (sideX >= 0 && sideX < this.size && sideY >= 0 && sideY < this.size) {
+                  if (!this.isWallBlocking(nx, ny, sideX, sideY) && !this.grid[sideY][sideX].hasPlayer) {
+                    validMoves.push({ x: sideX, y: sideY });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return validMoves;
+  }
+
   public movePlayer(playerId: string, newX: number, newY: number): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
 
-    // Validate bounds
-    if (newX < 0 || newX >= this.size || newY < 0 || newY >= this.size) return false;
-
-    // Move is simply 1 cell adjacent (no diagonals)
-    const dx = Math.abs(player.x - newX);
-    const dy = Math.abs(player.y - newY);
-    if (dx + dy !== 1) return false;
-
-    // Check for walls blocking the move between (player.x, player.y) and (newX, newY)
-    if (this.isWallBlocking(player.x, player.y, newX, newY)) return false;
+    // Enforce Quoridor move and jump rules
+    const validMoves = this.getValidMoves(playerId);
+    const isValid = validMoves.some(m => m.x === newX && m.y === newY);
+    if (!isValid) return false;
 
     // Move player
     this.grid[player.y][player.x].hasPlayer = null;
@@ -172,38 +225,26 @@ export class Board {
     const player = this.players.get(playerId);
     if (!player) return null;
 
-    const queue: { x: number; y: number; path: { x: number; y: number }[] }[] = [
-      { x: player.x, y: player.y, path: [] }
-    ];
-    const visited = new Set<string>();
-    visited.add(`${player.x},${player.y}`);
+    const validMoves = this.getValidMoves(playerId);
+    if (validMoves.length === 0) return null;
 
-    while (queue.length > 0) {
-      const { x, y, path } = queue.shift()!;
+    let bestMove = validMoves[0];
+    let minDistance = Infinity;
 
-      if ((player.targetY !== undefined && y === player.targetY) ||
-          (player.targetX !== undefined && x === player.targetX)) {
-        return path.length > 0 ? path[0] : null;
+    for (const move of validMoves) {
+      let dist = Infinity;
+      if (player.targetY !== undefined) {
+        dist = Math.abs(move.y - player.targetY);
+      } else if (player.targetX !== undefined) {
+        dist = Math.abs(move.x - player.targetX);
       }
 
-      const neighbors = [
-        { x: x + 1, y }, { x: x - 1, y },
-        { x, y: y + 1 }, { x, y: y - 1 }
-      ];
-
-      for (const n of neighbors) {
-        if (n.x >= 0 && n.x < this.size && n.y >= 0 && n.y < this.size) {
-          if (!this.isWallBlocking(x, y, n.x, n.y)) {
-            const key = `${n.x},${n.y}`;
-            if (!visited.has(key)) {
-              visited.add(key);
-              queue.push({ x: n.x, y: n.y, path: [...path, { x: n.x, y: n.y }] });
-            }
-          }
-        }
+      if (dist < minDistance) {
+        minDistance = dist;
+        bestMove = move;
       }
     }
-    return null;
+
+    return bestMove;
   }
 }
-
