@@ -106,19 +106,21 @@ export class AuthController {
 
   public guestLogin = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { username } = req.body;
-      const email = `guest_${Date.now()}@game.local`;
-      const user = await this.authService.register(email, username, undefined, 'guest');
-      const result = await this.authService.login(user.email, undefined);
+      const guestNum = Math.floor(1000 + Math.random() * 9000);
+      const username = req.body?.username || `Guest_${guestNum}`;
+      const guestId = `guest_${Date.now()}_${guestNum}`;
+      const guestUser = {
+        id: guestId,
+        username,
+        email: `${guestId}@game.local`,
+        role: 'guest',
+        hasUsernameSet: true
+      };
+      const token = this.authService.generateJwt(guestUser as any);
       res.status(200).json({ 
         message: 'Guest login successful', 
-        token: result.token, 
-        user: {
-          id: result.user.id,
-          username: result.user.username,
-          role: result.user.role,
-          hasUsernameSet: result.user.hasUsernameSet
-        } 
+        token, 
+        user: guestUser 
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
