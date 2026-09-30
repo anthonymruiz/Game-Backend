@@ -8,15 +8,22 @@ export class RedisService {
   private client: RedisClientType;
 
   constructor() {
-    this.client = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-    this.client.on('error', (err) => console.error('Redis Client Error', err));
+    this.client = createClient({ 
+      url: process.env.REDIS_URL || 'redis://localhost:6379',
+      socket: {
+        reconnectStrategy: false
+      }
+    });
+    this.client.on('error', () => {
+      // Suppress continuous reconnect error logs
+    });
   }
 
   public async connect(): Promise<void> {
     if (!this.client.isOpen) {
       try {
         await this.client.connect();
-        console.log('Redis connected for operations');
+        console.log('✅ [Redis] Connected successfully.');
       } catch (err: any) {
         console.warn('⚠️ [Redis] Redis server is not running locally. Running in memory fallback mode.');
       }
