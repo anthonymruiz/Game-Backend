@@ -9,6 +9,8 @@ import { notificationRoutes } from './routes/notification.routes.js';
 import { userRoutes } from './routes/user.routes.js';
 import reportRouter from './routes/report.routes.js';
 import { broadcastLog } from './utils/logger.utils.js';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './config/swagger.config.js';
 
 @injectable()
 export class App {
@@ -33,6 +35,7 @@ export class App {
     this.expressApp.use('/api/admin', adminRoutes);
     this.expressApp.use('/api/notifications', notificationRoutes);
     this.expressApp.use('/api/reports', reportRouter);
+    this.expressApp.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
     this.expressApp.get('/health', (req, res) => {
       res.status(200).json({ status: 'OK' });
     });

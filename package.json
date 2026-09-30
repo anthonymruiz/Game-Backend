@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start:dev": "tsx watch src/index.ts",
+    "start:dev": "tsc && node dist/index.js",
     "build": "tsc",
     "test": "tsx --test src/tests/**/*.test.ts",
     "lint": "eslint .",
@@ -16,7 +16,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-
   "type": "module",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -27,6 +26,8 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.3",
     "@types/nodemailer": "^8.0.2",
+    "@types/swagger-jsdoc": "^6.0.4",
+    "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^11.0.0",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
@@ -55,6 +56,8 @@
     "redis": "^6.2.1",
     "reflect-metadata": "^0.2.2",
     "socket.io": "^4.8.4",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "tsyringe": "^4.10.0",
     "typeorm": "^1.1.1",
     "uuid": "^14.0.2",
