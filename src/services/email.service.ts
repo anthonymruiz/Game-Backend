@@ -43,7 +43,7 @@ export class EmailService {
       }
 
       await this.transporter.sendMail({
-        from: '"WallRush Team" <no-reply@wallrush.local>',
+        from: '"Game Arena Team" <no-reply@game.local>',
         to,
         subject,
         text: body,

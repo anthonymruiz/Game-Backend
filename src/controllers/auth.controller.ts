@@ -104,7 +104,7 @@ export class AuthController {
   public guestLogin = async (req: Request, res: Response): Promise<void> => {
     try {
       const { username } = req.body;
-      const email = `guest_${Date.now()}@wallrush.local`;
+      const email = `guest_${Date.now()}@game.local`;
       const user = await this.authService.register(email, username, undefined, 'guest');
       const result = await this.authService.login(user.email, undefined);
       res.status(200).json({ 

@@ -30,7 +30,6 @@ export interface IRoom {
   name: string;
   mode: GameMode;
   isPrivate: boolean;
-  password?: string;
   hostId: string;
   players: IRoomPlayer[];
   maxPlayers: number;
@@ -68,8 +67,7 @@ export class RoomService {
     isGuest: boolean,
     name: string,
     mode: GameMode,
-    isPrivate: boolean = false,
-    password?: string
+    isPrivate: boolean = false
   ): IRoom {
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const code = this.generateRoomCode();
@@ -90,7 +88,6 @@ export class RoomService {
       name: name || `${hostUsername}'s Room`,
       mode,
       isPrivate,
-      password: isPrivate ? password : undefined,
       hostId,
       players: [hostPlayer],
       maxPlayers,
@@ -138,13 +135,12 @@ export class RoomService {
     return null;
   }
 
-  public toggleRoomPrivacy(roomId: string, hostId: string, isPrivate: boolean, password?: string): IRoom {
+  public toggleRoomPrivacy(roomId: string, hostId: string, isPrivate: boolean): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.hostId !== hostId) throw new Error('Only the room host can change privacy settings.');
 
     room.isPrivate = isPrivate;
-    room.password = isPrivate ? password : undefined;
     return room;
   }
 
@@ -171,14 +167,11 @@ export class RoomService {
     return this.rooms.get(roomId) || null;
   }
 
-  public joinRoom(roomId: string, userId: string, username: string, isGuest: boolean, password?: string): IRoom {
+  public joinRoom(roomId: string, userId: string, username: string, isGuest: boolean): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.status !== RoomStatus.WAITING) throw new Error('Game already in progress');
     if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
-    if (room.isPrivate && room.password && room.password !== password) {
-      throw new Error('Incorrect room password');
-    }
 
     if (!room.players.some(p => p.id === userId)) {
       // Pick first available unused color

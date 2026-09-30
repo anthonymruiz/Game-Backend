@@ -1,4 +1,4 @@
 {
-  "subject": "Welcome to WallRush, {{username}}!",
-  "body": "Hello {{username}},\n\nWelcome to WallRush! We are excited to have you on board. Prepare yourself for the ultimate strategy battles.\n\nBest,\nThe WallRush Team"
+  "subject": "Welcome to Game Arena, {{username}}!",
+  "body": "Hello {{username}},\n\nWelcome to Game Arena! We are excited to have you on board. Prepare yourself for the ultimate strategy battles.\n\nBest,\nThe Game Arena Team"
 }

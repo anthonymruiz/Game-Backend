@@ -99,7 +99,7 @@ export class SocketManager {
         socket.emit('publicRooms', this.roomService.getPublicRooms());
       });
 
-      socket.on('createRoom', (data: { name: string; mode: GameMode; isPrivate: boolean; password?: string }) => {
+      socket.on('createRoom', (data: { name: string; mode: GameMode; isPrivate: boolean }) => {
         try {
           const room = this.roomService.createRoom(
             userId,
@@ -107,8 +107,7 @@ export class SocketManager {
             isGuest,
             data.name,
             data.mode,
-            data.isPrivate,
-            data.password
+            data.isPrivate
           );
           socket.join(room.id);
           socket.emit('roomCreated', room);
@@ -130,9 +129,9 @@ export class SocketManager {
         }
       });
 
-      socket.on('joinCustomRoom', (data: { roomId: string; password?: string }) => {
+      socket.on('joinCustomRoom', (data: { roomId: string }) => {
         try {
-          const room = this.roomService.joinRoom(data.roomId, userId, username, isGuest, data.password);
+          const room = this.roomService.joinRoom(data.roomId, userId, username, isGuest);
           socket.join(room.id);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
@@ -141,11 +140,11 @@ export class SocketManager {
         }
       });
 
-      socket.on('joinByCode', (data: { code: string; password?: string }) => {
+      socket.on('joinByCode', (data: { code: string }) => {
         try {
           const targetRoom = this.roomService.getRoomByCode(data.code);
           if (!targetRoom) throw new Error('No room found with this code.');
-          const room = this.roomService.joinRoom(targetRoom.id, userId, username, isGuest, data.password);
+          const room = this.roomService.joinRoom(targetRoom.id, userId, username, isGuest);
           socket.join(room.id);
           socket.emit('joinedByCodeSuccess', room);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
@@ -155,9 +154,9 @@ export class SocketManager {
         }
       });
 
-      socket.on('toggleRoomPrivacy', (data: { roomId: string; isPrivate: boolean; password?: string }) => {
+      socket.on('toggleRoomPrivacy', (data: { roomId: string; isPrivate: boolean }) => {
         try {
-          const room = this.roomService.toggleRoomPrivacy(data.roomId, userId, data.isPrivate, data.password);
+          const room = this.roomService.toggleRoomPrivacy(data.roomId, userId, data.isPrivate);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
         } catch (err: any) {

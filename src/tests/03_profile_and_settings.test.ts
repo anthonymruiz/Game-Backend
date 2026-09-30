@@ -89,7 +89,7 @@ describe('03 - User Profile, Preferences & Admin Settings Tests', () => {
         maintenanceMode: false,
         turnTimeLimitSeconds: 25,
         maxStrikesBeforeKick: 3,
-        announcementBanner: 'Welcome to WallRush Tournament!'
+        announcementBanner: 'Welcome to Game Arena Tournament!'
       },
       adminToken
     );

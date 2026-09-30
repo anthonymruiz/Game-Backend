@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "wallrush-backend",
+      name: "game-backend",
       script: "./dist/index.js",
       instances: "max",
       exec_mode: "cluster",
