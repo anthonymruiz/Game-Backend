@@ -105,6 +105,44 @@ export class SocketManager {
         socket.emit('publicRooms', this.roomService.getPublicRooms());
       });
 
+      socket.on('joinQueue', (mode: GameMode | string) => {
+        try {
+          const gameMode: GameMode = (mode as GameMode) || '1v1';
+          const publicRooms = this.roomService.getPublicRooms();
+          const openRoom = publicRooms.find(r => r.mode === gameMode && r.players.length < r.maxPlayers);
+
+          if (openRoom) {
+            const room = this.roomService.joinRoom(openRoom.id, userId, username, isGuest);
+            socket.join(room.id);
+            socket.emit('joinedByCodeSuccess', room);
+            matchmakingNs.to(room.id).emit('roomUpdated', room);
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+            if (room.players.length >= room.maxPlayers) {
+              room.status = RoomStatus.PLAYING;
+              this.gameService.createGame(room.id, room.mode, room.players);
+              matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+              matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            }
+          } else {
+            const roomName = `Sala de ${username}`;
+            const room = this.roomService.createRoom(
+              userId,
+              username,
+              isGuest,
+              roomName,
+              gameMode,
+              false
+            );
+            socket.join(room.id);
+            socket.emit('roomCreated', room);
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          }
+        } catch (err: any) {
+          socket.emit('error', err.message);
+        }
+      });
+
       socket.on('createRoom', (data: { name: string; mode: GameMode; isPrivate: boolean }) => {
         try {
           const room = this.roomService.createRoom(
@@ -141,6 +179,13 @@ export class SocketManager {
           socket.join(room.id);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+          if (room.players.length >= room.maxPlayers) {
+            room.status = RoomStatus.PLAYING;
+            this.gameService.createGame(room.id, room.mode, room.players);
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          }
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -155,6 +200,13 @@ export class SocketManager {
           socket.emit('joinedByCodeSuccess', room);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+          if (room.players.length >= room.maxPlayers) {
+            room.status = RoomStatus.PLAYING;
+            this.gameService.createGame(room.id, room.mode, room.players);
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          }
         } catch (err: any) {
           socket.emit('error', err.message);
         }

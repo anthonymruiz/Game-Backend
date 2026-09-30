@@ -42,7 +42,7 @@ export class RoomService {
   private rooms: Map<string, IRoom> = new Map();
 
   public generateRoomCode(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     let code = '';
     for (let i = 0; i < 6; i++) {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
