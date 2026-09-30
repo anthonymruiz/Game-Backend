@@ -11,6 +11,9 @@ userRoutes.put('/preferences', requireAuth, async (req, res) => {
     const user = await userRepo.findOne({ where: { id: req.user!.id }, relations: ['preferences'] });
     if (user && user.preferences) {
       user.preferences.language = req.body.language || user.preferences.language;
+      if (req.body.fcmToken) {
+        user.preferences.fcmToken = req.body.fcmToken;
+      }
       await userRepo.save(user);
     }
     return res.status(200).json({ success: true });

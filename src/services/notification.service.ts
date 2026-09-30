@@ -3,6 +3,18 @@ import { AppDataSource } from '../config/database.config.js';
 import { Notification } from '../models/notification.entity.js';
 import { User } from '../models/user.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
+import * as admin from 'firebase-admin';
+
+try {
+  if (process.env.FIREBASE_CONFIG) {
+    admin.initializeApp({
+      credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_CONFIG))
+    });
+    console.log('Firebase Admin initialized for Mobile Push Notifications.');
+  }
+} catch (e) {
+  console.log('Firebase config not found. Mobile background pushes disabled.');
+}
 
 const TRANSLATIONS: any = {
   en: {
@@ -65,6 +77,25 @@ export class NotificationService {
 
     const socketManager = container.resolve(SocketManager);
     socketManager.io.of('/matchmaking').to(userId).emit('newNotification', notif);
+
+    // Send via FCM if they have a token (Background Mobile Push)
+    if (user.preferences?.fcmToken && admin.apps.length > 0) {
+      try {
+        await admin.messaging().send({
+          token: user.preferences.fcmToken,
+          notification: {
+            title: notif.title,
+            body: notif.message,
+          },
+          data: {
+            type: notif.type,
+            id: notif.id.toString()
+          }
+        });
+      } catch (fcmError) {
+        console.error('FCM send failed:', fcmError);
+      }
+    }
   }
 
   public async getUserNotifications(userId: string): Promise<Notification[]> {

@@ -8,4 +8,7 @@ export class Preferences extends AbstractBaseEntity {
 
   @Column({ default: 'light' })
   theme!: string;
+
+  @Column({ nullable: true })
+  fcmToken?: string;
 }
