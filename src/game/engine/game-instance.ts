@@ -74,7 +74,7 @@ export class GameInstance {
   public start() {
     this.state = 'playing';
     this.startTurnTimer();
-    this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board });
+    this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
     this.checkTriggerBotTurn();
   }
 
@@ -159,7 +159,7 @@ export class GameInstance {
       this.board.spawnRandomBoost();
     }
 
-    this.onStateChange('turnChanged', { currentTurn: this.getCurrentPlayer(), board: this.board });
+    this.onStateChange('turnChanged', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
     this.checkTriggerBotTurn();
   }
 

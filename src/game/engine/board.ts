@@ -247,4 +247,32 @@ export class Board {
 
     return bestMove;
   }
+
+  public toDTO(forPlayerId?: string) {
+    const playersObj: { [id: string]: any } = {};
+    this.players.forEach((p, id) => {
+      playersObj[id] = {
+        id: p.id,
+        username: p.username,
+        isGuest: p.isGuest,
+        x: p.x,
+        y: p.y,
+        startX: p.startX,
+        startY: p.startY,
+        targetX: p.targetX,
+        targetY: p.targetY,
+        wallsLeft: p.wallsLeft,
+        color: p.color
+      };
+    });
+
+    return {
+      size: this.size,
+      grid: this.grid,
+      walls: this.walls,
+      boosts: this.boosts,
+      players: playersObj,
+      validMoves: forPlayerId ? this.getValidMoves(forPlayerId) : []
+    };
+  }
 }

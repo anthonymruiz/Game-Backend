@@ -287,7 +287,7 @@ export class SocketManager {
           if (game.state === 'finished') {
             socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
           } else {
-            socket.emit('gameStarted', { currentTurn: game.playersList[game.currentTurnIndex], board: game.board });
+            socket.emit('gameStarted', { currentTurn: game.playersList[game.currentTurnIndex], board: game.board.toDTO(userId) });
           }
         } else {
           socket.emit('gameFinished', { winner: null, alreadyFinished: true });
