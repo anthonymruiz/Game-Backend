@@ -25,7 +25,7 @@ export class App {
 
   private initializeMiddlewares(): void {
     this.expressApp.use(cors());
-    this.expressApp.use(helmet());
+    this.expressApp.use(helmet({ contentSecurityPolicy: false }));
     this.expressApp.use(express.json());
   }
 
@@ -39,6 +39,7 @@ export class App {
     this.expressApp.get('/health', (req, res) => {
       res.status(200).json({ status: 'OK' });
     });
+    this.expressApp.use('/', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
   }
 
   private initializeErrorHandling(): void {
