@@ -53,23 +53,25 @@ export class SocketManager {
     this.setupNamespaces();
   }
 
+  private authMiddleware(socket: Socket, next: (err?: any) => void): void {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('Authentication error: Token missing'));
+    try {
+      const decoded: any = jwt.verify(token, ENV.JWT_SECRET);
+      socket.data.user = decoded;
+      next();
+    } catch (err) {
+      next(new Error('Authentication error: Invalid token'));
+    }
+  }
+
   private setupMiddlewares(): void {
-    this.io.use((socket: Socket, next) => {
-      const token = socket.handshake.auth.token;
-      if (!token) return next(new Error('Authentication error: Token missing'));
-      try {
-        const decoded: any = jwt.verify(token, ENV.JWT_SECRET);
-        socket.data.user = decoded;
-        next();
-      } catch (err) {
-        next(new Error('Authentication error: Invalid token'));
-      }
-    });
+    this.io.use((socket, next) => this.authMiddleware(socket, next));
   }
 
   private async updateUserPresence(userId: string, isOnline: boolean, status: PresenceStatus): Promise<void> {
     try {
-      if (userId.startsWith('guest_')) return; // Guests are transient, no DB update
+      if (!userId || userId.startsWith('guest_')) return; // Guests are transient, no DB update
       const userRepo = AppDataSource.getRepository(User);
       await userRepo.update(userId, {
         isOnline,
@@ -82,9 +84,13 @@ export class SocketManager {
   }
 
   private setupNamespaces(): void {
+    const authMw = (socket: Socket, next: (err?: any) => void) => this.authMiddleware(socket, next);
+
     const matchmakingNs = this.io.of('/matchmaking');
+    matchmakingNs.use(authMw);
     matchmakingNs.on('connection', (socket: Socket) => {
       const user = socket.data.user;
+      if (!user) return;
       const userId = user.sub || user.id;
       const username = user.username || `Guest_${userId.substring(0, 4)}`;
       const isGuest = user.role === UserRole.GUEST || user.provider === 'guest';
@@ -214,8 +220,10 @@ export class SocketManager {
     });
 
     const gameNs = this.io.of('/game');
+    gameNs.use(authMw);
     gameNs.on('connection', (socket: Socket) => {
       const user = socket.data.user;
+      if (!user) return;
       const userId = user.sub || user.id;
       const username = user.username || `Guest_${userId.substring(0, 4)}`;
 

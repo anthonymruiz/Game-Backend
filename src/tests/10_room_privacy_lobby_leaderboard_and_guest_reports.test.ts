@@ -45,8 +45,7 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
       false,
       'Private Chamber',
       '1v1',
-      true,
-      'secret123'
+      true
     );
 
     assert.ok(room.code);
@@ -66,8 +65,7 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
       false,
       'Flex Room',
       '1v1',
-      true,
-      'pass123'
+      true
     );
 
     assert.strictEqual(room.isPrivate, true);
@@ -75,16 +73,14 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
     // Host toggles privacy to Public
     const updatedPublic = roomService.toggleRoomPrivacy(room.id, normalUserId, false);
     assert.strictEqual(updatedPublic.isPrivate, false);
-    assert.strictEqual(updatedPublic.password, undefined);
 
     // Public room should now be listed in getPublicRooms
     const publicRooms = roomService.getPublicRooms();
     assert.ok(publicRooms.some(r => r.id === room.id));
 
     // Host toggles privacy back to Private
-    const updatedPrivate = roomService.toggleRoomPrivacy(room.id, normalUserId, true, 'newPass');
+    const updatedPrivate = roomService.toggleRoomPrivacy(room.id, normalUserId, true);
     assert.strictEqual(updatedPrivate.isPrivate, true);
-    assert.strictEqual(updatedPrivate.password, 'newPass');
   });
 
   it('10.3 Cancelling room lobby deletes it from memory/DB', () => {

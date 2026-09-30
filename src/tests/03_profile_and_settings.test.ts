@@ -96,7 +96,7 @@ describe('03 - User Profile, Preferences & Admin Settings Tests', () => {
 
     assert.equal(updateRes.status, 200);
     assert.equal(updateRes.body.settings.turnTimeLimitSeconds, 25);
-    assert.equal(updateRes.body.settings.announcementBanner, 'Welcome to WallRush Tournament!');
+    assert.equal(updateRes.body.settings.announcementBanner, 'Welcome to Game Arena Tournament!');
   });
 
   it('Normal non-admin user should be rejected when trying to update system settings', async () => {

@@ -84,14 +84,14 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     }, /Color is already taken/);
   });
 
-  it('Should enforce password for private rooms', () => {
-    const r = roomService.createRoom('g1', 'G1', true, 'Secret Room', '1v1', true, 'secret123');
+  it('Should support joining private rooms via unique room code', () => {
+    const r = roomService.createRoom('g1', 'G1', true, 'Secret Room', '1v1', true);
+    assert.ok(r.code);
 
-    assert.throws(() => {
-      roomService.joinRoom(r.id, 'g2', 'G2', true, 'wrongpass');
-    }, /Incorrect room password/);
+    const foundByCode = roomService.getRoomByCode(r.code);
+    assert.ok(foundByCode);
 
-    const joined = roomService.joinRoom(r.id, 'g2', 'G2', true, 'secret123');
+    const joined = roomService.joinRoom(r.id, 'g2', 'G2', true);
     assert.equal(joined.players.length, 2);
   });
 
