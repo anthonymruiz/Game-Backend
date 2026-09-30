@@ -1,14 +1,17 @@
 import { Request, Response } from 'express';
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { AuthService } from '../services/auth.service.js';
 import { UserService } from '../services/user.service.js';
 
 @injectable()
 export class AuthController {
-  constructor(
-    private authService: AuthService,
-    private userService: UserService
-  ) {}
+  private authService: AuthService;
+  private userService: UserService;
+
+  constructor() {
+    this.authService = container.resolve(AuthService);
+    this.userService = container.resolve(UserService);
+  }
 
   public register = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -120,5 +123,19 @@ export class AuthController {
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
+  };
+
+  public redirectToGoogle = async (req: Request, res: Response): Promise<void> => {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID || '1082736192847-demo.apps.googleusercontent.com';
+    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/google/callback`;
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${googleClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid%20profile%20email&prompt=select_account`;
+    res.redirect(googleAuthUrl);
+  };
+
+  public redirectToFacebook = async (req: Request, res: Response): Promise<void> => {
+    const facebookAppId = process.env.FACEBOOK_APP_ID || '123456789012345';
+    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/facebook/callback`;
+    const facebookAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${facebookAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=email,public_profile`;
+    res.redirect(facebookAuthUrl);
   };
 }

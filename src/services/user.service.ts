@@ -1,11 +1,15 @@
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { UserRepository } from '../repositories/user.repository.js';
 import { User } from '../models/user.entity.js';
 import { isValidUsernameFormat, isValidEmailFormat } from '../utils/regex.util.js';
 
 @injectable()
 export class UserService {
-  constructor(private userRepository: UserRepository) {}
+  private userRepository: UserRepository;
+
+  constructor() {
+    this.userRepository = container.resolve(UserRepository);
+  }
 
   public async checkUsernameAvailability(username: string): Promise<boolean> {
     if (!username || !isValidUsernameFormat(username)) {

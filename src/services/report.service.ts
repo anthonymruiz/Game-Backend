@@ -62,4 +62,12 @@ export class ReportService {
     report.status = status;
     return this.reportRepository.save(report);
   }
+
+  public async getReports(statusFilter?: string, categoryFilter?: string, page: number = 1, limit: number = 20) {
+    return this.reportRepository.getPaginatedReports(statusFilter, categoryFilter, { page, limit });
+  }
+
+  public async getReportsByUser(userId: string): Promise<Report[]> {
+    return this.reportRepository.findByReportedUserId(userId);
+  }
 }

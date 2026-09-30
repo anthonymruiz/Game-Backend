@@ -1,4 +1,4 @@
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
@@ -15,11 +15,12 @@ import { UserRole } from '../models/user-role.enum.js';
 export class AuthService {
   private readonly SALT_ROUNDS = 10;
   private googleClient: OAuth2Client;
+  private userService: UserService;
+  private userRepository: UserRepository;
 
-  constructor(
-    private userService: UserService,
-    private userRepository: UserRepository
-  ) {
+  constructor() {
+    this.userService = container.resolve(UserService);
+    this.userRepository = container.resolve(UserRepository);
     this.googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || '');
   }
 

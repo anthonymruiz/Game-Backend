@@ -1,10 +1,14 @@
 import { Request, Response } from 'express';
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { ReportService } from '../services/report.service.js';
 
 @injectable()
 export class ReportController {
-  constructor(private reportService: ReportService) {}
+  private reportService: ReportService;
+
+  constructor() {
+    this.reportService = container.resolve(ReportService);
+  }
 
   public createReport = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -33,6 +37,31 @@ export class ReportController {
     } catch (error: any) {
       const statusCode = error.message.includes('not found') ? 404 : 400;
       res.status(statusCode).json({ error: error.message });
+    }
+  };
+
+  public getReports = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { status, category, page, limit } = req.query;
+      const reports = await this.reportService.getReports(
+        status as string,
+        category as string,
+        page ? parseInt(page as string, 10) : 1,
+        limit ? parseInt(limit as string, 10) : 20
+      );
+      res.status(200).json(reports);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  };
+
+  public getReportsByUser = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { userId } = req.params;
+      const reports = await this.reportService.getReportsByUser(userId as string);
+      res.status(200).json({ reports });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
     }
   };
 }

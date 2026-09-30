@@ -245,6 +245,78 @@ const options: swaggerJSDoc.Options = {
           responses: {
             '201': { description: 'Reporte creado' }
           }
+        },
+        get: {
+          summary: 'Obtener reportes con filtros paginados (Solo Admin)',
+          tags: ['Reports'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'status', in: 'query', schema: { type: 'string' } },
+            { name: 'category', in: 'query', schema: { type: 'string' } },
+            { name: 'page', in: 'query', schema: { type: 'integer' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer' } }
+          ],
+          responses: {
+            '200': { description: 'Lista de reportes paginada' }
+          }
+        }
+      },
+      '/api/reports/user/{userId}': {
+        get: {
+          summary: 'Obtener reportes sobre un usuario específico (Solo Admin)',
+          tags: ['Reports'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'userId', in: 'path', required: true, schema: { type: 'string' } }
+          ],
+          responses: {
+            '200': { description: 'Reportes del usuario especificado' }
+          }
+        }
+      },
+      '/api/rooms': {
+        get: {
+          summary: 'Listar todas las salas públicas activas en tiempo real',
+          tags: ['Rooms'],
+          responses: {
+            '200': { description: 'Lista de salas públicas activas' }
+          }
+        },
+        post: {
+          summary: 'Crear una nueva sala de juego',
+          tags: ['Rooms'],
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    mode: { type: 'string', enum: ['1v1', '2v2', '4-FFA', '6-FFA'] },
+                    isPrivate: { type: 'boolean' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '201': { description: 'Sala creada con éxito' }
+          }
+        }
+      },
+      '/api/rooms/code/{code}': {
+        get: {
+          summary: 'Buscar una sala privada o pública por su código único de 6 caracteres',
+          tags: ['Rooms'],
+          parameters: [
+            { name: 'code', in: 'path', required: true, schema: { type: 'string' } }
+          ],
+          responses: {
+            '200': { description: 'Detalles de la sala encontrada' },
+            '404': { description: 'Sala no encontrada' }
+          }
         }
       },
       '/api/admin/users': {

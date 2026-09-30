@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { UserService } from '../services/user.service.js';
 import { AuthService } from '../services/auth.service.js';
 import { UserRepository } from '../repositories/user.repository.js';
@@ -7,11 +7,15 @@ import { Preferences } from '../models/preferences.entity.js';
 
 @injectable()
 export class UserController {
-  constructor(
-    private userService: UserService,
-    private authService: AuthService,
-    private userRepository: UserRepository
-  ) {}
+  private userService: UserService;
+  private authService: AuthService;
+  private userRepository: UserRepository;
+
+  constructor() {
+    this.userService = container.resolve(UserService);
+    this.authService = container.resolve(AuthService);
+    this.userRepository = container.resolve(UserRepository);
+  }
 
   public updateProfile = async (req: Request, res: Response): Promise<void> => {
     try {

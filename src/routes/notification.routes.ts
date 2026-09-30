@@ -4,9 +4,13 @@ import { NotificationController } from '../controllers/notification.controller.j
 import { requireAuth } from '../middlewares/role.middleware.js';
 
 export const notificationRoutes: Router = Router();
-const controller = container.resolve(NotificationController);
+let _controller: NotificationController;
+const getController = () => {
+  if (!_controller) _controller = container.resolve(NotificationController);
+  return _controller;
+};
 
 notificationRoutes.use(requireAuth);
-notificationRoutes.get('/', (req, res) => controller.getAll(req, res));
-notificationRoutes.put('/:id/read', (req, res) => controller.markRead(req, res));
-notificationRoutes.delete('/:id', (req, res) => controller.delete(req, res));
+notificationRoutes.get('/', (req, res) => getController().getAll(req, res));
+notificationRoutes.put('/:id/read', (req, res) => getController().markRead(req, res));
+notificationRoutes.delete('/:id', (req, res) => getController().delete(req, res));

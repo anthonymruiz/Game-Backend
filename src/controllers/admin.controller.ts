@@ -1,10 +1,14 @@
 import { Request, Response } from 'express';
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { AdminService } from '../services/admin.service.js';
 
 @injectable()
 export class AdminController {
-  constructor(private adminService: AdminService) {}
+  private adminService: AdminService;
+
+  constructor() {
+    this.adminService = container.resolve(AdminService);
+  }
 
   public getMetrics = async (req: Request, res: Response): Promise<void> => {
     try {
