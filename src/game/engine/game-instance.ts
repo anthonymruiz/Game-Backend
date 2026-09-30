@@ -21,29 +21,30 @@ export class GameInstance {
     this.mode = mode;
     this.onStateChange = onStateChange;
 
-    const size = 11; // Always 11x11
+    const size = (mode === '1v1' || mode === 'vs_ai' || roomPlayers.length <= 2) ? 9 : 11;
     this.board = new Board(size);
+    const mid = Math.floor(size / 2);
     
     roomPlayers.forEach((p, idx) => {
       this.playersList.push(p.id);
 
-      let startX = 5;
+      let startX = mid;
       let startY = 0;
       let targetY: number | undefined;
       let targetX: number | undefined;
 
       if (idx === 0) {
         // Top side -> Target Bottom
-        startX = 5; startY = 0; targetY = size - 1;
+        startX = mid; startY = 0; targetY = size - 1;
       } else if (idx === 1) {
         // Bottom side -> Target Top
-        startX = 5; startY = size - 1; targetY = 0;
+        startX = mid; startY = size - 1; targetY = 0;
       } else if (idx === 2) {
         // Left side -> Target Right
-        startX = 0; startY = 5; targetX = size - 1;
+        startX = 0; startY = mid; targetX = size - 1;
       } else if (idx === 3) {
         // Right side -> Target Left
-        startX = size - 1; startY = 5; targetX = 0;
+        startX = size - 1; startY = mid; targetX = 0;
       } else if (idx === 4) {
         // Top-Left corner -> Target Bottom-Right
         startX = 0; startY = 0; targetY = size - 1;
@@ -52,7 +53,7 @@ export class GameInstance {
         startX = size - 1; startY = size - 1; targetY = 0;
       }
       
-      const walls = mode === '1v1' ? 10 : 5;
+      const walls = (mode === '1v1' || mode === 'vs_ai' || roomPlayers.length <= 2) ? 10 : 5;
       const playerObj = new Player(
         p.id,
         p.username,

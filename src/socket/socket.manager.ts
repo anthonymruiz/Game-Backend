@@ -284,7 +284,13 @@ export class SocketManager {
         this.updateUserPresence(userId, true, PresenceStatus.PLAYING);
         const game = this.gameService.getGame(roomId);
         if (game) {
-          socket.emit('gameStarted', { currentTurn: game.playersList[game.currentTurnIndex], board: game.board });
+          if (game.state === 'finished') {
+            socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
+          } else {
+            socket.emit('gameStarted', { currentTurn: game.playersList[game.currentTurnIndex], board: game.board });
+          }
+        } else {
+          socket.emit('gameFinished', { winner: null, alreadyFinished: true });
         }
       });
 
