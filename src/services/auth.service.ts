@@ -77,7 +77,7 @@ export class AuthService {
     return { user, token };
   }
 
-  public generateJwt(user: User): string {
+  public generateJwt(user: User | any): string {
     const payload = {
       id: user.id,
       sub: user.id,
@@ -87,7 +87,8 @@ export class AuthService {
       hasUsernameSet: user.hasUsernameSet
     };
 
-    return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn: '7d' });
+    const expiresIn = user.role === UserRole.GUEST || user.role === 'guest' ? '24h' : '7d';
+    return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn });
   }
 
   public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
