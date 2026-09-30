@@ -3,6 +3,8 @@ import { AppDataSource } from '../config/database.config.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { Stats } from '../models/stats.entity.js';
 import { User } from '../models/user.entity.js';
+import { NotificationService } from './notification.service.js';
+import { container } from 'tsyringe';
 
 @singleton()
 export class GameLogService {
@@ -32,11 +34,14 @@ export class GameLogService {
         history.user = user;
         history.matchId = matchId;
         
+        const notifService = container.resolve(NotificationService);
+
         let eloChange = 0;
         if (winnerId === playerId) {
           history.result = 'win';
           stats.wins++;
           eloChange = 15;
+          await notifService.sendNotification(user.id, 'MATCH', 'MATCH_WON_TITLE', 'MATCH_WON_MSG');
         } else if (winnerId === null) {
           history.result = 'draw';
           stats.draws++;
@@ -45,6 +50,7 @@ export class GameLogService {
           history.result = 'loss';
           stats.losses++;
           eloChange = -10;
+          await notifService.sendNotification(user.id, 'MATCH', 'MATCH_LOST_TITLE', 'MATCH_LOST_MSG');
         }
 
         stats.elo += eloChange;

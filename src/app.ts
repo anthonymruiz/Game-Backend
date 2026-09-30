@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import { injectable } from 'tsyringe';
 import authRouter from './routes/auth.routes.js';
 import { adminRoutes } from './routes/admin.routes.js';
+import { notificationRoutes } from './routes/notification.routes.js';
+import { userRoutes } from './routes/user.routes.js';
 
 @injectable()
 export class App {
@@ -24,7 +26,9 @@ export class App {
 
   private initializeRoutes(): void {
     this.expressApp.use('/api/auth', authRouter);
+    this.expressApp.use('/api/users', userRoutes);
     this.expressApp.use('/api/admin', adminRoutes);
+    this.expressApp.use('/api/notifications', notificationRoutes);
     this.expressApp.get('/health', (req, res) => {
       res.status(200).json({ status: 'OK' });
     });
