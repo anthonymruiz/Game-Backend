@@ -34,11 +34,11 @@ export class GameInstance {
       let targetX: number | undefined;
 
       if (idx === 0) {
-        // Top side -> Target Bottom
-        startX = mid; startY = 0; targetY = size - 1;
-      } else if (idx === 1) {
-        // Bottom side -> Target Top
+        // Player 1 (Host/Human) -> Bottom side, target Top row
         startX = mid; startY = size - 1; targetY = 0;
+      } else if (idx === 1) {
+        // Player 2 (Opponent/Bot) -> Top side, target Bottom row
+        startX = mid; startY = 0; targetY = size - 1;
       } else if (idx === 2) {
         // Left side -> Target Right
         startX = 0; startY = mid; targetX = size - 1;

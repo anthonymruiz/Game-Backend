@@ -320,6 +320,10 @@ export class SocketManager {
       socket.on('emote', (data: { roomId: string, emoteId: string }) => {
         gameNs.to(data.roomId).emit('emote', { sender: username, emoteId: data.emoteId });
       });
+
+      socket.on('send_emote', (data: { roomId: string, emoji: string }) => {
+        gameNs.to(data.roomId).emit('emote', { sender: username, emoteId: data.emoji });
+      });
     });
   }
 }
