@@ -23,6 +23,9 @@ export class Wall {
 }
 
 export class Player {
+  public startX: number;
+  public startY: number;
+
   constructor(
     public id: string,
     public username: string,
@@ -33,9 +36,14 @@ export class Player {
     public targetX?: number, // Target column to win (if horizontal goal)
     public wallsLeft: number = 10,
     public strikes: number = 0,
-    public color: string = '#FF3B30',
-    public team?: number
-  ) {}
+    public color: string = '#3b82f6',
+    public team?: number,
+    startX?: number,
+    startY?: number
+  ) {
+    this.startX = startX ?? x;
+    this.startY = startY ?? y;
+  }
 }
 
 export class Boost {

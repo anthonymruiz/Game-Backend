@@ -65,7 +65,9 @@ export class GameInstance {
         walls,
         0,
         p.color,
-        p.team
+        p.team,
+        startX,
+        startY
       );
       this.board.addPlayer(playerObj);
     });

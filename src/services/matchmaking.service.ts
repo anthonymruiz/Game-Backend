@@ -2,7 +2,7 @@ import { singleton, inject } from 'tsyringe';
 import { RedisService } from './redis.service.js';
 import { v4 as uuidv4 } from 'uuid';
 
-export type GameMode = '1v1' | '2v2' | '4way' | '4-FFA' | '6-FFA' | '6-3v3';
+export type GameMode = '1v1' | '2v2' | '4way' | '4-FFA' | '6-FFA' | '6-3v3' | 'vs_ai';
 
 @singleton()
 export class MatchmakingService {
