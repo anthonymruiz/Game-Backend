@@ -12,4 +12,5 @@ export const ENV = {
     PASS: process.env.DB_PASS || '',
     NAME: process.env.DB_NAME || 'wallrush_db',
   },
+  JWT_SECRET: process.env.JWT_SECRET || 'fallback_secret',
 };
