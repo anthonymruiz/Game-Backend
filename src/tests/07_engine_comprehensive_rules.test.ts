@@ -174,8 +174,8 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
     assert.strictEqual(game.state, 'playing');
     assert.strictEqual(game.getCurrentPlayer(), 'p1');
 
-    // P1 moves from (5,0) to (5,1)
-    const moveRes = game.executeMove('p1', 5, 1);
+    // P1 moves from (4,8) to adjacent cell (4,7)
+    const moveRes = game.executeMove('p1', 4, 7);
     assert.strictEqual(moveRes, true);
     // Turn rotates to P2
     assert.strictEqual(game.getCurrentPlayer(), 'p2');

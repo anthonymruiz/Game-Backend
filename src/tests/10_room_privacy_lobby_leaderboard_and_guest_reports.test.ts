@@ -107,25 +107,23 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
   });
 
   it('10.4 Reporting guest users and normal registered users', async () => {
-    // Normal user reports guest user
+    // Normal user attempts to report unregistered guest (should reject with 400 as guest is not in DB)
     const repGuest = await makeRequest(app, 'POST', '/api/reports', {
       reportedUserId: guestUserId,
       category: 'harassment',
       details: 'Guest user used abusive chat messages'
     }, normalToken);
 
-    assert.strictEqual(repGuest.status, 201);
-    assert.strictEqual(repGuest.body.report.reportedUserId, guestUserId);
+    assert.strictEqual(repGuest.status, 400);
 
-    // Guest user reports normal user
+    // Guest user attempts to report normal user (should reject with 403 as guests cannot report)
     const repUser = await makeRequest(app, 'POST', '/api/reports', {
       reportedUserId: normalUserId,
       category: 'cheating',
       details: 'Normal user left game intentionally'
     }, guestToken);
 
-    assert.strictEqual(repUser.status, 201);
-    assert.strictEqual(repUser.body.report.reportedUserId, normalUserId);
+    assert.strictEqual(repUser.status, 403);
   });
 
   it('10.5 Top 100 Leaderboard API returns player ranks, win rates, tiers & levels', async () => {

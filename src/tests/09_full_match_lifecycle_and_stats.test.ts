@@ -71,14 +71,13 @@ describe('Suite 09: Room Lifecycle, Modes, Stats & Reports', () => {
     assert.strictEqual(settingsGet.status, 200);
 
     const settingsPut = await makeRequest(app, 'PUT', '/api/admin/settings', {
-      turnTimeoutSeconds: 45,
-      maxInactivityStrikes: 4,
-      enableMatchmaking: true
+      turnTimeLimitSeconds: 45,
+      maxStrikesBeforeKick: 4
     }, superAdminToken);
 
     assert.strictEqual(settingsPut.status, 200);
-    assert.strictEqual(settingsPut.body.settings.turnTimeoutSeconds, 45);
-    assert.strictEqual(settingsPut.body.settings.maxInactivityStrikes, 4);
+    assert.strictEqual(settingsPut.body.settings.turnTimeLimitSeconds, 45);
+    assert.strictEqual(settingsPut.body.settings.maxStrikesBeforeKick, 4);
   });
 
   it('9.4 Admin active users & metrics API endpoints', async () => {

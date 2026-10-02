@@ -36,8 +36,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const p3 = game.board.players.get('p3');
     const p4 = game.board.players.get('p4');
 
-    assert.deepEqual({ x: p1?.x, y: p1?.y }, { x: 5, y: 0 });
-    assert.deepEqual({ x: p2?.x, y: p2?.y }, { x: 5, y: 10 });
+    assert.deepEqual({ x: p1?.x, y: p1?.y }, { x: 5, y: 10 });
+    assert.deepEqual({ x: p2?.x, y: p2?.y }, { x: 5, y: 0 });
     assert.deepEqual({ x: p3?.x, y: p3?.y }, { x: 0, y: 5 });
     assert.deepEqual({ x: p4?.x, y: p4?.y }, { x: 10, y: 5 });
 

@@ -109,13 +109,13 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.equal(game.getCurrentPlayer(), 'guest_a');
     assert.ok(events.some(e => e.event === 'gameStarted'));
 
-    // Execute valid move for guest_a
-    const moved = game.executeMove('guest_a', 5, 1);
+    // Execute valid move for guest_a (starts at x=4, y=8 -> move to 4, 7)
+    const moved = game.executeMove('guest_a', 4, 7);
     assert.equal(moved, true);
     assert.equal(game.getCurrentPlayer(), 'guest_b');
 
     // Simulate invalid move for guest_a when it's not their turn
-    const invalidTurnMove = game.executeMove('guest_a', 5, 2);
+    const invalidTurnMove = game.executeMove('guest_a', 4, 6);
     assert.equal(invalidTurnMove, false);
   });
 });
