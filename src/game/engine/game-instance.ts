@@ -87,9 +87,10 @@ export class GameInstance {
   private checkTriggerBotTurn() {
     const currentId = this.getCurrentPlayer();
     if (currentId && currentId.startsWith('bot_')) {
+      const thinkDelay = 1200 + Math.floor(Math.random() * 1000);
       setTimeout(() => {
         this.executeBotTurn();
-      }, 500);
+      }, thinkDelay);
     }
   }
 
