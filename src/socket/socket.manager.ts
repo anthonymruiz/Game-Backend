@@ -157,7 +157,7 @@ export class SocketManager {
         }
       });
 
-      socket.on('createRoom', async (data: { name: string; mode: GameMode; isPrivate: boolean }) => {
+      socket.on('createRoom', async (data: { name: string; mode: GameMode; isPrivate: boolean; targetInviteUserId?: string }) => {
         try {
           const { SystemSettingsService } = await import('../services/system-settings.service.js');
           const settingsService = container.resolve(SystemSettingsService);
@@ -179,9 +179,41 @@ export class SocketManager {
           socket.join(room.id);
           socket.emit('roomCreated', room);
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+          if (data.targetInviteUserId) {
+            matchmakingNs.to(data.targetInviteUserId).emit('gameInviteReceived', {
+              inviterUserId: userId,
+              inviterUsername: username,
+              inviterAvatarUrl: avatarUrl,
+              roomId: room.id,
+              roomCode: room.code,
+              mode: room.mode,
+              isPrivate: room.isPrivate
+            });
+          }
         } catch (err: any) {
           socket.emit('error', err.message);
         }
+      });
+
+      socket.on('sendGameInvite', (data: { targetUserId: string; roomId?: string; roomCode?: string; mode?: string }) => {
+        const targetRoom = data.roomCode ? this.roomService.getRoomByCode(data.roomCode) : (data.roomId ? this.roomService.getRoom(data.roomId) : null);
+        matchmakingNs.to(data.targetUserId).emit('gameInviteReceived', {
+          inviterUserId: userId,
+          inviterUsername: username,
+          inviterAvatarUrl: avatarUrl,
+          roomId: targetRoom?.id || data.roomId,
+          roomCode: targetRoom?.code || data.roomCode,
+          mode: targetRoom?.mode || data.mode,
+          isPrivate: targetRoom?.isPrivate ?? true
+        });
+      });
+
+      socket.on('declineGameInvite', (data: { inviterUserId: string }) => {
+        matchmakingNs.to(data.inviterUserId).emit('gameInviteDeclined', {
+          inviteeUserId: userId,
+          inviteeUsername: username
+        });
       });
 
       socket.on('createVsAiRoom', () => {
