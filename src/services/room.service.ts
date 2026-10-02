@@ -4,16 +4,26 @@ import { GameMode } from './matchmaking.service.js';
 import { RoomStatus } from '../models/room-status.enum.js';
 
 export const AVAILABLE_COLORS: string[] = [
-  '#3b82f6', // Blue (Local Player / Host)
-  '#ef4444', // Red (Opponent / Bot)
-  '#f59e0b', // Yellow
-  '#10b981', // Green
-  '#8b5cf6', // Purple
-  '#f97316', // Orange
-  '#06b6d4', // Cyan
-  '#ec4899', // Pink
-  '#94a3b8', // Silver
-  '#1e293b'  // Midnight
+  '#FF3B30', // Red
+  '#007AFF', // Blue
+  '#FFCC00', // Yellow
+  '#34C759', // Green
+  '#AF52DE', // Purple
+  '#FF9500', // Orange
+  '#5AC8FA', // Cyan
+  '#FF2D55', // Pink
+  '#E5E5EA', // Light Gray
+  '#1C1C1E', // Dark Gray
+  '#3b82f6',
+  '#ef4444',
+  '#f59e0b',
+  '#10b981',
+  '#8b5cf6',
+  '#f97316',
+  '#06b6d4',
+  '#ec4899',
+  '#94a3b8',
+  '#1e293b'
 ];
 
 export interface IRoomPlayer {
@@ -22,6 +32,8 @@ export interface IRoomPlayer {
   isGuest: boolean;
   color: string;
   team?: number; // For 2v2 or 6-3v3
+  avatarUrl?: string;
+  provider?: string;
 }
 
 export interface IRoom {
@@ -67,7 +79,9 @@ export class RoomService {
     isGuest: boolean,
     name: string,
     mode: GameMode,
-    isPrivate: boolean = false
+    isPrivate: boolean = false,
+    avatarUrl?: string,
+    provider?: string
   ): IRoom {
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const code = this.generateRoomCode();
@@ -79,7 +93,9 @@ export class RoomService {
       username: hostUsername,
       isGuest,
       color: initialColor,
-      team: mode === '2v2' || mode === '6-3v3' ? 1 : undefined
+      team: mode === '2v2' || mode === '6-3v3' ? 1 : undefined,
+      avatarUrl,
+      provider
     };
 
     const room: IRoom = {
@@ -97,6 +113,26 @@ export class RoomService {
 
     this.rooms.set(roomId, room);
     return room;
+  }
+
+  public getBotNameForColor(colorHex: string): string {
+    if (!colorHex) return 'BOT';
+    const c = colorHex.toUpperCase();
+    let colorName = '';
+
+    if (c === '#007AFF' || c === '#3B82F6') colorName = 'BLUE';
+    else if (c === '#FF3B30' || c === '#EF4444') colorName = 'RED';
+    else if (c === '#FFCC00' || c === '#F59E0B') colorName = 'YELLOW';
+    else if (c === '#34C759' || c === '#10B981') colorName = 'GREEN';
+    else if (c === '#AF52DE' || c === '#8B5CF6') colorName = 'PURPLE';
+    else if (c === '#FF9500' || c === '#F97316') colorName = 'ORANGE';
+    else if (c === '#5AC8FA' || c === '#06B6D4') colorName = 'CYAN';
+    else if (c === '#FF2D55' || c === '#EC4899') colorName = 'PINK';
+    else if (c === '#E5E5EA' || c === '#94A3B8') colorName = 'SILVER';
+    else if (c === '#1C1C1E' || c === '#1E293B') colorName = 'BLACK';
+    else colorName = c;
+
+    return `BOT - ${colorName}`;
   }
 
   public createVsAiRoom(
@@ -119,11 +155,66 @@ export class RoomService {
 
     room.players.push({
       id: botId,
-      username: '🤖 Bot AI (Training)',
+      username: this.getBotNameForColor(availableColor),
       isGuest: true,
       color: availableColor
     });
 
+    return room;
+  }
+
+  public addBotToCustomRoom(roomId: string, hostId: string): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.hostId !== hostId) throw new Error('Only the room host can add bots.');
+    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2') {
+      throw new Error('Bots are allowed in 2v2, 4-FFA or 6-FFA modes.');
+    }
+    if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
+
+    const botId = `bot_${uuidv4().substring(0, 6)}`;
+
+    let assignedColor = '';
+    let team: number | undefined = undefined;
+
+    if (room.mode === '2v2') {
+      const redHex = AVAILABLE_COLORS[0];
+      const blueHex = AVAILABLE_COLORS[1];
+      const redCount = room.players.filter(p => p.color && p.color.toUpperCase() === redHex.toUpperCase()).length;
+      const blueCount = room.players.filter(p => p.color && p.color.toUpperCase() === blueHex.toUpperCase()).length;
+
+      if (redCount < 2) {
+        assignedColor = redHex;
+        team = 1;
+      } else if (blueCount < 2) {
+        assignedColor = blueHex;
+        team = 2;
+      } else {
+        assignedColor = '';
+        team = undefined;
+      }
+    } else {
+      const usedColors = new Set(room.players.map(p => p.color ? p.color.toUpperCase() : ''));
+      assignedColor = AVAILABLE_COLORS.find(c => !usedColors.has(c.toUpperCase())) || '';
+    }
+
+    room.players.push({
+      id: botId,
+      username: this.getBotNameForColor(assignedColor),
+      isGuest: true,
+      color: assignedColor,
+      team
+    });
+
+    return room;
+  }
+
+  public removeBotFromCustomRoom(roomId: string, hostId: string, botId: string): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.hostId !== hostId) throw new Error('Only the room host can remove bots.');
+
+    room.players = room.players.filter(p => p.id !== botId);
     return room;
   }
 
@@ -156,7 +247,7 @@ export class RoomService {
   public getPublicRooms(): IRoom[] {
     const list: IRoom[] = [];
     for (const r of this.rooms.values()) {
-      if (!r.isPrivate && r.status === RoomStatus.WAITING) {
+      if (!r.isPrivate && r.status === RoomStatus.WAITING && r.players.length < r.maxPlayers) {
         list.push(r);
       }
     }
@@ -167,56 +258,157 @@ export class RoomService {
     return this.rooms.get(roomId) || null;
   }
 
-  public joinRoom(roomId: string, userId: string, username: string, isGuest: boolean): IRoom {
+  public joinRoom(
+    roomId: string,
+    userId: string,
+    username: string,
+    isGuest: boolean,
+    avatarUrl?: string,
+    provider?: string
+  ): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.status !== RoomStatus.WAITING) throw new Error('Game already in progress');
     if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
 
     if (!room.players.some(p => p.id === userId)) {
-      // Pick first available unused color
-      const usedColors = new Set(room.players.map(p => p.color));
-      const availableColor = AVAILABLE_COLORS.find(c => !usedColors.has(c)) || AVAILABLE_COLORS[room.players.length % AVAILABLE_COLORS.length];
+      let assignedColor = '';
+      let team: number | undefined = undefined;
 
-      // Assign team if team mode
-      let team: number | undefined;
-      if (room.mode === '2v2') {
-        team = room.players.length % 2 === 0 ? 1 : 2;
-      } else if (room.mode === '6-3v3') {
-        team = room.players.length < 3 ? 1 : 2;
+      if (room.mode === '2v2' || room.mode === '6-3v3') {
+        const redHex = AVAILABLE_COLORS[0];
+        const blueHex = AVAILABLE_COLORS[1];
+        const redCount = room.players.filter(p => p.color && p.color.toUpperCase() === redHex.toUpperCase()).length;
+        const blueCount = room.players.filter(p => p.color && p.color.toUpperCase() === blueHex.toUpperCase()).length;
+
+        if (redCount <= blueCount && redCount < 2) {
+          assignedColor = redHex;
+          team = 1;
+        } else if (blueCount < 2) {
+          assignedColor = blueHex;
+          team = 2;
+        } else if (redCount < 2) {
+          assignedColor = redHex;
+          team = 1;
+        } else {
+          assignedColor = '';
+          team = undefined;
+        }
+      } else {
+        const usedColors = new Set(room.players.map(p => p.color ? p.color.toUpperCase() : ''));
+        assignedColor = AVAILABLE_COLORS.find(c => !usedColors.has(c.toUpperCase())) || '';
       }
 
       room.players.push({
         id: userId,
         username,
         isGuest,
-        color: availableColor,
-        team
+        color: assignedColor,
+        team,
+        avatarUrl,
+        provider
       });
     }
 
     return room;
   }
 
-  public selectPlayerColor(roomId: string, userId: string, newColor: string): IRoom {
+  public selectPlayerColor(roomId: string, userId: string, newColor: string, targetUserId?: string): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
 
-    if (!AVAILABLE_COLORS.includes(newColor)) {
+    const effectiveUserId = (targetUserId && targetUserId.startsWith('bot_')) ? targetUserId : userId;
+    if (effectiveUserId !== userId && room.hostId !== userId) {
+      throw new Error('Only the room host can change a bot\'s color.');
+    }
+
+    const player = room.players.find(p => p.id === effectiveUserId);
+    if (!player) throw new Error('Player not found in room');
+
+    if (!newColor || typeof newColor !== 'string' || newColor.trim() === '' || newColor === 'null' || newColor === 'none') {
+      player.color = '';
+      player.team = undefined;
+      return room;
+    }
+
+    const normalizedColor = newColor.trim().toUpperCase();
+    const isValidColor = AVAILABLE_COLORS.some(c => c.toUpperCase() === normalizedColor);
+    if (!isValidColor) {
       throw new Error('Invalid color selected');
     }
 
-    const isColorTaken = room.players.some(p => p.id !== userId && p.color === newColor);
-    if (isColorTaken) {
-      throw new Error('Color is already taken by another participant');
+    const maxPlayersPerColor = (room.mode === '2v2' || room.mode === '6-3v3') ? 2 : 1;
+    const usersWithColor = room.players.filter(p => p.id !== effectiveUserId && p.color && p.color.toUpperCase() === normalizedColor).length;
+
+    if (usersWithColor >= maxPlayersPerColor) {
+      throw new Error('Color is already taken by the maximum number of participants');
     }
 
-    const player = room.players.find(p => p.id === userId);
-    if (player) {
-      player.color = newColor;
+    player.color = newColor;
+
+    if (player.id.startsWith('bot_')) {
+      player.username = this.getBotNameForColor(newColor);
+    }
+
+    if (room.mode === '2v2' || room.mode === '6-3v3') {
+      const redHex = AVAILABLE_COLORS[0].toUpperCase();
+      player.team = normalizedColor === redHex ? 1 : 2;
     }
 
     return room;
+  }
+
+  public switchTeam(roomId: string, userId: string): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.mode !== '2v2' && room.mode !== '6-3v3') throw new Error('Team switching is only supported in team modes');
+
+    const player = room.players.find(p => p.id === userId);
+    if (!player) throw new Error('Player not in room');
+
+    const currentTeam = player.team || 1;
+    const targetTeam = currentTeam === 1 ? 2 : 1;
+    const maxTeamSize = room.maxPlayers / 2;
+
+    const targetTeamCount = room.players.filter(p => p.team === targetTeam).length;
+    if (targetTeamCount >= maxTeamSize) {
+      throw new Error('Target team is full');
+    }
+
+    player.team = targetTeam;
+
+    // Sync color with new teammate if exists
+    const teammate = room.players.find(p => p.id !== userId && p.team === targetTeam);
+    if (teammate) {
+      player.color = teammate.color;
+    }
+
+    return room;
+  }
+
+  constructor() {
+    // Automatic Room Garbage Collection every 20 seconds
+    const timer = setInterval(() => {
+      this.cleanupAbandonedRooms();
+    }, 20000);
+    if (timer.unref) timer.unref();
+  }
+
+  public cleanupAbandonedRooms(): void {
+    const now = Date.now();
+    for (const [roomId, room] of this.rooms.entries()) {
+      const realHumans = room.players.filter(p => !p.id.startsWith('bot_'));
+      if (room.players.length === 0 || realHumans.length === 0) {
+        console.log(`[ROOM GC] Auto-deleting empty room ${roomId}`);
+        this.rooms.delete(roomId);
+        continue;
+      }
+      // Clean up rooms waiting for more than 20 minutes
+      if (room.status === RoomStatus.WAITING && (now - new Date(room.createdAt).getTime()) > 20 * 60 * 1000) {
+        console.log(`[ROOM GC] Auto-deleting stale unstarted room ${roomId}`);
+        this.rooms.delete(roomId);
+      }
+    }
   }
 
   public leaveRoom(roomId: string, userId: string): IRoom | null {
@@ -224,15 +416,16 @@ export class RoomService {
     if (!room) return null;
 
     room.players = room.players.filter(p => p.id !== userId);
+    const realHumans = room.players.filter(p => !p.id.startsWith('bot_'));
 
-    if (room.players.length === 0) {
+    if (room.players.length === 0 || realHumans.length === 0) {
       this.rooms.delete(roomId);
       return null;
     }
 
-    // If host left, pass host status to next player
+    // If host left, pass host status to next human player
     if (room.hostId === userId) {
-      room.hostId = room.players[0].id;
+      room.hostId = realHumans[0].id;
     }
 
     return room;

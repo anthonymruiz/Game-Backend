@@ -39,7 +39,9 @@ export class Player {
     public color: string = '#3b82f6',
     public team?: number,
     startX?: number,
-    startY?: number
+    startY?: number,
+    public avatarUrl?: string,
+    public provider?: string
   ) {
     this.startX = startX ?? x;
     this.startY = startY ?? y;

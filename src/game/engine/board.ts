@@ -28,9 +28,12 @@ export class Board {
     }
   }
 
-  public getValidMoves(playerId: string): Coordinate[] {
+  public getValidMoves(playerId: string, fromX?: number, fromY?: number): Coordinate[] {
     const player = this.players.get(playerId);
     if (!player) return [];
+
+    const px = fromX !== undefined ? fromX : player.x;
+    const py = fromY !== undefined ? fromY : player.y;
 
     const validMoves: Coordinate[] = [];
     const directions = [
@@ -41,15 +44,15 @@ export class Board {
     ];
 
     for (const dir of directions) {
-      const nx = player.x + dir.dx;
-      const ny = player.y + dir.dy;
+      const nx = px + dir.dx;
+      const ny = py + dir.dy;
 
       // Check bounds & wall block between player and adjacent cell
       if (nx >= 0 && nx < this.size && ny >= 0 && ny < this.size) {
-        if (!this.isWallBlocking(player.x, player.y, nx, ny)) {
+        if (!this.isWallBlocking(px, py, nx, ny)) {
           const occupant = this.grid[ny][nx].hasPlayer;
 
-          if (!occupant) {
+          if (!occupant || occupant === playerId) {
             // Unoccupied cell: standard move
             validMoves.push({ x: nx, y: ny });
           } else {
@@ -179,6 +182,15 @@ export class Board {
     return true;
   }
 
+  private isGoalReached(x: number, y: number, targetY?: number, targetX?: number): boolean {
+    if (targetX !== undefined && targetY !== undefined) {
+      return x === targetX && y === targetY;
+    }
+    if (targetY !== undefined && y === targetY) return true;
+    if (targetX !== undefined && x === targetX) return true;
+    return false;
+  }
+
   private hasPath(player: Player): boolean {
     const queue: Coordinate[] = [{ x: player.x, y: player.y }];
     const visited = new Set<string>();
@@ -188,8 +200,7 @@ export class Board {
       const { x, y } = queue.shift()!;
 
       // Target condition check
-      if (player.targetY !== undefined && y === player.targetY) return true;
-      if (player.targetX !== undefined && x === player.targetX) return true;
+      if (this.isGoalReached(x, y, player.targetY, player.targetX)) return true;
 
       const neighbors = [
         { x: x + 1, y }, { x: x - 1, y },
@@ -221,31 +232,266 @@ export class Board {
     }
   }
 
-  public getBestMove(playerId: string): { x: number; y: number } | null {
+  public findShortestPath(playerId: string): Coordinate[] {
     const player = this.players.get(playerId);
-    if (!player) return null;
+    if (!player) return [];
 
-    const validMoves = this.getValidMoves(playerId);
-    if (validMoves.length === 0) return null;
+    const queue: { x: number; y: number; path: Coordinate[] }[] = [
+      { x: player.x, y: player.y, path: [{ x: player.x, y: player.y }] }
+    ];
+    const visited = new Set<string>();
+    visited.add(`${player.x},${player.y}`);
 
-    let bestMove = validMoves[0];
-    let minDistance = Infinity;
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const { x, y, path } = current;
 
-    for (const move of validMoves) {
-      let dist = Infinity;
-      if (player.targetY !== undefined) {
-        dist = Math.abs(move.y - player.targetY);
-      } else if (player.targetX !== undefined) {
-        dist = Math.abs(move.x - player.targetX);
-      }
+      if (this.isGoalReached(x, y, player.targetY, player.targetX)) return path;
 
-      if (dist < minDistance) {
-        minDistance = dist;
-        bestMove = move;
+      const neighbors = [
+        { x: x, y: y - 1 },
+        { x: x, y: y + 1 },
+        { x: x - 1, y: y },
+        { x: x + 1, y: y }
+      ];
+
+      for (const n of neighbors) {
+        if (n.x >= 0 && n.x < this.size && n.y >= 0 && n.y < this.size) {
+          if (!this.isWallBlocking(x, y, n.x, n.y)) {
+            const key = `${n.x},${n.y}`;
+            if (!visited.has(key)) {
+              visited.add(key);
+              queue.push({
+                x: n.x,
+                y: n.y,
+                path: [...path, { x: n.x, y: n.y }]
+              });
+            }
+          }
+        }
       }
     }
 
-    return bestMove;
+    return [];
+  }
+
+  public getShortestPathLength(startX: number, startY: number, targetY?: number, targetX?: number, playerId?: string): number {
+    if (playerId) {
+      const path = this.findShortestPath(playerId);
+      if (path.length > 0) return path.length - 1;
+    }
+    const queue: { x: number; y: number; dist: number }[] = [{ x: startX, y: startY, dist: 0 }];
+    const visited = new Set<string>();
+    visited.add(`${startX},${startY}`);
+
+    while (queue.length > 0) {
+      const { x, y, dist } = queue.shift()!;
+
+      if (this.isGoalReached(x, y, targetY, targetX)) return dist;
+
+      const neighbors = [
+        { x: x + 1, y }, { x: x - 1, y },
+        { x, y: y + 1 }, { x, y: y - 1 }
+      ];
+
+      for (const n of neighbors) {
+        if (n.x >= 0 && n.x < this.size && n.y >= 0 && n.y < this.size) {
+          if (!this.isWallBlocking(x, y, n.x, n.y)) {
+            const key = `${n.x},${n.y}`;
+            if (!visited.has(key)) {
+              visited.add(key);
+              queue.push({ x: n.x, y: n.y, dist: dist + 1 });
+            }
+          }
+        }
+      }
+    }
+    return Infinity;
+  }
+
+  public canPlaceWall(wall: Wall): boolean {
+    if (wall.x < 0 || wall.y < 0) return false;
+    if (wall.isHorizontal && wall.x + 1 >= this.size) return false;
+    if (!wall.isHorizontal && wall.y + 1 >= this.size) return false;
+    if (this.doesWallOverlap(wall)) return false;
+    return true;
+  }
+
+  public getBotAction(botId: string): { type: 'move'; x: number; y: number } | { type: 'wall'; x: number; y: number; isHorizontal: boolean } | null {
+    const bot = this.players.get(botId);
+    if (!bot) return null;
+
+    // Separate all other players into enemies and teammates based on team
+    const enemies: Player[] = [];
+    const teammates: Player[] = [];
+
+    for (const [id, p] of this.players.entries()) {
+      if (id === botId) continue;
+      if (bot.team !== undefined && bot.team !== 0 && p.team === bot.team) {
+        teammates.push(p);
+      } else {
+        enemies.push(p);
+      }
+    }
+
+    const botPath = this.findShortestPath(botId);
+    const botDist = botPath.length > 0 ? botPath.length - 1 : Infinity;
+
+    // Calculate current shortest path distances for all enemies and teammates
+    const enemyDists = new Map<string, number>();
+    enemies.forEach(e => {
+      const p = this.findShortestPath(e.id);
+      enemyDists.set(e.id, p.length > 0 ? p.length - 1 : Infinity);
+    });
+
+    const teammateDists = new Map<string, number>();
+    teammates.forEach(t => {
+      const p = this.findShortestPath(t.id);
+      teammateDists.set(t.id, p.length > 0 ? p.length - 1 : Infinity);
+    });
+
+    // Find the leading enemy (the one closest to winning)
+    let leadingEnemy: Player | null = null;
+    let minEnemyDist = Infinity;
+    enemies.forEach(e => {
+      const d = enemyDists.get(e.id) ?? Infinity;
+      if (d < minEnemyDist) {
+        minEnemyDist = d;
+        leadingEnemy = e;
+      }
+    });
+
+    // 1. SMART & TACTICAL WALL PLACEMENT AI
+    if (enemies.length > 0 && bot.wallsLeft > 0 && minEnemyDist !== Infinity) {
+      let bestWall: { x: number; y: number; isHorizontal: boolean } | null = null;
+      let maxEnemyIncrease = 0;
+      let bestScore = -10000;
+
+      for (let wx = 0; wx < this.size - 1; wx++) {
+        for (let wy = 0; wy < this.size - 1; wy++) {
+          for (const isHoriz of [true, false]) {
+            const testWall = new Wall('temp', botId, wx, wy, isHoriz);
+
+            if (this.canPlaceWall(testWall)) {
+              this.walls.push(testWall);
+
+              if (this.isValidState()) {
+                const newBotPath = this.findShortestPath(botId);
+                const newBotDist = newBotPath.length > 0 ? newBotPath.length - 1 : Infinity;
+                const botIncrease = newBotDist - botDist;
+
+                // Wall MUST NOT block bot from having a valid path
+                if (newBotDist !== Infinity && botIncrease <= 1) {
+                  // Check that wall doesn't harm any teammate
+                  let harmsTeammate = false;
+                  for (const t of teammates) {
+                    const origTDist = teammateDists.get(t.id) ?? Infinity;
+                    const newTPath = this.findShortestPath(t.id);
+                    const newTDist = newTPath.length > 0 ? newTPath.length - 1 : Infinity;
+                    if (newTDist === Infinity || (newTDist - origTDist) > 0) {
+                      harmsTeammate = true;
+                      break;
+                    }
+                  }
+
+                  if (!harmsTeammate) {
+                    // Evaluate impact on enemies
+                    let currentMaxIncreaseForWall = 0;
+                    let wallScore = -(botIncrease * 40);
+
+                    for (const e of enemies) {
+                      const origEDist = enemyDists.get(e.id) ?? Infinity;
+                      if (origEDist === Infinity) continue;
+
+                      const newEPath = this.findShortestPath(e.id);
+                      const newEDist = newEPath.length > 0 ? newEPath.length - 1 : Infinity;
+                      if (newEDist === Infinity) continue;
+
+                      const eIncrease = newEDist - origEDist;
+                      if (eIncrease > currentMaxIncreaseForWall) {
+                        currentMaxIncreaseForWall = eIncrease;
+                      }
+
+                      if (eIncrease >= 1) {
+                        const isLeading = leadingEnemy && e.id === leadingEnemy.id;
+                        const weight = isLeading ? 120 : 70;
+                        const distToEnemy = Math.abs(wx - e.x) + Math.abs(wy - e.y);
+                        wallScore += (eIncrease * weight) - (distToEnemy * 2);
+                      }
+                    }
+
+                    if (currentMaxIncreaseForWall >= 1 && wallScore > bestScore) {
+                      bestScore = wallScore;
+                      maxEnemyIncrease = currentMaxIncreaseForWall;
+                      bestWall = { x: wx, y: wy, isHorizontal: isHoriz };
+                    }
+                  }
+                }
+              }
+
+              this.walls.pop();
+            }
+          }
+        }
+      }
+
+      // Decide whether to place wall or move pawn:
+      if (bestWall && maxEnemyIncrease >= 1) {
+        const isCriticalBlock = maxEnemyIncrease >= 2;
+        const isEnemyClose = minEnemyDist <= 3;
+        const isEnemyAhead = minEnemyDist < botDist && Math.random() < 0.45;
+
+        if (isCriticalBlock || isEnemyClose || isEnemyAhead) {
+          return { type: 'wall', ...bestWall };
+        }
+      }
+    }
+
+    // 2. PAWN MOVEMENT (Follow reconstructed BFS path)
+    if (botPath.length > 1) {
+      const nextStep = botPath[1];
+      const validMoves = this.getValidMoves(botId);
+
+      const directMove = validMoves.find(m => m.x === nextStep.x && m.y === nextStep.y);
+      if (directMove) {
+        return { type: 'move', x: directMove.x, y: directMove.y };
+      }
+
+      // If nextStep is occupied, pick valid jump/side move that minimizes distance to target
+      let bestJumpMove = validMoves[0];
+      let minJumpDist = Infinity;
+      for (const m of validMoves) {
+        const dist = this.getShortestPathLength(m.x, m.y, bot.targetY, bot.targetX);
+        if (dist < minJumpDist) {
+          minJumpDist = dist;
+          bestJumpMove = m;
+        }
+      }
+      if (bestJumpMove) {
+        return { type: 'move', x: bestJumpMove.x, y: bestJumpMove.y };
+      }
+    }
+
+    // Fallback valid move
+    const validMoves = this.getValidMoves(botId);
+    if (validMoves.length > 0) {
+      return { type: 'move', x: validMoves[0].x, y: validMoves[0].y };
+    }
+
+    return null;
+  }
+
+  public getBestMove(playerId: string): { x: number; y: number } | null {
+    const action = this.getBotAction(playerId);
+    if (action && action.type === 'move') {
+      return { x: action.x, y: action.y };
+    }
+    const path = this.findShortestPath(playerId);
+    if (path.length > 1) {
+      return { x: path[1].x, y: path[1].y };
+    }
+    const validMoves = this.getValidMoves(playerId);
+    return validMoves.length > 0 ? { x: validMoves[0].x, y: validMoves[0].y } : null;
   }
 
   public toDTO(forPlayerId?: string) {
@@ -262,7 +508,10 @@ export class Board {
         targetX: p.targetX,
         targetY: p.targetY,
         wallsLeft: p.wallsLeft,
-        color: p.color
+        color: p.color,
+        team: p.team,
+        avatarUrl: p.avatarUrl,
+        provider: p.provider
       };
     });
 

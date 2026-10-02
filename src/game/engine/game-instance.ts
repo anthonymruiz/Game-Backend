@@ -2,10 +2,17 @@ import { Board } from './board.js';
 import { Player, Wall } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
 import { IRoomPlayer } from '../../services/room.service.js';
+import { GameModeRegistry, IGameModeRules } from './game-modes.js';
+
+export interface IGameInstanceOptions {
+  turnTimeLimitSeconds?: number;
+  maxStrikesBeforeKick?: number;
+}
 
 export class GameInstance {
   public id: string;
   public mode: GameMode;
+  public rules: IGameModeRules;
   public board: Board;
   public playersList: string[] = [];
   public currentTurnIndex: number = 0;
@@ -13,61 +20,54 @@ export class GameInstance {
   public state: 'waiting' | 'playing' | 'finished' = 'waiting';
   public winner: string | null = null;
   
+  public turnTimeLimitSeconds: number = 30;
+  public maxStrikesBeforeKick: number = 3;
+
   private turnTimer: NodeJS.Timeout | null = null;
   public onStateChange: (event: string, data: any) => void;
 
-  constructor(id: string, mode: GameMode, roomPlayers: IRoomPlayer[], onStateChange: (event: string, data: any) => void) {
+  constructor(
+    id: string, 
+    mode: GameMode, 
+    roomPlayers: IRoomPlayer[], 
+    onStateChange: (event: string, data: any) => void,
+    options?: IGameInstanceOptions
+  ) {
     this.id = id;
     this.mode = mode;
     this.onStateChange = onStateChange;
+    this.rules = GameModeRegistry.get(mode);
 
-    const size = (mode === '1v1' || mode === 'vs_ai' || roomPlayers.length <= 2) ? 9 : 11;
+    if (options?.turnTimeLimitSeconds && options.turnTimeLimitSeconds >= 10 && options.turnTimeLimitSeconds <= 60) {
+      this.turnTimeLimitSeconds = options.turnTimeLimitSeconds;
+    }
+    if (options?.maxStrikesBeforeKick && options.maxStrikesBeforeKick >= 1) {
+      this.maxStrikesBeforeKick = options.maxStrikesBeforeKick;
+    }
+
+    const size = this.rules.boardSize;
     this.board = new Board(size);
-    const mid = Math.floor(size / 2);
     
     roomPlayers.forEach((p, idx) => {
       this.playersList.push(p.id);
 
-      let startX = mid;
-      let startY = 0;
-      let targetY: number | undefined;
-      let targetX: number | undefined;
-
-      if (idx === 0) {
-        // Player 1 (Host/Human) -> Bottom side, target Top row
-        startX = mid; startY = size - 1; targetY = 0;
-      } else if (idx === 1) {
-        // Player 2 (Opponent/Bot) -> Top side, target Bottom row
-        startX = mid; startY = 0; targetY = size - 1;
-      } else if (idx === 2) {
-        // Left side -> Target Right
-        startX = 0; startY = mid; targetX = size - 1;
-      } else if (idx === 3) {
-        // Right side -> Target Left
-        startX = size - 1; startY = mid; targetX = 0;
-      } else if (idx === 4) {
-        // Top-Left corner -> Target Bottom-Right
-        startX = 0; startY = 0; targetY = size - 1;
-      } else if (idx === 5) {
-        // Bottom-Right corner -> Target Top-Left
-        startX = size - 1; startY = size - 1; targetY = 0;
-      }
-      
-      const walls = (mode === '1v1' || mode === 'vs_ai' || roomPlayers.length <= 2) ? 10 : 5;
+      const startCfg = this.rules.getPlayerStartConfig(idx, roomPlayers.length, size, p.team);
       const playerObj = new Player(
         p.id,
         p.username,
         p.isGuest,
-        startX,
-        startY,
-        targetY,
-        targetX,
-        walls,
+        startCfg.startX,
+        startCfg.startY,
+        startCfg.targetY,
+        startCfg.targetX,
+        this.rules.wallsPerPlayer,
         0,
         p.color,
-        p.team,
-        startX,
-        startY
+        p.team || startCfg.team,
+        startCfg.startX,
+        startCfg.startY,
+        p.avatarUrl,
+        p.provider
       );
       this.board.addPlayer(playerObj);
     });
@@ -94,19 +94,18 @@ export class GameInstance {
     const botId = this.getCurrentPlayer();
     if (!botId || !botId.startsWith('bot_')) return;
 
-    const bestMove = this.board.getBestMove(botId);
-    if (bestMove) {
-      this.executeMove(botId, bestMove.x, bestMove.y);
+    const action = this.board.getBotAction(botId);
+    if (action) {
+      if (action.type === 'move') {
+        this.executeMove(botId, action.x, action.y);
+      } else if (action.type === 'wall') {
+        const wallId = `wall_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        this.executeWall(botId, wallId, action.x, action.y, action.isHorizontal);
+      }
     } else {
-      const p = this.board.players.get(botId);
-      if (p) {
-        const neighbors = [
-          { x: p.x + 1, y: p.y }, { x: p.x - 1, y: p.y },
-          { x: p.x, y: p.y + 1 }, { x: p.x, y: p.y - 1 }
-        ];
-        for (const n of neighbors) {
-          if (this.executeMove(botId, n.x, n.y)) break;
-        }
+      const bestMove = this.board.getBestMove(botId);
+      if (bestMove) {
+        this.executeMove(botId, bestMove.x, bestMove.y);
       }
     }
   }
@@ -114,9 +113,10 @@ export class GameInstance {
   private startTurnTimer() {
     if (this.turnTimer) clearTimeout(this.turnTimer);
     
+    const timeoutMs = this.turnTimeLimitSeconds * 1000;
     this.turnTimer = setTimeout(() => {
       this.handleTimeout();
-    }, 30000); // 30 seconds turn limit
+    }, timeoutMs);
     if (this.turnTimer && typeof this.turnTimer.unref === 'function') {
       this.turnTimer.unref();
     }
@@ -145,7 +145,7 @@ export class GameInstance {
     player.strikes++;
     this.onStateChange('playerStrike', { playerId: pId, strikes: player.strikes });
 
-    if (player.strikes >= 3) {
+    if (player.strikes >= this.maxStrikesBeforeKick) {
       this.kickPlayer(pId);
     } else {
       this.nextTurn();
@@ -215,14 +215,21 @@ export class GameInstance {
     const player = this.board.players.get(playerId);
     if (!player) return;
 
-    let isWin = false;
-    if (player.targetY !== undefined && player.y === player.targetY) isWin = true;
-    if (player.targetX !== undefined && player.x === player.targetX) isWin = true;
-
-    if (isWin) {
+    if (this.rules.checkWinCondition(player, this.board)) {
       this.winner = playerId;
       this.endGame();
     }
+  }
+
+  public surrender(surrenderingUserId: string) {
+    if (this.state !== 'playing') return;
+
+    const remaining = this.playersList.filter(id => id !== surrenderingUserId);
+    this.winner = remaining[0] || null;
+    this.state = 'finished';
+    if (this.turnTimer) clearTimeout(this.turnTimer);
+
+    this.onStateChange('gameFinished', { winner: this.winner, surrenderedBy: surrenderingUserId });
   }
 
   private endGame() {
