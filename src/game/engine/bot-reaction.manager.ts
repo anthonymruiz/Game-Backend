@@ -27,23 +27,24 @@ export const BOT_EMOJIS = {
 } as const;
 
 export const BOT_REACTION_TIMINGS = {
-  COOLDOWN_MS: 7000,
-  SLOW_TURN_THRESHOLD_SEC: 10,
-  SLOW_TURN_CHECK_INTERVAL_MS: 3000,
-  MIN_DELAY_MS: 400,
-  MAX_DELAY_MS: 900
+  COOLDOWN_MS: 4500, // 4.5s cooldown so bots react dynamically in 1v1 / vs_ai / FFA
+  SLOW_TURN_THRESHOLD_SEC: 8, // 8s threshold for slow turns
+  SLOW_TURN_CHECK_INTERVAL_MS: 2500,
+  MIN_DELAY_MS: 300,
+  MAX_DELAY_MS: 750
 } as const;
 
 export const BOT_REACTION_PROBABILITIES = {
-  SLOW_TURN_ENEMY: 0.4,
-  SLOW_TURN_TEAMMATE: 0.25,
-  BOT_BLOCKED_ENEMY: 0.5,
-  ENEMY_BLOCKED_BOT: 0.5,
+  SLOW_TURN_ENEMY: 0.5,
+  SLOW_TURN_TEAMMATE: 0.3,
+  BOT_BLOCKED_ENEMY: 0.55,
+  ENEMY_BLOCKED_BOT: 0.55,
   TEAMMATE_BLOCKED_ENEMY: 0.5,
-  ENEMY_NEAR_WIN: 0.4,
-  TEAMMATE_NEAR_WIN: 0.4,
-  VICTORY_CELEBRATION: 0.7,
-  DEFEAT_REACTION: 0.5
+  ENEMY_NEAR_WIN: 0.45,
+  TEAMMATE_NEAR_WIN: 0.45,
+  BOT_ADVANCING: 0.35,
+  VICTORY_CELEBRATION: 0.8,
+  DEFEAT_REACTION: 0.6
 } as const;
 
 const PHRASE_GROUPS = {
@@ -144,7 +145,7 @@ export class BotReactionManager {
     const activeBots = this.getActiveBots();
     if (activeBots.length === 0) return;
 
-    const isPlacerBot = placerId.startsWith('bot_');
+    const isPlacerBot = this.isBotPlayer(placer);
 
     if (isPlacerBot) {
       // Bot placed wall
@@ -159,7 +160,7 @@ export class BotReactionManager {
         }
       }
 
-      if (lengthenedEnemy && this.canBotReact(bot.id) && Math.random() < BOT_REACTION_PROBABILITIES.BOT_BLOCKED_ENEMY) {
+      if ((lengthenedEnemy || this.game.mode === 'vs_ai' || this.game.mode === '1v1') && this.canBotReact(bot.id) && Math.random() < BOT_REACTION_PROBABILITIES.BOT_BLOCKED_ENEMY) {
         const isPhrase = Math.random() < 0.5;
         const text = isPhrase 
           ? this.getRandomItem(PHRASE_GROUPS.TAUNT_ENEMY)
@@ -188,7 +189,7 @@ export class BotReactionManager {
             }
           }
 
-          if (blockedBotOrTeammate && Math.random() < BOT_REACTION_PROBABILITIES.ENEMY_BLOCKED_BOT) {
+          if ((blockedBotOrTeammate || Math.random() < 0.3) && Math.random() < BOT_REACTION_PROBABILITIES.ENEMY_BLOCKED_BOT) {
             const isPhrase = Math.random() < 0.5;
             const text = isPhrase 
               ? BOT_QUICK_PHRASES.DAMN 
@@ -227,6 +228,25 @@ export class BotReactionManager {
 
     const activeBots = this.getActiveBots();
     if (activeBots.length === 0) return;
+
+    const isMoverBot = this.isBotPlayer(mover);
+
+    if (isMoverBot) {
+      // Bot itself moved!
+      const bot = mover;
+      if (this.canBotReact(bot.id)) {
+        const dist = this.game.board.getShortestPathLength(bot.x, bot.y, bot.targetY, bot.targetX, bot.id);
+        if (dist > 0 && dist <= 3 && Math.random() < BOT_REACTION_PROBABILITIES.BOT_ADVANCING) {
+          const isPhrase = Math.random() < 0.5;
+          const text = isPhrase 
+            ? this.getRandomItem(PHRASE_GROUPS.TAUNT_ENEMY)
+            : this.getRandomItem(EMOJI_GROUPS.TAUNT_ENEMY);
+
+          this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+        }
+      }
+      return;
+    }
 
     for (const bot of activeBots) {
       if (bot.id === moverId) continue;
@@ -283,10 +303,17 @@ export class BotReactionManager {
     }
   }
 
+  public isBotPlayer(player: Player): boolean {
+    if (!player) return false;
+    const id = player.id || '';
+    const username = (player.username || '').toLowerCase();
+    return id.startsWith('bot_') || username.includes('bot') || username.includes('ia');
+  }
+
   private getActiveBots(): Player[] {
     const bots: Player[] = [];
     for (const player of this.game.board.players.values()) {
-      if (player.id.startsWith('bot_')) {
+      if (this.isBotPlayer(player)) {
         bots.push(player);
       }
     }
