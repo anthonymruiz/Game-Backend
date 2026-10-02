@@ -1,4 +1,4 @@
-import { injectable } from 'tsyringe';
+import { injectable, container } from 'tsyringe';
 import { UserRepository } from '../repositories/user.repository.js';
 import { MatchHistoryRepository } from '../repositories/match-history.repository.js';
 import { ReportRepository } from '../repositories/report.repository.js';
@@ -12,12 +12,15 @@ import { UserRole } from '../models/user-role.enum.js';
 
 @injectable()
 export class AdminService {
-  constructor(
-    private userRepository: UserRepository,
-    private matchRepository: MatchHistoryRepository,
-    private reportRepository: ReportRepository,
-    private systemSettingsService: SystemSettingsService
-  ) {}
+  private userRepository: UserRepository;
+  private matchRepository: MatchHistoryRepository;
+  private reportRepository: ReportRepository;
+
+  constructor() {
+    this.userRepository = container.resolve(UserRepository);
+    this.matchRepository = container.resolve(MatchHistoryRepository);
+    this.reportRepository = container.resolve(ReportRepository);
+  }
 
   public async getMetrics() {
     const totalUsers = await this.userRepository.countTotal();
@@ -57,12 +60,14 @@ export class AdminService {
     return this.matchRepository.getPaginatedMatches(modeFilter, options);
   }
 
-  public getSystemSettings(): ISystemSettings {
-    return this.systemSettingsService.getSettings();
+  public async getSystemSettings(): Promise<ISystemSettings> {
+    const service = container.resolve(SystemSettingsService);
+    return service.getSettings();
   }
 
-  public updateSystemSettings(newSettings: Partial<ISystemSettings>): ISystemSettings {
-    return this.systemSettingsService.updateSettings(newSettings);
+  public async updateSystemSettings(newSettings: Partial<ISystemSettings>): Promise<ISystemSettings> {
+    const service = container.resolve(SystemSettingsService);
+    return service.updateSettings(newSettings);
   }
 
   public async banUser(targetUserId: string): Promise<User> {
@@ -109,6 +114,15 @@ export class AdminService {
 
   public async getActiveUsers(): Promise<User[]> {
     return this.userRepository.findActiveUsers();
+  }
+
+  public async updateUserRole(targetUserId: string, newRole: UserRole): Promise<User> {
+    const targetUser = await this.userRepository.findById(targetUserId);
+    if (!targetUser) {
+      throw new Error('User not found.');
+    }
+    targetUser.role = newRole;
+    return this.userRepository.save(targetUser);
   }
 
   public async getUserReports(targetUserId: string) {

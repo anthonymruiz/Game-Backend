@@ -16,12 +16,15 @@ adminRoutes.get('/metrics', (req, res) => getController().getMetrics(req, res));
 adminRoutes.get('/users', (req, res) => getController().getUsers(req, res));
 adminRoutes.get('/active-users', (req, res) => getController().getActiveUsers(req, res));
 adminRoutes.get('/reports', (req, res) => getController().getReports(req, res));
+adminRoutes.put('/reports/:id/status', (req, res) => getController().updateReportStatus(req, res));
+adminRoutes.delete('/reports/:id', (req, res) => getController().deleteReport(req, res));
 adminRoutes.get('/matches', (req, res) => getController().getMatches(req, res));
 adminRoutes.get('/settings', (req, res) => getController().getSettings(req, res));
 adminRoutes.put('/settings', (req, res) => getController().updateSettings(req, res));
 adminRoutes.get('/users/:userId/reports', (req, res) => getController().getUserReports(req, res));
 adminRoutes.post('/users/:id/ban', (req, res) => getController().banUser(req, res));
 adminRoutes.post('/users/:id/unban', (req, res) => getController().unbanUser(req, res));
+adminRoutes.put('/users/:id/role', requireRole(['superadmin']), (req, res) => getController().updateUserRole(req, res));
 adminRoutes.post('/admins', (req, res) => getController().createAdmin(req, res));
 
 export default adminRoutes;
