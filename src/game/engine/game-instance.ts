@@ -3,6 +3,7 @@ import { Player, Wall } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
 import { IRoomPlayer } from '../../services/room.service.js';
 import { GameModeRegistry, IGameModeRules } from './game-modes.js';
+import { BotReactionManager } from './bot-reaction.manager.js';
 
 export interface IGameInstanceOptions {
   turnTimeLimitSeconds?: number;
@@ -25,6 +26,7 @@ export class GameInstance {
 
   private turnTimer: NodeJS.Timeout | null = null;
   public onStateChange: (event: string, data: any) => void;
+  public botReactionManager: BotReactionManager;
 
   constructor(
     id: string, 
@@ -37,6 +39,7 @@ export class GameInstance {
     this.mode = mode;
     this.onStateChange = onStateChange;
     this.rules = GameModeRegistry.get(mode);
+    this.botReactionManager = new BotReactionManager(this);
 
     if (options?.turnTimeLimitSeconds && options.turnTimeLimitSeconds >= 10 && options.turnTimeLimitSeconds <= 60) {
       this.turnTimeLimitSeconds = options.turnTimeLimitSeconds;
@@ -77,6 +80,7 @@ export class GameInstance {
     this.state = 'playing';
     this.startTurnTimer();
     this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
+    this.botReactionManager.onTurnStarted(this.getCurrentPlayer());
     this.checkTriggerBotTurn();
   }
 
@@ -131,6 +135,7 @@ export class GameInstance {
 
   public destroy() {
     this.stopTurnTimer();
+    this.botReactionManager.stop();
     this.state = 'finished';
   }
 
@@ -161,7 +166,9 @@ export class GameInstance {
       this.board.spawnRandomBoost();
     }
 
-    this.onStateChange('turnChanged', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
+    const currentTurnPlayer = this.getCurrentPlayer();
+    this.onStateChange('turnChanged', { currentTurn: currentTurnPlayer, board: this.board.toDTO(currentTurnPlayer) });
+    this.botReactionManager.onTurnStarted(currentTurnPlayer);
     this.checkTriggerBotTurn();
   }
 
@@ -192,6 +199,7 @@ export class GameInstance {
     const success = this.board.movePlayer(playerId, newX, newY);
     if (success) {
       this.onStateChange('playerMoved', { playerId, newX, newY });
+      this.botReactionManager.onPlayerMoved(playerId, newX, newY);
       this.checkWinCondition(playerId);
       if (this.state === 'playing') this.nextTurn();
     }
@@ -201,11 +209,25 @@ export class GameInstance {
   public executeWall(playerId: string, wallId: string, x: number, y: number, isHorizontal: boolean): boolean {
     if (this.state !== 'playing' || playerId !== this.getCurrentPlayer()) return false;
     
+    const pathLengthsBefore = new Map<string, number>();
+    for (const p of this.board.players.values()) {
+      pathLengthsBefore.set(p.id, this.board.getShortestPathLength(p.x, p.y, p.targetY, p.targetX, p.id));
+    }
+
     const wall = new Wall(wallId, playerId, x, y, isHorizontal);
     const success = this.board.placeWall(wall);
     
     if (success) {
       this.onStateChange('wallPlaced', { wall });
+
+      const pathChanges = new Map<string, { before: number; after: number }>();
+      for (const p of this.board.players.values()) {
+        const before = pathLengthsBefore.get(p.id) || 0;
+        const after = this.board.getShortestPathLength(p.x, p.y, p.targetY, p.targetX, p.id);
+        pathChanges.set(p.id, { before, after });
+      }
+      this.botReactionManager.onWallPlaced(playerId, pathChanges);
+
       this.nextTurn();
     }
     return success;
@@ -230,11 +252,14 @@ export class GameInstance {
     if (this.turnTimer) clearTimeout(this.turnTimer);
 
     this.onStateChange('gameFinished', { winner: this.winner, surrenderedBy: surrenderingUserId });
+    this.botReactionManager.onGameFinished(this.winner);
   }
 
   private endGame() {
     this.state = 'finished';
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.onStateChange('gameFinished', { winner: this.winner });
+    this.botReactionManager.onGameFinished(this.winner);
   }
 }
+
