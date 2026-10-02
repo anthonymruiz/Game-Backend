@@ -26,7 +26,7 @@ export class GameLogService {
           relations: { stats: true }
         });
 
-        if (!user) continue;
+        if (!user || user.role === ('guest' as any) || user.provider === 'guest') continue;
 
         let stats = user.stats;
         if (!stats) {
@@ -45,6 +45,7 @@ export class GameLogService {
         if (winnerId === playerId) {
           history.result = 'win';
           stats.wins = (stats.wins || 0) + 1;
+          stats.points = (stats.points || 0) + 10;
           eloChange = 15;
           notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_WON_TITLE', msgKey: 'MATCH_WON_MSG' });
         } else if (winnerId === null) {

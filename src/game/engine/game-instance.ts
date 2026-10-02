@@ -25,6 +25,7 @@ export class GameInstance {
   public maxStrikesBeforeKick: number = 3;
 
   private turnTimer: NodeJS.Timeout | null = null;
+  private portalTimer: NodeJS.Timeout | null = null;
   public onStateChange: (event: string, data: any) => void;
   public botReactionManager: BotReactionManager;
 
@@ -78,16 +79,36 @@ export class GameInstance {
 
   public start() {
     this.state = 'playing';
+    this.board.spawnSingleRandomBoost();
     this.startTurnTimer();
+    this.startBoostTimer();
     this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
     this.botReactionManager.onTurnStarted(this.getCurrentPlayer());
     this.checkTriggerBotTurn();
   }
 
+  private startBoostTimer() {
+    if (this.portalTimer) clearInterval(this.portalTimer);
+    // Every 1 minute (60,000 ms), clear active boost and spawn 1 random boost
+    this.portalTimer = setInterval(() => {
+      if (this.state === 'playing') {
+        this.board.spawnSingleRandomBoost();
+        const currentTurnPlayer = this.getCurrentPlayer();
+        this.onStateChange('portalsRotated', {
+          currentTurn: currentTurnPlayer,
+          board: this.board.toDTO(currentTurnPlayer)
+        });
+      }
+    }, 60000);
+    if (this.portalTimer && typeof this.portalTimer.unref === 'function') {
+      this.portalTimer.unref();
+    }
+  }
+
   private checkTriggerBotTurn() {
     const currentId = this.getCurrentPlayer();
     if (currentId && currentId.startsWith('bot_')) {
-      const thinkDelay = 1200 + Math.floor(Math.random() * 1000);
+      const thinkDelay = 400 + Math.floor(Math.random() * 500);
       setTimeout(() => {
         this.executeBotTurn();
       }, thinkDelay);
@@ -136,6 +157,10 @@ export class GameInstance {
 
   public destroy() {
     this.stopTurnTimer();
+    if (this.portalTimer) {
+      clearInterval(this.portalTimer);
+      this.portalTimer = null;
+    }
     this.botReactionManager.stop();
     this.state = 'finished';
   }
@@ -163,9 +188,7 @@ export class GameInstance {
     this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
     this.startTurnTimer();
     
-    if (Math.random() < 0.1) {
-      this.board.spawnRandomBoost();
-    }
+    this.board.ensureMinWallPickups(2);
 
     const currentTurnPlayer = this.getCurrentPlayer();
     this.onStateChange('turnChanged', { currentTurn: currentTurnPlayer, board: this.board.toDTO(currentTurnPlayer) });

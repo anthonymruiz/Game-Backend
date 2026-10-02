@@ -26,4 +26,11 @@ export class NotificationController {
     await this.notifService.deleteNotification(userId, req.params.id as string);
     return res.status(200).json({ success: true });
   }
+
+  public async deleteAll(req: Request, res: Response) {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    await this.notifService.deleteAllNotifications(userId);
+    return res.status(200).json({ success: true });
+  }
 }

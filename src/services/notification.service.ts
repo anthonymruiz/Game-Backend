@@ -1,4 +1,5 @@
 import { singleton, container } from 'tsyringe';
+import { MoreThan } from 'typeorm';
 import { AppDataSource } from '../config/database.config.js';
 import { Notification } from '../models/notification.entity.js';
 import { User } from '../models/user.entity.js';
@@ -106,8 +107,12 @@ export class NotificationService {
   }
 
   public async getUserNotifications(userId: string): Promise<Notification[]> {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     return AppDataSource.getRepository(Notification).find({
-      where: { user: { id: userId } },
+      where: { 
+        user: { id: userId },
+        createdAt: MoreThan(sevenDaysAgo)
+      },
       order: { createdAt: 'DESC' }
     });
   }
@@ -121,5 +126,9 @@ export class NotificationService {
 
   public async deleteNotification(userId: string, notifId: string): Promise<void> {
     await AppDataSource.getRepository(Notification).delete({ id: notifId, user: { id: userId } });
+  }
+
+  public async deleteAllNotifications(userId: string): Promise<void> {
+    await AppDataSource.getRepository(Notification).delete({ user: { id: userId } });
   }
 }

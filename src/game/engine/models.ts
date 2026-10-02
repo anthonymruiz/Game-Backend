@@ -51,8 +51,10 @@ export class Player {
 export class Boost {
   constructor(
     public id: string,
-    public type: 'extra_wall' | 'extra_turn',
+    public type: 'wall_pickup' | 'portal' | 'extra_wall',
     public x: number,
-    public y: number
+    public y: number,
+    public targetX?: number,
+    public targetY?: number
   ) {}
 }

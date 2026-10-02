@@ -34,6 +34,18 @@ export class GameService {
         if (event === 'gameFinished') {
           this.gameLogService.logGameEnd(matchId, data.winner, playerIds);
           this.activeGames.delete(matchId);
+          import('../config/database.config.js').then(({ AppDataSource }) => {
+            import('../models/user.entity.js').then(({ User }) => {
+              import('../models/presence.enum.js').then(({ PresenceStatus }) => {
+                const userRepo = AppDataSource.getRepository(User);
+                playerIds.forEach(pId => {
+                  if (pId && !pId.startsWith('guest_') && !pId.startsWith('bot_')) {
+                    userRepo.update(pId, { presenceStatus: PresenceStatus.ONLINE }).catch(() => {});
+                  }
+                });
+              });
+            });
+          });
         }
       },
       {
@@ -48,5 +60,14 @@ export class GameService {
 
   public getGame(matchId: string): GameInstance | undefined {
     return this.activeGames.get(matchId);
+  }
+
+  public getGameByPlayerId(playerId: string): GameInstance | undefined {
+    for (const game of this.activeGames.values()) {
+      if (game.state === 'playing' && game.playersList.includes(playerId)) {
+        return game;
+      }
+    }
+    return undefined;
   }
 }

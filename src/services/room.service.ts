@@ -13,17 +13,7 @@ export const AVAILABLE_COLORS: string[] = [
   '#5AC8FA', // Cyan
   '#FF2D55', // Pink
   '#E5E5EA', // Light Gray
-  '#1C1C1E', // Dark Gray
-  '#3b82f6',
-  '#ef4444',
-  '#f59e0b',
-  '#10b981',
-  '#8b5cf6',
-  '#f97316',
-  '#06b6d4',
-  '#ec4899',
-  '#94a3b8',
-  '#1e293b'
+  '#1C1C1E'  // Dark Gray
 ];
 
 export interface IRoomPlayer {

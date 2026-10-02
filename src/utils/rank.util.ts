@@ -19,16 +19,16 @@ export interface IRankTier {
 }
 
 export const RANK_TIERS: IRankTier[] = [
-  { level: 1, key: RankLevel.NOVATO, minPoints: 0, maxPoints: 50 },
-  { level: 2, key: RankLevel.APRENDIZ, minPoints: 50, maxPoints: 120 },
-  { level: 3, key: RankLevel.INICIADO, minPoints: 120, maxPoints: 220 },
-  { level: 4, key: RankLevel.ESTRATEGA, minPoints: 220, maxPoints: 350 },
-  { level: 5, key: RankLevel.TACTICO, minPoints: 350, maxPoints: 500 },
-  { level: 6, key: RankLevel.MAESTRO_MUROS, minPoints: 500, maxPoints: 700 },
-  { level: 7, key: RankLevel.GRAN_MAESTRO, minPoints: 700, maxPoints: 950 },
-  { level: 8, key: RankLevel.ELITE, minPoints: 950, maxPoints: 1250 },
-  { level: 9, key: RankLevel.CAMPEON, minPoints: 1250, maxPoints: 1600 },
-  { level: 10, key: RankLevel.LEGENDARIO, minPoints: 1600, maxPoints: 1600 }
+  { level: 1, key: RankLevel.NOVATO, minPoints: 0, maxPoints: 100 },
+  { level: 2, key: RankLevel.APRENDIZ, minPoints: 100, maxPoints: 250 },
+  { level: 3, key: RankLevel.INICIADO, minPoints: 250, maxPoints: 500 },
+  { level: 4, key: RankLevel.ESTRATEGA, minPoints: 500, maxPoints: 850 },
+  { level: 5, key: RankLevel.TACTICO, minPoints: 850, maxPoints: 1300 },
+  { level: 6, key: RankLevel.MAESTRO_MUROS, minPoints: 1300, maxPoints: 1850 },
+  { level: 7, key: RankLevel.GRAN_MAESTRO, minPoints: 1850, maxPoints: 2500 },
+  { level: 8, key: RankLevel.ELITE, minPoints: 2500, maxPoints: 3200 },
+  { level: 9, key: RankLevel.CAMPEON, minPoints: 3200, maxPoints: 4000 },
+  { level: 10, key: RankLevel.LEGENDARIO, minPoints: 4000, maxPoints: 4000 }
 ];
 
 export function getRankInfo(wins: number) {

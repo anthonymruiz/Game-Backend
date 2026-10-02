@@ -101,18 +101,48 @@ export class Board {
 
     // Move player
     this.grid[player.y][player.x].hasPlayer = null;
-    player.x = newX;
-    player.y = newY;
 
-    // Check if picked up a boost
-    const boostId = this.grid[newY][newX].hasBoost;
-    if (boostId) {
-      this.grid[newY][newX].hasBoost = null;
-      this.boosts = this.boosts.filter(b => b.id !== boostId);
-      player.wallsLeft++;
+    let finalX = newX;
+    let finalY = newY;
+
+    // Check if stepped on a boost / special tile
+    const boost = this.boosts.find(b => b.x === newX && b.y === newY);
+    if (boost) {
+      if (boost.type === 'wall_pickup' || boost.type === 'extra_wall') {
+        player.wallsLeft++;
+        this.grid[newY][newX].hasBoost = null;
+        this.boosts = this.boosts.filter(b => b.id !== boost.id);
+      } else if (boost.type === 'portal') {
+        if (boost.targetX !== undefined && boost.targetY !== undefined) {
+          const destOccupant = this.grid[boost.targetY][boost.targetX].hasPlayer;
+          if (!destOccupant) {
+            finalX = boost.targetX;
+            finalY = boost.targetY;
+          } else {
+            const adjDirs = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+            let foundFree = false;
+            for (const d of adjDirs) {
+              const ax = boost.targetX + d.dx;
+              const ay = boost.targetY + d.dy;
+              if (ax >= 0 && ax < this.size && ay >= 0 && ay < this.size && !this.grid[ay][ax].hasPlayer) {
+                finalX = ax;
+                finalY = ay;
+                foundFree = true;
+                break;
+              }
+            }
+            if (!foundFree) {
+              finalX = boost.targetX;
+              finalY = boost.targetY;
+            }
+          }
+        }
+      }
     }
 
-    this.grid[newY][newX].hasPlayer = player.id;
+    player.x = finalX;
+    player.y = finalY;
+    this.grid[finalY][finalX].hasPlayer = player.id;
     return true;
   }
 
@@ -495,6 +525,73 @@ export class Board {
     return validMoves.length > 0 ? { x: validMoves[0].x, y: validMoves[0].y } : null;
   }
 
+  public spawnSingleRandomBoost() {
+    // 1. Clear all existing boosts from grid and array
+    this.boosts.forEach(b => {
+      if (this.grid[b.y]?.[b.x]) {
+        this.grid[b.y][b.x].hasBoost = null;
+      }
+    });
+    this.boosts = [];
+
+    // 2. Find empty cells without player
+    const emptyCells: { x: number; y: number }[] = [];
+    for (let y = 0; y < this.size; y++) {
+      for (let x = 0; x < this.size; x++) {
+        const cell = this.grid[y][x];
+        if (!cell.hasPlayer) {
+          emptyCells.push({ x, y });
+        }
+      }
+    }
+
+    if (emptyCells.length === 0) return;
+
+    // 3. Choose 1 random boost type ('wall_pickup' or 'portal')
+    const types: ('wall_pickup' | 'portal')[] = ['wall_pickup', 'portal'];
+    const selectedType = types[Math.floor(Math.random() * types.length)];
+
+    if (selectedType === 'wall_pickup') {
+      const randIdx = Math.floor(Math.random() * emptyCells.length);
+      const chosen = emptyCells[randIdx];
+      const boostId = `boost_wall_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const boost = new Boost(boostId, 'wall_pickup', chosen.x, chosen.y);
+      this.boosts.push(boost);
+      this.grid[chosen.y][chosen.x].hasBoost = boostId;
+    } else if (selectedType === 'portal') {
+      if (emptyCells.length < 2) return;
+      const randIdx1 = Math.floor(Math.random() * emptyCells.length);
+      const posA = emptyCells.splice(randIdx1, 1)[0];
+
+      const randIdx2 = Math.floor(Math.random() * emptyCells.length);
+      const posB = emptyCells.splice(randIdx2, 1)[0];
+
+      const portalIdA = `portal_${Date.now()}_A_${Math.random().toString(36).substring(2, 6)}`;
+      const portalIdB = `portal_${Date.now()}_B_${Math.random().toString(36).substring(2, 6)}`;
+
+      const portalA = new Boost(portalIdA, 'portal', posA.x, posA.y, posB.x, posB.y);
+      const portalB = new Boost(portalIdB, 'portal', posB.x, posB.y, posA.x, posA.y);
+
+      this.boosts.push(portalA, portalB);
+      this.grid[posA.y][posA.x].hasBoost = portalIdA;
+      this.grid[posB.y][posB.x].hasBoost = portalIdB;
+    }
+  }
+
+  public spawnWallPickups(count: number = 2) {
+    this.spawnSingleRandomBoost();
+  }
+
+  public spawnPortals() {
+    this.spawnSingleRandomBoost();
+  }
+
+  public ensureMinWallPickups(minCount: number = 2) {
+    if (this.boosts.length === 0) {
+      this.spawnSingleRandomBoost();
+    }
+  }
+
   public toDTO(forPlayerId?: string) {
     const playersObj: { [id: string]: any } = {};
     this.players.forEach((p, id) => {
@@ -520,7 +617,14 @@ export class Board {
       size: this.size,
       grid: this.grid,
       walls: this.walls,
-      boosts: this.boosts,
+      boosts: this.boosts.map(b => ({
+        id: b.id,
+        type: b.type,
+        x: b.x,
+        y: b.y,
+        targetX: b.targetX,
+        targetY: b.targetY
+      })),
       players: playersObj,
       validMoves: forPlayerId ? this.getValidMoves(forPlayerId) : []
     };

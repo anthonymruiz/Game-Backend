@@ -3,6 +3,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { Friendship } from '../models/friendship.entity.js';
 import { FriendshipStatus } from '../models/friendship-status.enum.js';
 import { User } from '../models/user.entity.js';
+import { PresenceStatus } from '../models/presence.enum.js';
 import { Notification } from '../models/notification.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
 
@@ -112,18 +113,30 @@ export class FriendService {
     await this.repo.save(friendship);
 
     try {
+      const repoNotif = AppDataSource.getRepository(Notification);
+      const notif = new Notification();
+      notif.user = friendship.requester;
+      notif.type = 'FRIEND_ACCEPTED';
+      notif.title = 'Solicitud Aceptada';
+      notif.message = `${friendship.addressee.username} ha aceptado tu solicitud de amistad.`;
+      await repoNotif.save(notif);
+
       const socketManager = container.resolve(SocketManager);
       if (socketManager.io) {
         socketManager.io.of('/matchmaking').to(friendship.requester.id).emit('friend:request_accepted', {
           friendshipId: friendship.id,
+          notificationId: notif.id,
           friend: {
             id: friendship.addressee.id,
             username: friendship.addressee.username,
             avatarUrl: friendship.addressee.avatarUrl
           }
         });
+        socketManager.io.of('/matchmaking').to(friendship.requester.id).emit('newNotification', notif);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error sending friend request accept notification:', e);
+    }
 
     return friendship;
   }
@@ -139,7 +152,25 @@ export class FriendService {
       throw new Error('No tienes permiso para esta acción');
     }
 
+    const otherUserId = friendship.requester.id === userId ? friendship.addressee.id : friendship.requester.id;
+
     await this.repo.remove(friendship);
+
+    try {
+      const socketManager = container.resolve(SocketManager);
+      if (socketManager.io) {
+        socketManager.io.of('/matchmaking').to(otherUserId).emit('friend:request_cancelled', {
+          friendshipId: friendshipId,
+          cancelledByUserId: userId
+        });
+        socketManager.io.of('/matchmaking').to(userId).emit('friend:request_cancelled', {
+          friendshipId: friendshipId,
+          cancelledByUserId: userId
+        });
+      }
+    } catch (e) {
+      console.error('Error emitting friend:request_cancelled socket:', e);
+    }
   }
 
   public async removeFriend(userId: string, friendId: string): Promise<void> {
@@ -152,6 +183,14 @@ export class FriendService {
 
     if (friendship) {
       await this.repo.remove(friendship);
+      try {
+        const socketManager = container.resolve(SocketManager);
+        if (socketManager.io) {
+          socketManager.io.of('/matchmaking').to(friendId).emit('friend:removed', {
+            removedByUserId: userId
+          });
+        }
+      } catch (e) {}
     }
   }
 
@@ -167,6 +206,12 @@ export class FriendService {
       }
     });
 
+    let gameService: any = null;
+    try {
+      const { GameService } = await import('./game.service.js');
+      gameService = container.resolve(GameService);
+    } catch (e) {}
+
     return friendships.map(f => {
       const friend = f.requester.id === userId ? f.addressee : f.requester;
       const wins = friend.stats?.wins || 0;
@@ -175,13 +220,17 @@ export class FriendService {
       const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
       const elo = 1000 + (wins * 15) - (losses * 10);
 
+      const activeGame = gameService ? gameService.getGameByPlayerId(friend.id) : null;
+      const isCurrentlyPlaying = !!activeGame && activeGame.state === 'playing';
+
       return {
         friendshipId: f.id,
         id: friend.id,
         username: friend.username,
         avatarUrl: friend.avatarUrl,
         isOnline: friend.isOnline,
-        presenceStatus: friend.presenceStatus,
+        presenceStatus: isCurrentlyPlaying ? PresenceStatus.PLAYING : (friend.presenceStatus === PresenceStatus.PLAYING ? PresenceStatus.ONLINE : friend.presenceStatus),
+        activeMatchId: isCurrentlyPlaying ? activeGame.id : null,
         lastSeen: friend.lastSeen,
         stats: {
           totalGames,

@@ -378,12 +378,24 @@ export class SocketManager {
 
       socket.on('movePlayer', (data: { roomId: string, x: number, y: number }) => {
         const game = this.gameService.getGame(data.roomId);
-        if (game) game.executeMove(userId, data.x, data.y);
+        if (game) {
+          if (!game.playersList.includes(userId)) {
+            socket.emit('error', 'Los espectadores no pueden realizar movimientos.');
+            return;
+          }
+          game.executeMove(userId, data.x, data.y);
+        }
       });
 
       socket.on('placeWall', (data: { roomId: string, x: number, y: number, isHorizontal: boolean }) => {
         const game = this.gameService.getGame(data.roomId);
-        if (game) game.executeWall(userId, Math.random().toString(), data.x, data.y, data.isHorizontal);
+        if (game) {
+          if (!game.playersList.includes(userId)) {
+            socket.emit('error', 'Los espectadores no pueden colocar muros.');
+            return;
+          }
+          game.executeWall(userId, Math.random().toString(), data.x, data.y, data.isHorizontal);
+        }
       });
       
       socket.on('surrender', (data: any) => {
@@ -391,6 +403,10 @@ export class SocketManager {
         if (roomId) {
           const game = this.gameService.getGame(roomId);
           if (game) {
+            if (!game.playersList.includes(userId)) {
+              socket.emit('error', 'Los espectadores no pueden rendirse.');
+              return;
+            }
             game.surrender(userId);
           }
         }

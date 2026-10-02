@@ -59,10 +59,11 @@ export class UserService {
       throw new Error('User not found.');
     }
 
-    const stats = user.stats || { wins: 0, losses: 0, draws: 0, elo: 1000 };
+    const stats = user.stats || { wins: 0, losses: 0, draws: 0, points: 0, elo: 1000 };
     const wins = Number(stats.wins) || 0;
     const losses = Number(stats.losses) || 0;
     const draws = Number(stats.draws) || 0;
+    const points = stats.points !== undefined && stats.points !== null ? Number(stats.points) : (wins * 10);
     const totalGames = wins + losses + draws;
     const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
     const elo = Number(stats.elo) || 1000;
@@ -101,7 +102,7 @@ export class UserService {
       draws,
       winRate,
       elo,
-      points: rankInfo.points,
+      points: points,
       level: rankInfo.level,
       rankKey: rankInfo.rankKey,
       nextRankKey: rankInfo.nextRankKey,
@@ -115,6 +116,12 @@ export class UserService {
 
   public async getLeaderboard(limit: number = 100) {
     const users = await this.userRepository.getTopPlayers(limit);
+    let gameService: any = null;
+    try {
+      const { GameService } = await import('./game.service.js');
+      gameService = container.resolve(GameService);
+    } catch (e) {}
+
     return users.map((user, index) => {
       const stats = user.stats || { wins: 0, losses: 0, draws: 0, elo: 1000 };
       const wins = stats.wins || 0;
@@ -132,6 +139,8 @@ export class UserService {
       if (totalGames >= 50) level = 'Avanzado';
       else if (totalGames >= 10) level = 'Intermedio';
 
+      const activeGame = gameService ? gameService.getGameByPlayerId(user.id) : null;
+
       return {
         rank: index + 1,
         id: user.id,
@@ -145,7 +154,9 @@ export class UserService {
         winRate,
         elo: stats.elo || 1000,
         tier,
-        level
+        level,
+        isPlaying: !!activeGame,
+        activeMatchId: activeGame ? activeGame.id : null
       };
     });
   }
