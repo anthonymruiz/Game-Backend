@@ -9,6 +9,7 @@ import { notificationRoutes } from './routes/notification.routes.js';
 import { userRoutes } from './routes/user.routes.js';
 import reportRouter from './routes/report.routes.js';
 import roomRouter from './routes/room.routes.js';
+import { friendRoutes } from './routes/friend.routes.js';
 import { broadcastLog } from './utils/logger.utils.js';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.config.js';
@@ -37,6 +38,7 @@ export class App {
     this.expressApp.use('/api/notifications', notificationRoutes);
     this.expressApp.use('/api/reports', reportRouter);
     this.expressApp.use('/api/rooms', roomRouter);
+    this.expressApp.use('/api/friends', friendRoutes);
     this.expressApp.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
     this.expressApp.get('/health', (req, res) => {
       res.status(200).json({ status: 'OK' });

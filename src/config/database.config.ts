@@ -10,6 +10,7 @@ import { Ban } from '../models/ban.entity.js';
 import { Notification } from '../models/notification.entity.js';
 import { Report } from '../models/report.entity.js';
 import { SystemSettings } from '../models/system-settings.entity.js';
+import { Friendship } from '../models/friendship.entity.js';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -18,9 +19,9 @@ export const AppDataSource = new DataSource({
   username: ENV.DB.USER,
   password: ENV.DB.PASS,
   database: ENV.DB.NAME,
-  synchronize: false,
+  synchronize: true,
   logging: ENV.NODE_ENV === 'development',
-  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings],
+  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings, Friendship],
   migrations: ['dist/migrations/**/*.js', 'src/migrations/**/*.ts'],
   subscribers: [],
 });

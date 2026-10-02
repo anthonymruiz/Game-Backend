@@ -113,6 +113,20 @@ export class InitDatabase1700000000000 implements MigrationInterface {
         CONSTRAINT \`FK_match_history_user\` FOREIGN KEY (\`userId\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
       ) ENGINE=InnoDB;
     `);
+
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS \`friendships\` (
+        \`id\` varchar(36) NOT NULL,
+        \`createdAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+        \`updatedAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+        \`requesterId\` varchar(36) NOT NULL,
+        \`addresseeId\` varchar(36) NOT NULL,
+        \`status\` varchar(20) NOT NULL DEFAULT 'PENDING',
+        PRIMARY KEY (\`id\`),
+        CONSTRAINT \`FK_friendships_requester\` FOREIGN KEY (\`requesterId\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
+        CONSTRAINT \`FK_friendships_addressee\` FOREIGN KEY (\`addresseeId\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB;
+    `);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

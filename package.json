@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start:dev": "tsc && node dist/index.js",
+    "start:dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "test": "tsx --test src/tests/**/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 \"src/tests/*.test.ts\"",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\"",
     "typeorm": "tsx ./node_modules/typeorm/cli.js",
