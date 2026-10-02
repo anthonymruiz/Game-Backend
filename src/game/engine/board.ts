@@ -438,10 +438,11 @@ export class Board {
       // Decide whether to place wall or move pawn:
       if (bestWall && maxEnemyIncrease >= 1) {
         const isCriticalBlock = maxEnemyIncrease >= 2;
-        const isEnemyClose = minEnemyDist <= 3;
-        const isEnemyAhead = minEnemyDist < botDist && Math.random() < 0.45;
+        const isEnemyClose = minEnemyDist <= 5;
+        const isEnemyAheadOrEqual = minEnemyDist <= botDist + 1;
+        const tacticalWallChance = Math.random() < 0.65;
 
-        if (isCriticalBlock || isEnemyClose || isEnemyAhead) {
+        if (isCriticalBlock || isEnemyClose || isEnemyAheadOrEqual || tacticalWallChance) {
           return { type: 'wall', ...bestWall };
         }
       }
