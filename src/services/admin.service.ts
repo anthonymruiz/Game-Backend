@@ -9,6 +9,8 @@ import { Report } from '../models/report.entity.js';
 import { IPaginatedResult, IPaginationOptions } from '../utils/pagination.util.js';
 
 import { UserRole } from '../models/user-role.enum.js';
+import { SocketManager } from '../socket/socket.manager.js';
+import { NotificationService } from './notification.service.js';
 
 @injectable()
 export class AdminService {
@@ -99,17 +101,10 @@ export class AdminService {
   }
 
   public async promoteToAdmin(currentUserId: string, currentUserRole: string, targetUserId: string): Promise<User> {
-    if (currentUserRole !== UserRole.SUPERADMIN) {
+    if (currentUserRole !== UserRole.SUPERADMIN && currentUserRole !== 'superadmin') {
       throw new Error('Only superadmin can promote users to admin.');
     }
-
-    const targetUser = await this.userRepository.findById(targetUserId);
-    if (!targetUser) {
-      throw new Error('User not found.');
-    }
-
-    targetUser.role = UserRole.ADMIN;
-    return this.userRepository.save(targetUser);
+    return this.updateUserRole(targetUserId, UserRole.ADMIN);
   }
 
   public async getActiveUsers(): Promise<User[]> {
@@ -121,8 +116,63 @@ export class AdminService {
     if (!targetUser) {
       throw new Error('User not found.');
     }
+    const oldRole = targetUser.role;
     targetUser.role = newRole;
-    return this.userRepository.save(targetUser);
+    const savedUser = await this.userRepository.save(targetUser);
+
+    if (oldRole !== newRole) {
+      try {
+        const socketManager = container.resolve(SocketManager);
+        if (socketManager.io) {
+          socketManager.io.of('/matchmaking').to(targetUserId).emit('userRoleUpdated', {
+            userId: targetUserId,
+            newRole: newRole,
+            oldRole: oldRole
+          });
+        }
+      } catch (err) {
+        console.error('Error emitting userRoleUpdated socket event:', err);
+      }
+
+      try {
+        const notifService = container.resolve(NotificationService);
+        const isPromoted = (newRole === UserRole.ADMIN || newRole === UserRole.SUPERADMIN);
+        const titleEn = isPromoted ? 'Role Promoted' : 'Role Updated';
+        const titleEs = isPromoted ? 'Rol Promovido' : 'Rol Actualizado';
+        const msgEn = isPromoted 
+          ? 'Congratulations! You have been granted Administrator permissions.' 
+          : 'Your Administrator role has been removed.';
+        const msgEs = isPromoted 
+          ? '¡Felicidades! Ahora tienes permisos de Administrador.' 
+          : 'Tu rol de Administrador ha sido removido.';
+
+        // Create notification
+        const userRepo = this.userRepository;
+        const u = await userRepo.findById(targetUserId);
+        if (u) {
+          const lang = u.preferences?.language || 'es';
+          const notifTitle = lang === 'en' ? titleEn : titleEs;
+          const notifMsg = lang === 'en' ? msgEn : msgEs;
+          
+          const repo = (await import('../config/database.config.js')).AppDataSource.getRepository((await import('../models/notification.entity.js')).Notification);
+          const notif = new ((await import('../models/notification.entity.js')).Notification)();
+          notif.user = u;
+          notif.type = 'ROLE_UPDATED';
+          notif.title = notifTitle;
+          notif.message = notifMsg;
+          const savedNotif = await repo.save(notif);
+
+          const socketManager = container.resolve(SocketManager);
+          if (socketManager.io) {
+            socketManager.io.of('/matchmaking').to(targetUserId).emit('newNotification', savedNotif);
+          }
+        }
+      } catch (err) {
+        console.error('Error sending role update notification:', err);
+      }
+    }
+
+    return savedUser;
   }
 
   public async getUserReports(targetUserId: string) {
