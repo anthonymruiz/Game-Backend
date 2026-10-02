@@ -23,6 +23,7 @@ export class ReportController {
 
       res.status(201).json({ message: 'Report submitted successfully.', report, reportId: report.id });
     } catch (error: any) {
+      console.error('[ReportController] createReport error:', error);
       res.status(400).json({ error: error.message });
     }
   };
@@ -62,6 +63,17 @@ export class ReportController {
       res.status(200).json({ reports });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  };
+
+  public deleteReport = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      await this.reportService.deleteReport(id as string);
+      res.status(200).json({ message: 'Report deleted successfully.' });
+    } catch (error: any) {
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      res.status(statusCode).json({ error: error.message });
     }
   };
 }

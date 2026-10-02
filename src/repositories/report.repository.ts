@@ -6,10 +6,8 @@ import { paginateQueryBuilder, IPaginationOptions, IPaginatedResult } from '../u
 
 @injectable()
 export class ReportRepository {
-  private ormRepository: Repository<Report>;
-
-  constructor() {
-    this.ormRepository = AppDataSource.getRepository(Report);
+  private get ormRepository(): Repository<Report> {
+    return AppDataSource.getRepository(Report);
   }
 
   public async createAndSave(reporterId: string, reportedUserId: string, category: ReportCategory, details: string): Promise<Report> {
@@ -90,5 +88,9 @@ export class ReportRepository {
 
   public async save(report: Report): Promise<Report> {
     return this.ormRepository.save(report);
+  }
+
+  public async delete(report: Report): Promise<void> {
+    await this.ormRepository.remove(report);
   }
 }

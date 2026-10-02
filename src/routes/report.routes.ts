@@ -14,5 +14,6 @@ reportRouter.get('/', requireRole(['admin', 'superadmin']), (req, res) => getCon
 reportRouter.get('/user/:userId', requireRole(['admin', 'superadmin']), (req, res) => getController().getReportsByUser(req, res));
 reportRouter.post('/', requireAuth, (req, res) => getController().createReport(req, res));
 reportRouter.put('/:id/status', requireRole(['admin', 'superadmin']), (req, res) => getController().updateReportStatus(req, res));
+reportRouter.delete('/:id', requireRole(['admin', 'superadmin']), (req, res) => getController().deleteReport(req, res));
 
 export default reportRouter;

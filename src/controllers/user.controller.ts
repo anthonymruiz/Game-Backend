@@ -99,4 +99,51 @@ export class UserController {
       res.status(500).json({ error: error.message });
     }
   };
+
+  public getUserStats = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const targetUserId = req.params.userId || req.user?.sub || req.user?.id;
+      if (!targetUserId) {
+        res.status(400).json({ error: 'User ID is required' });
+        return;
+      }
+      const stats = await this.userService.getUserStats(targetUserId);
+      res.status(200).json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+  public getUserInfo = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const targetUserId = req.params.userId || req.user?.sub || req.user?.id;
+      if (!targetUserId) {
+        res.status(400).json({ error: 'User ID is required' });
+        return;
+      }
+      const info = await this.userService.getUserInfo(targetUserId);
+      res.status(200).json(info);
+    } catch (error: any) {
+      res.status(404).json({ error: error.message });
+    }
+  };
+
+  public deleteAccount = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.sub || req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const user = await this.userRepository.findById(userId);
+      if (!user) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      await this.userRepository.deleteUser(user);
+      res.status(200).json({ message: 'Account deleted successfully' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
 }

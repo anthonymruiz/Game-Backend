@@ -15,7 +15,10 @@ authRouter.post('/login', (req, res) => getController().login(req, res));
 authRouter.post('/social', (req, res) => getController().socialLogin(req, res));
 authRouter.post('/guest', (req, res) => getController().guestLogin(req, res));
 authRouter.post('/set-username', requireAuth, (req, res) => getController().setUsername(req, res));
+authRouter.get('/check-username', (req, res) => getController().checkUsernameAvailability(req, res));
 authRouter.get('/google', (req, res) => getController().redirectToGoogle(req, res));
+authRouter.get('/google/callback', (req, res) => getController().googleCallback(req, res));
 authRouter.get('/facebook', (req, res) => getController().redirectToFacebook(req, res));
+authRouter.get('/facebook/callback', (req, res) => getController().facebookCallback(req, res));
 
 export default authRouter;

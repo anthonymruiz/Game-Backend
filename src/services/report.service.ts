@@ -1,4 +1,4 @@
-import { injectable } from 'tsyringe';
+import { container, injectable } from 'tsyringe';
 import { ReportRepository } from '../repositories/report.repository.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { Report } from '../models/report.entity.js';
@@ -7,10 +7,13 @@ import { ReportStatus } from '../models/report-status.enum.js';
 
 @injectable()
 export class ReportService {
-  constructor(
-    private reportRepository: ReportRepository,
-    private userRepository: UserRepository
-  ) {}
+  private reportRepository: ReportRepository;
+  private userRepository: UserRepository;
+
+  constructor() {
+    this.reportRepository = container.resolve(ReportRepository);
+    this.userRepository = container.resolve(UserRepository);
+  }
 
   public async createReport(
     reporterId: string,
@@ -69,5 +72,13 @@ export class ReportService {
 
   public async getReportsByUser(userId: string): Promise<Report[]> {
     return this.reportRepository.findByReportedUserId(userId);
+  }
+
+  public async deleteReport(reportId: string): Promise<void> {
+    const report = await this.reportRepository.findById(reportId);
+    if (!report) {
+      throw new Error('Report not found.');
+    }
+    await this.reportRepository.delete(report);
   }
 }

@@ -8,14 +8,16 @@ import { PresenceStatus } from '../models/presence.enum.js';
 
 @injectable()
 export class UserRepository {
-  private ormRepository: Repository<User>;
-
-  constructor() {
-    this.ormRepository = AppDataSource.getRepository(User);
+  private get ormRepository(): Repository<User> {
+    return AppDataSource.getRepository(User);
   }
 
   public async findById(id: string): Promise<User | null> {
     return this.ormRepository.findOne({ where: { id } });
+  }
+
+  public async findWithStats(id: string): Promise<User | null> {
+    return this.ormRepository.findOne({ where: { id }, relations: { stats: true } });
   }
 
   public async findWithPreferences(id: string): Promise<User | null> {
@@ -123,5 +125,9 @@ export class UserRepository {
       presenceStatus: status,
       lastSeen: new Date()
     });
+  }
+
+  public async deleteUser(user: User): Promise<void> {
+    await this.ormRepository.remove(user);
   }
 }

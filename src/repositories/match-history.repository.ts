@@ -6,10 +6,8 @@ import { paginateQueryBuilder, IPaginationOptions, IPaginatedResult } from '../u
 
 @injectable()
 export class MatchHistoryRepository {
-  private ormRepository: Repository<MatchHistory>;
-
-  constructor() {
-    this.ormRepository = AppDataSource.getRepository(MatchHistory);
+  private get ormRepository(): Repository<MatchHistory> {
+    return AppDataSource.getRepository(MatchHistory);
   }
 
   public async countTotal(): Promise<number> {

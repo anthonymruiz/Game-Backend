@@ -13,5 +13,12 @@ const getController = () => {
 userRoutes.put('/profile', requireAuth, (req, res) => getController().updateProfile(req, res));
 userRoutes.put('/preferences', requireAuth, (req, res) => getController().updatePreferences(req, res));
 userRoutes.get('/leaderboard', (req, res) => getController().getLeaderboard(req, res));
+userRoutes.get('/me/stats', requireAuth, (req, res) => getController().getUserStats(req, res));
+userRoutes.get('/me/info', requireAuth, (req, res) => getController().getUserInfo(req, res));
+userRoutes.get('/:userId/stats', (req, res) => getController().getUserStats(req, res));
+userRoutes.get('/:userId/info', (req, res) => getController().getUserInfo(req, res));
+userRoutes.delete('/account', requireAuth, (req, res) => getController().deleteAccount(req, res));
+userRoutes.delete('/me', requireAuth, (req, res) => getController().deleteAccount(req, res));
 
 export default userRoutes;
+
