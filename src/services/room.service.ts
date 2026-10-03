@@ -21,9 +21,10 @@ export interface IRoomPlayer {
   username: string;
   isGuest: boolean;
   color: string;
-  team?: number; // For 2v2 or 6-3v3
+  team?: number;
   avatarUrl?: string;
   provider?: string;
+  wins?: number;
 }
 
 export interface IRoom {
@@ -58,7 +59,6 @@ export class RoomService {
       case '2v2': return 4;
       case '4-FFA': return 4;
       case '6-FFA': return 6;
-      case '6-3v3': return 6;
       default: return 2;
     }
   }
@@ -71,7 +71,8 @@ export class RoomService {
     mode: GameMode,
     isPrivate: boolean = false,
     avatarUrl?: string,
-    provider?: string
+    provider?: string,
+    wins: number = 0
   ): IRoom {
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const code = this.generateRoomCode();
@@ -83,9 +84,10 @@ export class RoomService {
       username: hostUsername,
       isGuest,
       color: initialColor,
-      team: mode === '2v2' || mode === '6-3v3' ? 1 : undefined,
+      team: mode === '2v2' ? 1 : undefined,
       avatarUrl,
-      provider
+      provider,
+      wins
     };
 
     const room: IRoom = {
@@ -103,6 +105,36 @@ export class RoomService {
 
     this.rooms.set(roomId, room);
     return room;
+  }
+
+  public recreatePrivateLobbyRoom(
+    oldRoom: IRoom,
+    endPlayers: IRoomPlayer[]
+  ): IRoom | null {
+    const humanPlayers = (endPlayers || []).filter(p => p && p.id && !p.id.startsWith('bot_'));
+    if (humanPlayers.length < 2) {
+      return null;
+    }
+
+    const host = humanPlayers.find(p => p.id === oldRoom?.hostId) || humanPlayers[0];
+    const newRoom = this.createRoom(
+      host.id,
+      host.username,
+      host.isGuest,
+      oldRoom?.name || `Sala de ${host.username}`,
+      oldRoom?.mode || '1v1',
+      true,
+      host.avatarUrl,
+      host.provider
+    );
+
+    for (const p of humanPlayers) {
+      if (p.id !== host.id) {
+        this.joinRoom(newRoom.id, p.id, p.username, p.isGuest, p.avatarUrl, p.provider);
+      }
+    }
+
+    return newRoom;
   }
 
   public getBotNameForColor(colorHex: string): string {
@@ -208,6 +240,19 @@ export class RoomService {
     return room;
   }
 
+  public kickPlayerFromCustomRoom(roomId: string, hostId: string, targetPlayerId: string): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.hostId !== hostId) throw new Error('Only the room host can kick players.');
+    if (targetPlayerId === hostId) throw new Error('Host cannot kick themselves.');
+
+    const playerToKick = room.players.find(p => p.id === targetPlayerId);
+    if (!playerToKick) throw new Error('Player not found in room.');
+
+    room.players = room.players.filter(p => p.id !== targetPlayerId);
+    return room;
+  }
+
   public getRoomByCode(code: string): IRoom | null {
     const cleanCode = code.trim().toUpperCase();
     for (const room of this.rooms.values()) {
@@ -234,6 +279,19 @@ export class RoomService {
     return true;
   }
 
+  public findRoomByUserId(userId: string): IRoom | null {
+    for (const room of this.rooms.values()) {
+      if (room.players.some(p => p.id === userId)) {
+        return room;
+      }
+    }
+    return null;
+  }
+
+  public getAllRooms(): IRoom[] {
+    return Array.from(this.rooms.values());
+  }
+
   public getPublicRooms(): IRoom[] {
     const list: IRoom[] = [];
     for (const r of this.rooms.values()) {
@@ -254,7 +312,8 @@ export class RoomService {
     username: string,
     isGuest: boolean,
     avatarUrl?: string,
-    provider?: string
+    provider?: string,
+    wins: number = 0
   ): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
@@ -265,7 +324,7 @@ export class RoomService {
       let assignedColor = '';
       let team: number | undefined = undefined;
 
-      if (room.mode === '2v2' || room.mode === '6-3v3') {
+      if (room.mode === '2v2') {
         const redHex = AVAILABLE_COLORS[0];
         const blueHex = AVAILABLE_COLORS[1];
         const redCount = room.players.filter(p => p.color && p.color.toUpperCase() === redHex.toUpperCase()).length;
@@ -296,7 +355,8 @@ export class RoomService {
         color: assignedColor,
         team,
         avatarUrl,
-        provider
+        provider,
+        wins
       });
     }
 
@@ -327,7 +387,7 @@ export class RoomService {
       throw new Error('Invalid color selected');
     }
 
-    const maxPlayersPerColor = (room.mode === '2v2' || room.mode === '6-3v3') ? 2 : 1;
+    const maxPlayersPerColor = (room.mode === '2v2') ? 2 : 1;
     const usersWithColor = room.players.filter(p => p.id !== effectiveUserId && p.color && p.color.toUpperCase() === normalizedColor).length;
 
     if (usersWithColor >= maxPlayersPerColor) {
@@ -340,7 +400,7 @@ export class RoomService {
       player.username = this.getBotNameForColor(newColor);
     }
 
-    if (room.mode === '2v2' || room.mode === '6-3v3') {
+    if (room.mode === '2v2') {
       const redHex = AVAILABLE_COLORS[0].toUpperCase();
       player.team = normalizedColor === redHex ? 1 : 2;
     }
@@ -351,7 +411,7 @@ export class RoomService {
   public switchTeam(roomId: string, userId: string): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
-    if (room.mode !== '2v2' && room.mode !== '6-3v3') throw new Error('Team switching is only supported in team modes');
+    if (room.mode !== '2v2') throw new Error('Team switching is only supported in team modes');
 
     const player = room.players.find(p => p.id === userId);
     if (!player) throw new Error('Player not in room');
@@ -419,5 +479,19 @@ export class RoomService {
     }
 
     return room;
+  }
+
+  public getUserRoom(userId: string): IRoom | null {
+    if (!userId) return null;
+    for (const room of this.rooms.values()) {
+      if (room.status === RoomStatus.WAITING && room.players.some(p => p.id === userId)) {
+        return room;
+      }
+    }
+    return null;
+  }
+
+  public findRoomByUserId(userId: string): IRoom | null {
+    return this.getUserRoom(userId);
   }
 }

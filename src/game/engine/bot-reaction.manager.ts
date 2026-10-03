@@ -329,19 +329,31 @@ export class BotReactionManager {
     return items[Math.floor(Math.random() * items.length)];
   }
 
+  private getBotScalingFactor(): number {
+    const activeBots = this.getActiveBots();
+    return Math.max(1, activeBots.length);
+  }
+
   private getRandomDelay(): number {
     const min = BOT_REACTION_TIMINGS.MIN_DELAY_MS;
     const max = BOT_REACTION_TIMINGS.MAX_DELAY_MS;
-    return min + Math.random() * (max - min);
+    const baseDelay = min + Math.random() * (max - min);
+    return baseDelay * this.getBotScalingFactor();
   }
 
   private canBotReact(botId: string): boolean {
     const last = this.lastReactionTime.get(botId) || 0;
     const now = Date.now();
-    return (now - last) >= BOT_REACTION_TIMINGS.COOLDOWN_MS;
+    const effectiveCooldown = BOT_REACTION_TIMINGS.COOLDOWN_MS * this.getBotScalingFactor();
+    return (now - last) >= effectiveCooldown;
   }
 
   private scheduleBotReaction(bot: Player, text: string, isEmoji: boolean, delayMs: number) {
+    const botFactor = this.getBotScalingFactor();
+    // Reduce probability when there are multiple bots to prevent spam
+    if (botFactor > 1 && Math.random() > (1 / botFactor)) {
+      return;
+    }
     this.lastReactionTime.set(bot.id, Date.now() + delayMs);
     setTimeout(() => {
       const allowedFinishPhrases: string[] = [
