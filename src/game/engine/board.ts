@@ -112,6 +112,10 @@ export class Board {
         player.wallsLeft++;
         this.grid[newY][newX].hasBoost = null;
         this.boosts = this.boosts.filter(b => b.id !== boost.id);
+      } else if (boost.type === 'killer_item') {
+        player.hasKillerItem = true;
+        this.grid[newY][newX].hasBoost = null;
+        this.boosts = this.boosts.filter(b => b.id !== boost.id);
       } else if (boost.type === 'portal') {
         if (boost.targetX !== undefined && boost.targetY !== undefined) {
           const destOccupant = this.grid[boost.targetY][boost.targetX].hasPlayer;
@@ -262,21 +266,18 @@ export class Board {
     }
   }
 
-  public findShortestPath(playerId: string): Coordinate[] {
-    const player = this.players.get(playerId);
-    if (!player) return [];
-
+  public findShortestPathToGoal(startX: number, startY: number, targetY?: number, targetX?: number): Coordinate[] {
     const queue: { x: number; y: number; path: Coordinate[] }[] = [
-      { x: player.x, y: player.y, path: [{ x: player.x, y: player.y }] }
+      { x: startX, y: startY, path: [{ x: startX, y: startY }] }
     ];
     const visited = new Set<string>();
-    visited.add(`${player.x},${player.y}`);
+    visited.add(`${startX},${startY}`);
 
     while (queue.length > 0) {
       const current = queue.shift()!;
       const { x, y, path } = current;
 
-      if (this.isGoalReached(x, y, player.targetY, player.targetX)) return path;
+      if (this.isGoalReached(x, y, targetY, targetX)) return path;
 
       const neighbors = [
         { x: x, y: y - 1 },
@@ -303,6 +304,12 @@ export class Board {
     }
 
     return [];
+  }
+
+  public findShortestPath(playerId: string): Coordinate[] {
+    const player = this.players.get(playerId);
+    if (!player) return [];
+    return this.findShortestPathToGoal(player.x, player.y, player.targetY, player.targetX);
   }
 
   public getShortestPathLength(startX: number, startY: number, targetY?: number, targetX?: number, playerId?: string): number {
@@ -468,20 +475,60 @@ export class Board {
       // Decide whether to place wall or move pawn:
       if (bestWall && maxEnemyIncrease >= 1) {
         const isCriticalBlock = maxEnemyIncrease >= 2;
-        const isEnemyClose = minEnemyDist <= 5;
-        const isEnemyAheadOrEqual = minEnemyDist <= botDist + 1;
-        const tacticalWallChance = Math.random() < 0.65;
+        const isEnemyClose = minEnemyDist <= 6;
+        const isEnemyAheadOrEqual = minEnemyDist <= botDist;
+        const isStartOfGame = minEnemyDist >= 7 && bot.wallsLeft >= 9;
 
-        if (isCriticalBlock || isEnemyClose || isEnemyAheadOrEqual || tacticalWallChance) {
+        if (isCriticalBlock) {
           return { type: 'wall', ...bestWall };
+        }
+
+        if (!isStartOfGame && (isEnemyClose || isEnemyAheadOrEqual)) {
+          if (Math.random() < 0.65) {
+            return { type: 'wall', ...bestWall };
+          }
         }
       }
     }
 
-    // 2. PAWN MOVEMENT (Follow reconstructed BFS path)
+    // 2. PAWN MOVEMENT (Evaluate portal shortcuts & follow BFS path)
+    const validMoves = this.getValidMoves(botId);
+
+    // Evaluate portal shortcuts
+    let bestPortalTarget: { portalX: number; portalY: number; totalDist: number } | null = null;
+    const portalBoosts = this.boosts.filter(b => b.type === 'portal' && b.targetX !== undefined && b.targetY !== undefined);
+
+    for (const p of portalBoosts) {
+      const path1 = this.findShortestPathToGoal(bot.x, bot.y, p.y, p.x);
+      if (path1.length > 0) {
+        const dist1 = path1.length - 1; // distance to portal entrance
+        const dist2 = this.getShortestPathLength(p.targetX!, p.targetY!, bot.targetY, bot.targetX); // distance from exit to goal
+        const totalViaPortal = dist1 + dist2;
+        if (dist2 !== Infinity && totalViaPortal < botDist) {
+          if (!bestPortalTarget || totalViaPortal < bestPortalTarget.totalDist) {
+            bestPortalTarget = {
+              portalX: p.x,
+              portalY: p.y,
+              totalDist: totalViaPortal
+            };
+          }
+        }
+      }
+    }
+
+    if (bestPortalTarget) {
+      const portalPath = this.findShortestPathToGoal(bot.x, bot.y, bestPortalTarget.portalY, bestPortalTarget.portalX);
+      if (portalPath.length > 1) {
+        const nextStep = portalPath[1];
+        const directMove = validMoves.find(m => m.x === nextStep.x && m.y === nextStep.y);
+        if (directMove) {
+          return { type: 'move', x: directMove.x, y: directMove.y };
+        }
+      }
+    }
+
     if (botPath.length > 1) {
       const nextStep = botPath[1];
-      const validMoves = this.getValidMoves(botId);
 
       const directMove = validMoves.find(m => m.x === nextStep.x && m.y === nextStep.y);
       if (directMove) {
@@ -504,7 +551,6 @@ export class Board {
     }
 
     // Fallback valid move
-    const validMoves = this.getValidMoves(botId);
     if (validMoves.length > 0) {
       return { type: 'move', x: validMoves[0].x, y: validMoves[0].y };
     }
@@ -592,6 +638,26 @@ export class Board {
     }
   }
 
+  public spawnKillerItem(): boolean {
+    const emptyCells: { x: number; y: number }[] = [];
+    for (let y = 0; y < this.size; y++) {
+      for (let x = 0; x < this.size; x++) {
+        const cell = this.grid[y][x];
+        if (!cell.hasPlayer && !cell.hasBoost) {
+          emptyCells.push({ x, y });
+        }
+      }
+    }
+    if (emptyCells.length === 0) return false;
+    const randIdx = Math.floor(Math.random() * emptyCells.length);
+    const chosen = emptyCells[randIdx];
+    const boostId = `boost_killer_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const boost = new Boost(boostId, 'killer_item', chosen.x, chosen.y);
+    this.boosts.push(boost);
+    this.grid[chosen.y][chosen.x].hasBoost = boostId;
+    return true;
+  }
+
   public toDTO(forPlayerId?: string) {
     const playersObj: { [id: string]: any } = {};
     this.players.forEach((p, id) => {
@@ -606,6 +672,8 @@ export class Board {
         targetX: p.targetX,
         targetY: p.targetY,
         wallsLeft: p.wallsLeft,
+        isDead: p.isDead,
+        hasKillerItem: p.hasKillerItem,
         color: p.color,
         team: p.team,
         avatarUrl: p.avatarUrl,

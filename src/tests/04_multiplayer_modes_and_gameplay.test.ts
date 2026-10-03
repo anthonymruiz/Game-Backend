@@ -96,4 +96,43 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
 
     game.destroy();
   });
+
+  it('Should spawn Killer Item in FFA, eliminate targeted player, skip turn, and declare last survivor winner', () => {
+    const room = roomService.createRoom('p1', 'Player1', false, 'Killer FFA', '4-FFA');
+    roomService.joinRoom(room.id, 'p2', 'Player2', false);
+    roomService.joinRoom(room.id, 'p3', 'Player3', true);
+    roomService.joinRoom(room.id, 'p4', 'Player4', true);
+
+    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    game.start();
+
+    assert.equal(game.hasSpawnedKillerItem, true);
+    const killerBoost = game.board.boosts.find(b => b.type === 'killer_item');
+    assert.ok(killerBoost);
+
+    // Player 1 obtains killer item and eliminates Player 2
+    const p1 = game.board.players.get('p1')!;
+    const p2 = game.board.players.get('p2')!;
+    p1.hasKillerItem = true;
+
+    const killSuccess = game.executeKillerItem('p1', 'p2');
+    assert.equal(killSuccess, true);
+    assert.equal(p2.isDead, true);
+    assert.equal(p1.hasKillerItem, false);
+
+    // Player 2 cannot take turn or execute moves/walls
+    assert.equal(game.executeMove('p2', 5, 1), false);
+    assert.equal(game.executeWall('p2', 'w1', 1, 1, true), false);
+
+    // Eliminate p3 and p4
+    p1.hasKillerItem = true;
+    game.executeKillerItem('p1', 'p3');
+    p1.hasKillerItem = true;
+    game.executeKillerItem('p1', 'p4');
+
+    assert.equal(game.state, 'finished');
+    assert.equal(game.winner, 'p1');
+
+    game.destroy();
+  });
 });

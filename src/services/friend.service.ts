@@ -6,6 +6,7 @@ import { User } from '../models/user.entity.js';
 import { PresenceStatus } from '../models/presence.enum.js';
 import { Notification } from '../models/notification.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
+import { NotificationService } from './notification.service.js';
 
 @singleton()
 export class FriendService {
@@ -67,32 +68,27 @@ export class FriendService {
 
   private async notifyRequest(requester: User, addressee: User, friendshipId: string) {
     try {
-      const repoNotif = AppDataSource.getRepository(Notification);
-      const notif = new Notification();
-      notif.user = addressee;
-      notif.type = 'FRIEND_REQUEST';
-      notif.title = 'Solicitud de amistad';
-      notif.message = `${requester.username} te ha enviado una solicitud de amistad.`;
-      await repoNotif.save(notif);
+      const notifService = container.resolve(NotificationService);
+      await notifService.sendNotification(
+        addressee.id,
+        'FRIEND_REQUEST',
+        'FRIEND_REQ_TITLE',
+        'FRIEND_REQ_MSG',
+        requester.username
+      );
 
       const socketManager = container.resolve(SocketManager);
       if (socketManager.io) {
-        const payload = {
+        socketManager.io.of('/matchmaking').to(addressee.id).emit('friend:request_received', {
           id: friendshipId,
-          notificationId: notif.id,
           type: 'FRIEND_REQUEST',
-          title: notif.title,
-          message: notif.message,
           requester: {
             id: requester.id,
             username: requester.username,
             avatarUrl: requester.avatarUrl
           },
           createdAt: new Date()
-        };
-
-        socketManager.io.of('/matchmaking').to(addressee.id).emit('friend:request_received', payload);
-        socketManager.io.of('/matchmaking').to(addressee.id).emit('newNotification', notif);
+        });
       }
     } catch (err) {
       console.error('Error sending friend request notification:', err);
@@ -113,26 +109,25 @@ export class FriendService {
     await this.repo.save(friendship);
 
     try {
-      const repoNotif = AppDataSource.getRepository(Notification);
-      const notif = new Notification();
-      notif.user = friendship.requester;
-      notif.type = 'FRIEND_ACCEPTED';
-      notif.title = 'Solicitud Aceptada';
-      notif.message = `${friendship.addressee.username} ha aceptado tu solicitud de amistad.`;
-      await repoNotif.save(notif);
+      const notifService = container.resolve(NotificationService);
+      await notifService.sendNotification(
+        friendship.requester.id,
+        'FRIEND_ACCEPTED',
+        'FRIEND_ACC_TITLE',
+        'FRIEND_ACC_MSG',
+        friendship.addressee.username
+      );
 
       const socketManager = container.resolve(SocketManager);
       if (socketManager.io) {
         socketManager.io.of('/matchmaking').to(friendship.requester.id).emit('friend:request_accepted', {
           friendshipId: friendship.id,
-          notificationId: notif.id,
           friend: {
             id: friendship.addressee.id,
             username: friendship.addressee.username,
             avatarUrl: friendship.addressee.avatarUrl
           }
         });
-        socketManager.io.of('/matchmaking').to(friendship.requester.id).emit('newNotification', notif);
       }
     } catch (e) {
       console.error('Error sending friend request accept notification:', e);
@@ -152,14 +147,24 @@ export class FriendService {
       throw new Error('No tienes permiso para esta acción');
     }
 
-    const otherUserId = friendship.requester.id === userId ? friendship.addressee.id : friendship.requester.id;
+    const otherUser = friendship.requester.id === userId ? friendship.addressee : friendship.requester;
+    const cancellingUser = friendship.requester.id === userId ? friendship.requester : friendship.addressee;
 
     await this.repo.remove(friendship);
 
     try {
+      const notifService = container.resolve(NotificationService);
+      await notifService.sendNotification(
+        otherUser.id,
+        'FRIEND_REJECTED',
+        'FRIEND_REJ_TITLE',
+        'FRIEND_REJ_MSG',
+        cancellingUser.username
+      );
+
       const socketManager = container.resolve(SocketManager);
       if (socketManager.io) {
-        socketManager.io.of('/matchmaking').to(otherUserId).emit('friend:request_cancelled', {
+        socketManager.io.of('/matchmaking').to(otherUser.id).emit('friend:request_cancelled', {
           friendshipId: friendshipId,
           cancelledByUserId: userId
         });
@@ -169,7 +174,7 @@ export class FriendService {
         });
       }
     } catch (e) {
-      console.error('Error emitting friend:request_cancelled socket:', e);
+      console.error('Error emitting friend:request_cancelled socket/notification:', e);
     }
   }
 

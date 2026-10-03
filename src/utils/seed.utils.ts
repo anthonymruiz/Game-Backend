@@ -193,6 +193,8 @@ export async function seedReports(): Promise<void> {
           }
         ];
 
+        const matchIds = ['RSH-8840', 'RSH-9120', 'RSH-7750', 'RSH-6012', 'RSH-8840', 'RSH-9120', 'RSH-7750', 'RSH-6012'];
+        let idx = 0;
         for (const rData of mockReports) {
           const r = new Report();
           r.category = rData.category as any;
@@ -202,6 +204,8 @@ export async function seedReports(): Promise<void> {
           r.reportedUser = rData.reportedUser;
           r.reporterId = rData.reporter.id;
           r.reportedUserId = rData.reportedUser.id;
+          r.matchId = matchIds[idx % matchIds.length];
+          idx++;
           await reportRepo.save(r);
         }
         console.log('[SEED] ✅ 8 Realistic test reports created successfully!');
@@ -225,11 +229,11 @@ export async function seedMatchHistory(): Promise<void> {
         const mockMatches = [
           { mode: '1v1', result: 'win', opp: users[1].username, elo: 15, duration: 185 },
           { mode: '1v1', result: 'loss', opp: users[0].username, elo: -10, duration: 240 },
-          { mode: '4way', result: 'win', opp: 'Arena Global 4P', elo: 25, duration: 420 },
+          { mode: '4-FFA', result: 'win', opp: 'Arena Global 4P', elo: 25, duration: 420 },
           { mode: '2v2', result: 'win', opp: 'Equipo Rojo', elo: 18, duration: 310 },
           { mode: '1v1', result: 'win', opp: users[2]?.username || 'ShadowStriker', elo: 15, duration: 150 },
           { mode: 'vs_ai', result: 'win', opp: 'Bot Entrenador', elo: 0, duration: 95 },
-          { mode: '4way', result: 'loss', opp: 'Arena Global 4P', elo: -8, duration: 380 },
+          { mode: '4-FFA', result: 'loss', opp: 'Arena Global 4P', elo: -8, duration: 380 },
           { mode: '1v1', result: 'draw', opp: users[3]?.username || 'ApexLegend', elo: 0, duration: 300 }
         ];
 

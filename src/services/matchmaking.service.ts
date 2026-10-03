@@ -2,7 +2,21 @@ import { singleton, inject } from 'tsyringe';
 import { RedisService } from './redis.service.js';
 import { v4 as uuidv4 } from 'uuid';
 
-export type GameMode = '1v1' | '2v2' | '4way' | '4-FFA' | '6-FFA' | '6-3v3' | 'vs_ai';
+export type GameMode = '1v1' | '2v2' | '4-FFA' | '6-FFA' | 'vs_ai';
+
+export const GAME_MODES = {
+  MODE_1V1: '1v1' as GameMode,
+  MODE_2V2: '2v2' as GameMode,
+  MODE_4FFA: '4-FFA' as GameMode,
+  MODE_6FFA: '6-FFA' as GameMode,
+  MODE_VS_AI: 'vs_ai' as GameMode
+} as const;
+
+export const GROUP_GAME_MODES: ReadonlySet<GameMode> = new Set([
+  GAME_MODES.MODE_2V2,
+  GAME_MODES.MODE_4FFA,
+  GAME_MODES.MODE_6FFA
+]);
 
 @singleton()
 export class MatchmakingService {
@@ -18,8 +32,8 @@ export class MatchmakingService {
     }
 
     let requiredPlayers = 2;
-    if (mode === '2v2' || mode === '4way' || mode === '4-FFA') requiredPlayers = 4;
-    if (mode === '6-FFA' || mode === '6-3v3') requiredPlayers = 6;
+    if (mode === '2v2' || mode === '4-FFA') requiredPlayers = 4;
+    if (mode === '6-FFA') requiredPlayers = 6;
 
     const currentLen = await client.lLen(queueKey);
 

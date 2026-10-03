@@ -10,12 +10,14 @@ export class ReportRepository {
     return AppDataSource.getRepository(Report);
   }
 
-  public async createAndSave(reporterId: string, reportedUserId: string, category: ReportCategory, details: string): Promise<Report> {
+  public async createAndSave(reporterId: string, reportedUserId: string, category: ReportCategory, details: string, matchId?: string, language: string = 'es'): Promise<Report> {
     const report = new Report();
     report.reporterId = reporterId;
     report.reportedUserId = reportedUserId;
     report.category = category;
     report.details = details;
+    report.language = language || 'es';
+    if (matchId) report.matchId = matchId;
     report.status = ReportStatus.PENDING;
     return this.ormRepository.save(report);
   }
@@ -33,6 +35,8 @@ export class ReportRepository {
         category: true,
         details: true,
         status: true,
+        language: true,
+        matchId: true,
         createdAt: true,
         reporter: {
           id: true,
@@ -56,6 +60,8 @@ export class ReportRepository {
         'report.category',
         'report.details',
         'report.status',
+        'report.language',
+        'report.matchId',
         'report.createdAt',
         'reporter.id',
         'reporter.username',
@@ -84,6 +90,15 @@ export class ReportRepository {
 
   public async countPending(): Promise<number> {
     return this.ormRepository.count({ where: { status: ReportStatus.PENDING } });
+  }
+
+  public async countValidForUser(reportedUserId: string): Promise<number> {
+    return this.ormRepository.count({
+      where: {
+        reportedUserId,
+        status: ReportStatus.REVIEWED
+      }
+    });
   }
 
   public async save(report: Report): Promise<Report> {

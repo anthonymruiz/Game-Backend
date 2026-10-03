@@ -26,6 +26,16 @@ const TRANSLATIONS: ITranslations = {
     MATCH_LOST_TITLE: 'Match Lost',
     MATCH_LOST_MSG: 'Better luck next time. You lost the match.',
     ADMIN_MSG_TITLE: 'Message from Admin',
+    REPORT_REPORTER_TITLE: 'Report Update',
+    REPORT_REPORTER_MSG: 'Your report has been reviewed by the moderation team. Thank you for helping keep the community safe.',
+    REPORTED_USER_TITLE: 'Account Warning',
+    REPORTED_USER_MSG: 'You have been reported for violating community rules and have received a strike. Total strikes: {{data}}',
+    FRIEND_REQ_TITLE: 'Friend Request',
+    FRIEND_REQ_MSG: '{{data}} sent you a friend request.',
+    FRIEND_ACC_TITLE: 'Request Accepted',
+    FRIEND_ACC_MSG: '{{data}} accepted your friend request.',
+    FRIEND_REJ_TITLE: 'Request Declined',
+    FRIEND_REJ_MSG: '{{data}} declined your friend request.'
   },
   es: {
     MATCH_WON_TITLE: '¡Partida Ganada!',
@@ -33,6 +43,16 @@ const TRANSLATIONS: ITranslations = {
     MATCH_LOST_TITLE: 'Partida Perdida',
     MATCH_LOST_MSG: 'Mejor suerte la próxima vez. Perdiste la partida.',
     ADMIN_MSG_TITLE: 'Mensaje del Administrador',
+    REPORT_REPORTER_TITLE: 'Actualización de Reporte',
+    REPORT_REPORTER_MSG: 'Tu reporte está en revisión y ha sido procesado por el equipo de moderación. Gracias por ayudar a mantener la comunidad segura.',
+    REPORTED_USER_TITLE: 'Aviso de Cuenta',
+    REPORTED_USER_MSG: 'Has sido reportado por incumplir las normas de la comunidad y se te ha asignado un strike. Total de strikes: {{data}}',
+    FRIEND_REQ_TITLE: 'Solicitud de Amistad',
+    FRIEND_REQ_MSG: '{{data}} te ha enviado una solicitud de amistad.',
+    FRIEND_ACC_TITLE: 'Solicitud Aceptada',
+    FRIEND_ACC_MSG: '{{data}} ha aceptado tu solicitud de amistad.',
+    FRIEND_REJ_TITLE: 'Solicitud Rechazada',
+    FRIEND_REJ_MSG: '{{data}} ha rechazado tu solicitud de amistad.'
   }
 };
 
@@ -70,7 +90,10 @@ export class NotificationService {
     const dict = TRANSLATIONS[lang] || TRANSLATIONS['en'];
 
     const title = dict[translationKeyTitle] || translationKeyTitle;
-    const message = (dict[translationKeyMsg] || translationKeyMsg) + (dynamicData ? ` ${dynamicData}` : '');
+    const rawMsg = dict[translationKeyMsg] || translationKeyMsg;
+    const message = rawMsg.includes('{{data}}')
+      ? rawMsg.replace('{{data}}', dynamicData || '')
+      : rawMsg + (dynamicData ? ` ${dynamicData}` : '');
 
     const repo = AppDataSource.getRepository(Notification);
     const notif = new Notification();

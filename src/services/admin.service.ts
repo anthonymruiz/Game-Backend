@@ -78,7 +78,7 @@ export class AdminService {
       throw new Error('User not found.');
     }
 
-    if (targetUser.role === UserRole.SUPERADMIN || targetUser.role === UserRole.ADMIN) {
+    if (targetUser.role === UserRole.SUPERADMIN || targetUser.role === UserRole.ADMIN || targetUser.role === ('superadmin' as any)) {
       throw new Error('Cannot ban admins or superadmins.');
     }
 
@@ -115,6 +115,10 @@ export class AdminService {
     const targetUser = await this.userRepository.findById(targetUserId);
     if (!targetUser) {
       throw new Error('User not found.');
+    }
+
+    if (newRole === UserRole.BANNED && (targetUser.role === UserRole.SUPERADMIN || targetUser.role === UserRole.ADMIN || targetUser.role === ('superadmin' as any))) {
+      throw new Error('Cannot ban admins or superadmins.');
     }
     const oldRole = targetUser.role;
     targetUser.role = newRole;

@@ -5,10 +5,17 @@ import { Stats } from '../models/stats.entity.js';
 import { User } from '../models/user.entity.js';
 import { NotificationService } from './notification.service.js';
 import { container } from 'tsyringe';
+import { IRoomPlayer } from './room.service.js';
 
 @singleton()
 export class GameLogService {
-  public async logGameEnd(matchId: string, winnerId: string | null, allPlayers: string[]): Promise<void> {
+  public async logGameEnd(
+    matchId: string, 
+    winnerId: string | null, 
+    allPlayers: (string | IRoomPlayer)[], 
+    mode: string = '1v1',
+    durationSeconds?: number
+  ): Promise<void> {
     const queryRunner = AppDataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -16,7 +23,30 @@ export class GameLogService {
     const notificationsToSend: Array<{ userId: string; type: string; titleKey: any; msgKey: any }> = [];
 
     try {
-      for (const playerId of allPlayers) {
+      const roomPlayers: IRoomPlayer[] = allPlayers.map(p => {
+        if (typeof p === 'string') {
+          return { id: p, username: p, isGuest: p.startsWith('guest_') || p.startsWith('bot_'), color: '#000000' };
+        }
+        return p;
+      });
+
+      const hasBot = roomPlayers.some(p => 
+        p.id.startsWith('bot_') || 
+        (p as any).isBot === true || 
+        (p.username && p.username.toLowerCase().startsWith('bot'))
+      );
+
+      // Find winning team if 2v2
+      let winningTeam: number | undefined = undefined;
+      if (mode === '2v2' && winnerId) {
+        const winnerPlayer = roomPlayers.find(p => p.id === winnerId);
+        if (winnerPlayer) {
+          winningTeam = winnerPlayer.team;
+        }
+      }
+
+      for (const player of roomPlayers) {
+        const playerId = player.id;
         if (!playerId || playerId.startsWith('bot_') || playerId.startsWith('guest_')) {
           continue;
         }
@@ -36,33 +66,63 @@ export class GameLogService {
           await queryRunner.manager.save(user);
         }
 
+        // Determine opponent username string
+        let opponentUsername = '';
+        if (mode === '2v2') {
+          const opponents = roomPlayers.filter(p => p.team !== player.team);
+          opponentUsername = opponents.map(p => p.username).filter(Boolean).join(', ') || 'Equipo Rival';
+        } else {
+          const opponents = roomPlayers.filter(p => p.id !== playerId);
+          opponentUsername = opponents.map(p => p.username).filter(Boolean).join(', ') || 'Oponente';
+        }
+
         const history = new MatchHistory();
         history.user = user;
         history.userId = user.id;
         history.matchId = matchId;
-
-        let eloChange = 0;
-        if (winnerId === playerId) {
-          history.result = 'win';
-          stats.wins = (stats.wins || 0) + 1;
-          stats.points = (stats.points || 0) + 10;
-          eloChange = 15;
-          notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_WON_TITLE', msgKey: 'MATCH_WON_MSG' });
-        } else if (winnerId === null) {
-          history.result = 'draw';
-          stats.draws = (stats.draws || 0) + 1;
-          eloChange = 0;
-        } else {
-          history.result = 'loss';
-          stats.losses = (stats.losses || 0) + 1;
-          eloChange = -10;
-          notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_LOST_TITLE', msgKey: 'MATCH_LOST_MSG' });
+        history.mode = mode || '1v1';
+        history.opponentUsername = opponentUsername;
+        if (durationSeconds !== undefined) {
+          history.durationSeconds = durationSeconds;
         }
 
-        stats.elo = Math.max(0, (stats.elo || 1000) + eloChange);
-        history.eloChange = eloChange;
+        let isWin = false;
+        let isDraw = false;
 
-        await queryRunner.manager.save(stats);
+        if (winnerId === null) {
+          isDraw = true;
+        } else if (mode === '2v2' && winningTeam !== undefined && player.team !== undefined) {
+          isWin = player.team === winningTeam;
+        } else {
+          isWin = winnerId === playerId;
+        }
+
+        let eloChange = 0;
+        if (!hasBot) {
+          if (isWin) {
+            history.result = 'win';
+            stats.wins = (stats.wins || 0) + 1;
+            stats.points = (stats.points || 0) + 10;
+            eloChange = 15;
+            notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_WON_TITLE', msgKey: 'MATCH_WON_MSG' });
+          } else if (isDraw) {
+            history.result = 'draw';
+            stats.draws = (stats.draws || 0) + 1;
+            eloChange = 0;
+          } else {
+            history.result = 'loss';
+            stats.losses = (stats.losses || 0) + 1;
+            eloChange = -10;
+            notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_LOST_TITLE', msgKey: 'MATCH_LOST_MSG' });
+          }
+
+          stats.elo = Math.max(0, (stats.elo || 1000) + eloChange);
+          await queryRunner.manager.save(stats);
+        } else {
+          history.result = isWin ? 'win' : (isDraw ? 'draw' : 'loss');
+        }
+
+        history.eloChange = eloChange;
         await queryRunner.manager.save(history);
       }
 

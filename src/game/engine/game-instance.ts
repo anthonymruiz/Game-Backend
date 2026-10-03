@@ -20,24 +20,30 @@ export class GameInstance {
   
   public state: 'waiting' | 'playing' | 'finished' = 'waiting';
   public winner: string | null = null;
+  public startTime?: number;
   
   public turnTimeLimitSeconds: number = 30;
   public maxStrikesBeforeKick: number = 3;
+  public hasSpawnedKillerItem: boolean = false;
 
   private turnTimer: NodeJS.Timeout | null = null;
   private portalTimer: NodeJS.Timeout | null = null;
   public onStateChange: (event: string, data: any) => void;
   public botReactionManager: BotReactionManager;
 
+  public isPrivate: boolean = false;
+
   constructor(
     id: string, 
     mode: GameMode, 
     roomPlayers: IRoomPlayer[], 
     onStateChange: (event: string, data: any) => void,
-    options?: IGameInstanceOptions
+    options?: IGameInstanceOptions,
+    isPrivate: boolean = false
   ) {
     this.id = id;
     this.mode = mode;
+    this.isPrivate = isPrivate;
     this.onStateChange = onStateChange;
     this.rules = GameModeRegistry.get(mode);
     this.botReactionManager = new BotReactionManager(this);
@@ -52,10 +58,16 @@ export class GameInstance {
     const size = this.rules.boardSize;
     this.board = new Board(size);
     
+    const teamCounts: { [team: number]: number } = { 1: 0, 2: 0 };
+
     roomPlayers.forEach((p, idx) => {
       this.playersList.push(p.id);
 
-      const startCfg = this.rules.getPlayerStartConfig(idx, roomPlayers.length, size, p.team);
+      const playerTeam = p.team !== undefined ? p.team : (idx % 2 === 0 ? 1 : 2);
+      const teamMemberIndex = teamCounts[playerTeam] || 0;
+      teamCounts[playerTeam] = teamMemberIndex + 1;
+
+      const startCfg = this.rules.getPlayerStartConfig(idx, roomPlayers.length, size, playerTeam, teamMemberIndex);
       const playerObj = new Player(
         p.id,
         p.username,
@@ -79,7 +91,13 @@ export class GameInstance {
 
   public start() {
     this.state = 'playing';
-    this.board.spawnSingleRandomBoost();
+    this.startTime = Date.now();
+    if ((this.mode === '4-FFA' || this.mode === '6-FFA') && !this.hasSpawnedKillerItem) {
+      this.board.spawnKillerItem();
+      this.hasSpawnedKillerItem = true;
+    } else {
+      this.board.spawnSingleRandomBoost();
+    }
     this.startTurnTimer();
     this.startBoostTimer();
     this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
@@ -92,7 +110,12 @@ export class GameInstance {
     // Every 1 minute (60,000 ms), clear active boost and spawn 1 random boost
     this.portalTimer = setInterval(() => {
       if (this.state === 'playing') {
-        this.board.spawnSingleRandomBoost();
+        if ((this.mode === '4-FFA' || this.mode === '6-FFA') && !this.hasSpawnedKillerItem) {
+          this.board.spawnKillerItem();
+          this.hasSpawnedKillerItem = true;
+        } else {
+          this.board.spawnSingleRandomBoost();
+        }
         const currentTurnPlayer = this.getCurrentPlayer();
         this.onStateChange('portalsRotated', {
           currentTurn: currentTurnPlayer,
@@ -119,6 +142,16 @@ export class GameInstance {
     if (this.state !== 'playing') return;
     const botId = this.getCurrentPlayer();
     if (!botId || !botId.startsWith('bot_')) return;
+
+    const botPlayer = this.board.players.get(botId);
+    if (botPlayer && botPlayer.hasKillerItem) {
+      const opponents = Array.from(this.board.players.values()).filter(p => p.id !== botId && !p.isDead);
+      if (opponents.length > 0) {
+        const target = opponents[Math.floor(Math.random() * opponents.length)];
+        this.executeKillerItem(botId, target.id);
+        return;
+      }
+    }
 
     const action = this.board.getBotAction(botId);
     if (action) {
@@ -185,9 +218,23 @@ export class GameInstance {
 
   public nextTurn() {
     if (this.playersList.length === 0) return;
-    this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
+
+    let attempts = 0;
+    do {
+      this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
+      attempts++;
+      const p = this.board.players.get(this.getCurrentPlayer());
+      if (p && !p.isDead) break;
+    } while (attempts < this.playersList.length);
+
+    const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
+    if (alive.length <= 1) {
+      this.winner = alive[0]?.id || null;
+      this.endGame();
+      return;
+    }
+
     this.startTurnTimer();
-    
     this.board.ensureMinWallPickups(2);
 
     const currentTurnPlayer = this.getCurrentPlayer();
@@ -218,7 +265,8 @@ export class GameInstance {
   }
 
   public executeMove(playerId: string, newX: number, newY: number): boolean {
-    if (this.state !== 'playing' || playerId !== this.getCurrentPlayer()) return false;
+    const p = this.board.players.get(playerId);
+    if (this.state !== 'playing' || playerId !== this.getCurrentPlayer() || p?.isDead) return false;
     
     const success = this.board.movePlayer(playerId, newX, newY);
     if (success) {
@@ -231,7 +279,8 @@ export class GameInstance {
   }
 
   public executeWall(playerId: string, wallId: string, x: number, y: number, isHorizontal: boolean): boolean {
-    if (this.state !== 'playing' || playerId !== this.getCurrentPlayer()) return false;
+    const p = this.board.players.get(playerId);
+    if (this.state !== 'playing' || playerId !== this.getCurrentPlayer() || p?.isDead) return false;
     
     const pathLengthsBefore = new Map<string, number>();
     for (const p of this.board.players.values()) {
@@ -267,22 +316,84 @@ export class GameInstance {
     }
   }
 
+  public executeKillerItem(killerId: string, targetId: string): boolean {
+    if (this.state !== 'playing') return false;
+    const killer = this.board.players.get(killerId);
+    if (!killer || !killer.hasKillerItem) return false;
+
+    killer.hasKillerItem = false;
+
+    if (!targetId || targetId === 'discard' || targetId === 'none') {
+      const currentTurn = this.getCurrentPlayer();
+      this.onStateChange('killerItemDiscarded', {
+        killerId,
+        killerUsername: killer.username,
+        board: this.board.toDTO(currentTurn)
+      });
+      return true;
+    }
+
+    const target = this.board.players.get(targetId);
+    if (!target || target.isDead || target.id === killerId) return false;
+
+    killer.hasKillerItem = false;
+    target.isDead = true;
+
+    if (this.board.grid[target.y]?.[target.x]) {
+      this.board.grid[target.y][target.x].hasPlayer = null;
+    }
+
+    const currentTurn = this.getCurrentPlayer();
+    this.onStateChange('playerKilled', {
+      killerId,
+      killerUsername: killer.username,
+      targetId,
+      targetUsername: target.username,
+      board: this.board.toDTO(currentTurn)
+    });
+
+    const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
+    if (alive.length <= 1) {
+      this.winner = alive[0]?.id || null;
+      this.endGame();
+    } else {
+      if (currentTurn === targetId) {
+        this.nextTurn();
+      } else {
+        this.onStateChange('turnChanged', { currentTurn, board: this.board.toDTO(currentTurn) });
+      }
+    }
+    return true;
+  }
+
   public surrender(surrenderingUserId: string) {
     if (this.state !== 'playing') return;
 
-    const remaining = this.playersList.filter(id => id !== surrenderingUserId);
-    this.winner = remaining[0] || null;
-    this.state = 'finished';
-    if (this.turnTimer) clearTimeout(this.turnTimer);
+    const surrenderingPlayer = this.board.players.get(surrenderingUserId);
+    if (surrenderingPlayer) {
+      surrenderingPlayer.isDead = true;
+    }
 
-    this.onStateChange('gameFinished', { winner: this.winner, surrenderedBy: surrenderingUserId });
-    this.botReactionManager.onGameFinished(this.winner);
+    const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
+
+    if (alive.length <= 1) {
+      this.winner = alive[0]?.id || null;
+      this.endGame();
+    } else {
+      if (this.getCurrentPlayer() === surrenderingUserId) {
+        this.nextTurn();
+      } else {
+        const currentTurn = this.getCurrentPlayer();
+        this.onStateChange('turnChanged', { currentTurn, board: this.board.toDTO(currentTurn) });
+      }
+    }
   }
 
   private endGame() {
     this.state = 'finished';
     if (this.turnTimer) clearTimeout(this.turnTimer);
-    this.onStateChange('gameFinished', { winner: this.winner });
+    const durationSeconds = this.startTime ? Math.max(1, Math.round((Date.now() - this.startTime) / 1000)) : 0;
+    this.onStateChange('gameFinished', { winner: this.winner, durationSeconds });
     this.botReactionManager.onGameFinished(this.winner);
   }
 }

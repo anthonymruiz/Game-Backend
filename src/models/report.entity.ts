@@ -30,5 +30,11 @@ export class Report extends AbstractBaseEntity {
 
   @Column({ type: 'varchar', length: 20, default: ReportStatus.PENDING })
   status!: ReportStatus;
+
+  @Column({ type: 'varchar', length: 10, default: 'es' })
+  language!: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  matchId?: string;
 }
 

@@ -18,8 +18,8 @@ export class ReportController {
         return;
       }
 
-      const { reportedUserId, category, details } = req.body;
-      const report = await this.reportService.createReport(reporterId, reportedUserId, category, details);
+      const { reportedUserId, category, details, matchId, language } = req.body;
+      const report = await this.reportService.createReport(reporterId, reportedUserId, category, details, matchId, language || 'es');
 
       res.status(201).json({ message: 'Report submitted successfully.', report, reportId: report.id });
     } catch (error: any) {

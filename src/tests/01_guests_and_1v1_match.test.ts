@@ -117,5 +117,7 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     // Simulate invalid move for guest_a when it's not their turn
     const invalidTurnMove = game.executeMove('guest_a', 4, 6);
     assert.equal(invalidTurnMove, false);
+
+    game.destroy();
   });
 });

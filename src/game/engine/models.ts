@@ -25,6 +25,8 @@ export class Wall {
 export class Player {
   public startX: number;
   public startY: number;
+  public isDead: boolean = false;
+  public hasKillerItem: boolean = false;
 
   constructor(
     public id: string,
@@ -51,7 +53,7 @@ export class Player {
 export class Boost {
   constructor(
     public id: string,
-    public type: 'wall_pickup' | 'portal' | 'extra_wall',
+    public type: 'wall_pickup' | 'portal' | 'extra_wall' | 'killer_item',
     public x: number,
     public y: number,
     public targetX?: number,

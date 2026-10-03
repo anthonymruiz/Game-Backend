@@ -16,7 +16,7 @@ export interface IGameModeRules {
   maxPlayers: number;
   wallsPerPlayer: number;
   isTeamMode: boolean;
-  getPlayerStartConfig(index: number, totalPlayers: number, boardSize: number, team?: number): IPlayerStartConfig;
+  getPlayerStartConfig(index: number, totalPlayers: number, boardSize: number, team?: number, teamMemberIndex?: number): IPlayerStartConfig;
   checkWinCondition(player: Player, board: Board): boolean;
 }
 
@@ -90,17 +90,15 @@ export class TwoVsTwoRules implements IGameModeRules {
   public wallsPerPlayer = 6;
   public isTeamMode = true;
 
-  public getPlayerStartConfig(index: number, totalPlayers: number, size: number, team?: number): IPlayerStartConfig {
+  public getPlayerStartConfig(index: number, totalPlayers: number, size: number, team?: number, teamMemberIndex?: number): IPlayerStartConfig {
     const maxCoord = size - 1;
-    // Team 1 starts at bottom corners (0, 10) and (10, 10), heading to targetY = 0 (top row)
-    // Team 2 starts at top corners (0, 0) and (10, 0), heading to targetY = 10 (bottom row)
-    if (team === 1 || (team === undefined && index < 2)) {
-      const isSecondInTeam = index === 1 || index === 3;
-      const startX = isSecondInTeam ? maxCoord : 0;
+    const playerTeam = team !== undefined ? team : (index % 2 === 0 ? 1 : 2);
+    const isSecondInTeam = teamMemberIndex !== undefined ? (teamMemberIndex > 0) : (index >= 2);
+    const startX = isSecondInTeam ? maxCoord : 0;
+
+    if (playerTeam === 1) {
       return { startX, startY: maxCoord, targetY: 0, team: 1 };
     } else {
-      const isSecondInTeam = index === 3 || index === 1;
-      const startX = isSecondInTeam ? maxCoord : 0;
       return { startX, startY: 0, targetY: maxCoord, team: 2 };
     }
   }

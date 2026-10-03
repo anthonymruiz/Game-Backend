@@ -8,6 +8,14 @@ import { SocketManager } from './socket/socket.manager.js';
 import { RedisService } from './services/redis.service.js';
 import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedReports, seedMatchHistory } from './utils/seed.utils.js';
 
+process.on('uncaughtException', (err) => {
+  console.error('CRITICAL: Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 async function bootstrap() {
   try {
     await AppDataSource.initialize();
