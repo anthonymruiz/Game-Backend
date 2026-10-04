@@ -257,9 +257,10 @@ export class Board {
   }
 
   public spawnRandomBoost() {
+    const mid = Math.floor(this.size / 2);
     const x = Math.floor(Math.random() * this.size);
     const y = Math.floor(Math.random() * this.size);
-    if (!this.grid[y][x].hasPlayer && !this.grid[y][x].hasBoost) {
+    if (!(x === mid && y === mid) && !this.grid[y][x].hasPlayer && !this.grid[y][x].hasBoost) {
       const boost = new Boost(Math.random().toString(), 'extra_wall', x, y);
       this.boosts.push(boost);
       this.grid[y][x].hasBoost = boost.id;
@@ -419,15 +420,33 @@ export class Board {
 
                 // Wall MUST NOT block bot from having a valid path
                 if (newBotDist !== Infinity && botIncrease <= 1) {
-                  // Check that wall doesn't harm any teammate
+                  // Check that wall doesn't harm or hinder any teammate
                   let harmsTeammate = false;
                   for (const t of teammates) {
                     const origTDist = teammateDists.get(t.id) ?? Infinity;
                     const newTPath = this.findShortestPath(t.id);
                     const newTDist = newTPath.length > 0 ? newTPath.length - 1 : Infinity;
+
+                    // 1. Must not increase teammate's shortest path
                     if (newTDist === Infinity || (newTDist - origTDist) > 0) {
                       harmsTeammate = true;
                       break;
+                    }
+
+                    // 2. Must not place wall in immediate proximity to teammate (Manhattan distance <= 2)
+                    const distToTeammate = Math.abs(wx - t.x) + Math.abs(wy - t.y);
+                    if (distToTeammate <= 2) {
+                      harmsTeammate = true;
+                      break;
+                    }
+
+                    // 3. Must not block the row directly in front of teammate towards their target goal
+                    if (t.targetY !== undefined) {
+                      const teammateFwdY = t.targetY < t.y ? t.y - 1 : t.y;
+                      if (isHoriz && Math.abs(wx - t.x) <= 1 && wy === teammateFwdY) {
+                        harmsTeammate = true;
+                        break;
+                      }
                     }
                   }
 
@@ -580,12 +599,14 @@ export class Board {
     });
     this.boosts = [];
 
-    // 2. Find empty cells without player
+    // 2. Find empty cells without player and NOT on the center goal flag (mid, mid)
+    const mid = Math.floor(this.size / 2);
     const emptyCells: { x: number; y: number }[] = [];
     for (let y = 0; y < this.size; y++) {
       for (let x = 0; x < this.size; x++) {
         const cell = this.grid[y][x];
-        if (!cell.hasPlayer) {
+        const isCenter = (x === mid && y === mid);
+        if (!cell.hasPlayer && !isCenter) {
           emptyCells.push({ x, y });
         }
       }
@@ -639,11 +660,13 @@ export class Board {
   }
 
   public spawnKillerItem(): boolean {
+    const mid = Math.floor(this.size / 2);
     const emptyCells: { x: number; y: number }[] = [];
     for (let y = 0; y < this.size; y++) {
       for (let x = 0; x < this.size; x++) {
         const cell = this.grid[y][x];
-        if (!cell.hasPlayer && !cell.hasBoost) {
+        const isCenter = (x === mid && y === mid);
+        if (!cell.hasPlayer && !cell.hasBoost && !isCenter) {
           emptyCells.push({ x, y });
         }
       }

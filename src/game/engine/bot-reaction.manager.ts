@@ -12,55 +12,31 @@ export const BOT_QUICK_PHRASES = {
 
 export const BOT_EMOJIS = {
   LAUGHING: '😂',
-  SILLY: '🤪',
-  PARTY: '🎉',
   ANGRY: '😡',
-  CRYING: '😢',
-  SHOCKED: '😲',
-  CLAP: '👏',
-  THUMBS_UP: '👍',
-  HEART: '❤️',
-  HEART_EYES: '😍',
-  YAWN: '🥱',
-  STOPWATCH: '⏱️',
-  SLEEPING: '😴'
+  SURPRISED: '😮',
+  THUMBS_UP: '👍'
 } as const;
 
 export const BOT_REACTION_TIMINGS = {
-  COOLDOWN_MS: 4500, // 4.5s cooldown so bots react dynamically in 1v1 / vs_ai / FFA
-  SLOW_TURN_THRESHOLD_SEC: 8, // 8s threshold for slow turns
+  COOLDOWN_MS: 4000,
+  SLOW_TURN_THRESHOLD_SEC: 8,
   SLOW_TURN_CHECK_INTERVAL_MS: 2500,
   MIN_DELAY_MS: 300,
   MAX_DELAY_MS: 750
 } as const;
 
 export const BOT_REACTION_PROBABILITIES = {
-  SLOW_TURN_ENEMY: 0.5,
+  SLOW_TURN_ENEMY: 0.6,
   SLOW_TURN_TEAMMATE: 0.3,
-  BOT_BLOCKED_ENEMY: 0.55,
-  ENEMY_BLOCKED_BOT: 0.55,
-  TEAMMATE_BLOCKED_ENEMY: 0.5,
-  ENEMY_NEAR_WIN: 0.45,
-  TEAMMATE_NEAR_WIN: 0.45,
-  BOT_ADVANCING: 0.35,
-  VICTORY_CELEBRATION: 0.8,
-  DEFEAT_REACTION: 0.6
+  BOT_BLOCKED_ENEMY: 0.7,   // High chance to laugh when bot blocks enemy
+  ENEMY_BLOCKED_BOT: 0.7,   // High chance to be angry when enemy blocks bot
+  TEAMMATE_BLOCKED_ENEMY: 0.6,
+  ENEMY_NEAR_WIN: 0.7,      // Angry when enemy is 1-2 steps from win
+  TEAMMATE_NEAR_WIN: 0.6,
+  BOT_ADVANCING: 0.6,       // Laughing when bot is 1-2 steps from win
+  VICTORY_CELEBRATION: 0.85,
+  DEFEAT_REACTION: 0.85
 } as const;
-
-const PHRASE_GROUPS = {
-  TAUNT_ENEMY: [BOT_QUICK_PHRASES.OOPS, BOT_QUICK_PHRASES.NICE_WALL],
-  CELEBRATE_TEAM: [BOT_QUICK_PHRASES.NICE_WALL, BOT_QUICK_PHRASES.GOOD_JOB, BOT_QUICK_PHRASES.WELL_PLAYED],
-  FRUSTRATED: [BOT_QUICK_PHRASES.DAMN],
-  HURRY: [BOT_QUICK_PHRASES.HURRY_UP]
-};
-
-const EMOJI_GROUPS = {
-  TAUNT_ENEMY: [BOT_EMOJIS.LAUGHING, BOT_EMOJIS.SILLY, BOT_EMOJIS.PARTY],
-  CELEBRATE_TEAM: [BOT_EMOJIS.CLAP, BOT_EMOJIS.THUMBS_UP, BOT_EMOJIS.HEART, BOT_EMOJIS.PARTY],
-  FRUSTRATED: [BOT_EMOJIS.ANGRY, BOT_EMOJIS.CRYING, BOT_EMOJIS.SHOCKED],
-  HURRY_ENEMY: [BOT_EMOJIS.YAWN, BOT_EMOJIS.STOPWATCH, BOT_EMOJIS.SLEEPING],
-  HURRY_TEAMMATE: [BOT_EMOJIS.STOPWATCH, BOT_EMOJIS.THUMBS_UP]
-};
 
 export class BotReactionManager {
   private game: GameInstance;
@@ -122,17 +98,13 @@ export class BotReactionManager {
       if (enemyBots.length > 0 && Math.random() < BOT_REACTION_PROBABILITIES.SLOW_TURN_ENEMY) {
         const bot = this.getRandomBot(enemyBots);
         if (bot && this.canBotReact(bot.id)) {
-          const isPhrase = Math.random() < 0.7;
-          const text = isPhrase 
-            ? BOT_QUICK_PHRASES.HURRY_UP 
-            : this.getRandomItem(EMOJI_GROUPS.HURRY_ENEMY);
-          this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+          const emoji = Math.random() < 0.6 ? BOT_EMOJIS.SURPRISED : BOT_EMOJIS.THUMBS_UP;
+          this.scheduleBotEmoji(bot, emoji, this.getRandomDelay());
         }
       } else if (teammateBots.length > 0 && Math.random() < BOT_REACTION_PROBABILITIES.SLOW_TURN_TEAMMATE) {
         const bot = this.getRandomBot(teammateBots);
         if (bot && this.canBotReact(bot.id)) {
-          const text = Math.random() < 0.5 ? BOT_QUICK_PHRASES.HURRY_UP : BOT_EMOJIS.STOPWATCH;
-          this.scheduleBotReaction(bot, text, text === BOT_EMOJIS.STOPWATCH, this.getRandomDelay());
+          this.scheduleBotEmoji(bot, BOT_EMOJIS.THUMBS_UP, this.getRandomDelay());
         }
       }
     }
@@ -148,7 +120,7 @@ export class BotReactionManager {
     const isPlacerBot = this.isBotPlayer(placer);
 
     if (isPlacerBot) {
-      // Bot placed wall
+      // Bot placed wall -> Laugh if it blocked/trapped an enemy!
       const bot = placer;
       let lengthenedEnemy = false;
 
@@ -161,15 +133,10 @@ export class BotReactionManager {
       }
 
       if ((lengthenedEnemy || this.game.mode === 'vs_ai' || this.game.mode === '1v1') && this.canBotReact(bot.id) && Math.random() < BOT_REACTION_PROBABILITIES.BOT_BLOCKED_ENEMY) {
-        const isPhrase = Math.random() < 0.5;
-        const text = isPhrase 
-          ? this.getRandomItem(PHRASE_GROUPS.TAUNT_ENEMY)
-          : this.getRandomItem(EMOJI_GROUPS.TAUNT_ENEMY);
-
-        this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+        this.scheduleBotEmoji(bot, BOT_EMOJIS.LAUGHING, this.getRandomDelay());
       }
     } else {
-      // Human placed wall
+      // Human placed wall -> Be angry if it blocked the bot!
       for (const bot of activeBots) {
         if (!this.canBotReact(bot.id)) continue;
 
@@ -190,12 +157,7 @@ export class BotReactionManager {
           }
 
           if ((blockedBotOrTeammate || Math.random() < 0.3) && Math.random() < BOT_REACTION_PROBABILITIES.ENEMY_BLOCKED_BOT) {
-            const isPhrase = Math.random() < 0.5;
-            const text = isPhrase 
-              ? BOT_QUICK_PHRASES.DAMN 
-              : this.getRandomItem(EMOJI_GROUPS.FRUSTRATED);
-
-            this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+            this.scheduleBotEmoji(bot, BOT_EMOJIS.ANGRY, this.getRandomDelay());
             break;
           }
         } else if (placerIsTeammate) {
@@ -209,12 +171,7 @@ export class BotReactionManager {
           }
 
           if (teammateBlockedEnemy && Math.random() < BOT_REACTION_PROBABILITIES.TEAMMATE_BLOCKED_ENEMY) {
-            const isPhrase = Math.random() < 0.5;
-            const text = isPhrase 
-              ? this.getRandomItem(PHRASE_GROUPS.CELEBRATE_TEAM)
-              : this.getRandomItem(EMOJI_GROUPS.CELEBRATE_TEAM);
-
-            this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+            this.scheduleBotEmoji(bot, BOT_EMOJIS.THUMBS_UP, this.getRandomDelay());
             break;
           }
         }
@@ -236,13 +193,9 @@ export class BotReactionManager {
       const bot = mover;
       if (this.canBotReact(bot.id)) {
         const dist = this.game.board.getShortestPathLength(bot.x, bot.y, bot.targetY, bot.targetX, bot.id);
-        if (dist > 0 && dist <= 3 && Math.random() < BOT_REACTION_PROBABILITIES.BOT_ADVANCING) {
-          const isPhrase = Math.random() < 0.5;
-          const text = isPhrase 
-            ? this.getRandomItem(PHRASE_GROUPS.TAUNT_ENEMY)
-            : this.getRandomItem(EMOJI_GROUPS.TAUNT_ENEMY);
-
-          this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+        // If bot is 1-2 steps from winning, laugh (knows it will win)!
+        if (dist > 0 && dist <= 2 && Math.random() < BOT_REACTION_PROBABILITIES.BOT_ADVANCING) {
+          this.scheduleBotEmoji(bot, BOT_EMOJIS.LAUGHING, this.getRandomDelay());
         }
       }
       return;
@@ -254,20 +207,23 @@ export class BotReactionManager {
 
       const dist = this.game.board.getShortestPathLength(mover.x, mover.y, mover.targetY, mover.targetX, mover.id);
 
-      if (this.isEnemy(bot, mover) && dist > 0 && dist <= 2) {
-        if (Math.random() < BOT_REACTION_PROBABILITIES.ENEMY_NEAR_WIN) {
-          const text = Math.random() < 0.5 ? BOT_QUICK_PHRASES.DAMN : BOT_EMOJIS.SHOCKED;
-          this.scheduleBotReaction(bot, text, text === BOT_EMOJIS.SHOCKED, this.getRandomDelay());
-          break;
+      if (this.isEnemy(bot, mover)) {
+        if (dist > 0 && dist <= 2) {
+          // Enemy is 1-2 steps from winning -> Angry (bot is losing)!
+          if (Math.random() < BOT_REACTION_PROBABILITIES.ENEMY_NEAR_WIN) {
+            this.scheduleBotEmoji(bot, BOT_EMOJIS.ANGRY, this.getRandomDelay());
+            break;
+          }
+        } else if (dist === 3 || dist === 4) {
+          // Enemy makes big progress -> Surprised!
+          if (Math.random() < 0.4) {
+            this.scheduleBotEmoji(bot, BOT_EMOJIS.SURPRISED, this.getRandomDelay());
+            break;
+          }
         }
       } else if (this.isTeammate(bot, mover) && dist > 0 && dist <= 3) {
         if (Math.random() < BOT_REACTION_PROBABILITIES.TEAMMATE_NEAR_WIN) {
-          const isPhrase = Math.random() < 0.5;
-          const text = isPhrase
-            ? this.getRandomItem([BOT_QUICK_PHRASES.GOOD_JOB, BOT_QUICK_PHRASES.WELL_PLAYED])
-            : this.getRandomItem([BOT_EMOJIS.CLAP, BOT_EMOJIS.THUMBS_UP, BOT_EMOJIS.PARTY]);
-
-          this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+          this.scheduleBotEmoji(bot, BOT_EMOJIS.THUMBS_UP, this.getRandomDelay());
           break;
         }
       }
@@ -286,18 +242,15 @@ export class BotReactionManager {
 
     for (const bot of activeBots) {
       if (bot.id === winnerId || this.isTeammate(bot, winner)) {
+        // Bot or teammate won -> Laugh or Thumbs Up!
         if (Math.random() < BOT_REACTION_PROBABILITIES.VICTORY_CELEBRATION) {
-          const isPhrase = Math.random() < 0.5;
-          const text = isPhrase 
-            ? this.getRandomItem([BOT_QUICK_PHRASES.WELL_PLAYED, BOT_QUICK_PHRASES.GOOD_JOB])
-            : this.getRandomItem(EMOJI_GROUPS.CELEBRATE_TEAM);
-
-          this.scheduleBotReaction(bot, text, !isPhrase, this.getRandomDelay());
+          const emoji = Math.random() < 0.5 ? BOT_EMOJIS.LAUGHING : BOT_EMOJIS.THUMBS_UP;
+          this.scheduleBotEmoji(bot, emoji, this.getRandomDelay());
         }
       } else {
+        // Bot lost -> Angry!
         if (Math.random() < BOT_REACTION_PROBABILITIES.DEFEAT_REACTION) {
-          const text = Math.random() < 0.5 ? BOT_QUICK_PHRASES.WELL_PLAYED : BOT_QUICK_PHRASES.DAMN;
-          this.scheduleBotReaction(bot, text, false, this.getRandomDelay());
+          this.scheduleBotEmoji(bot, BOT_EMOJIS.ANGRY, this.getRandomDelay());
         }
       }
     }
@@ -325,10 +278,6 @@ export class BotReactionManager {
     return bots[Math.floor(Math.random() * bots.length)];
   }
 
-  private getRandomItem<T>(items: readonly T[] | T[]): T {
-    return items[Math.floor(Math.random() * items.length)];
-  }
-
   private getBotScalingFactor(): number {
     const activeBots = this.getActiveBots();
     return Math.max(1, activeBots.length);
@@ -348,35 +297,24 @@ export class BotReactionManager {
     return (now - last) >= effectiveCooldown;
   }
 
-  private scheduleBotReaction(bot: Player, text: string, isEmoji: boolean, delayMs: number) {
+  private scheduleBotEmoji(bot: Player, emoji: string, delayMs: number) {
     const botFactor = this.getBotScalingFactor();
-    // Reduce probability when there are multiple bots to prevent spam
     if (botFactor > 1 && Math.random() > (1 / botFactor)) {
       return;
     }
     this.lastReactionTime.set(bot.id, Date.now() + delayMs);
     setTimeout(() => {
-      const allowedFinishPhrases: string[] = [
-        BOT_QUICK_PHRASES.WELL_PLAYED,
-        BOT_QUICK_PHRASES.GOOD_JOB,
-        BOT_EMOJIS.CLAP,
-        BOT_EMOJIS.PARTY
+      const allowedFinishEmojis: string[] = [
+        BOT_EMOJIS.LAUGHING,
+        BOT_EMOJIS.THUMBS_UP,
+        BOT_EMOJIS.ANGRY
       ];
-      if (this.game.state !== 'playing' && !allowedFinishPhrases.includes(text)) return;
+      if (this.game.state !== 'playing' && !allowedFinishEmojis.includes(emoji)) return;
 
-      if (isEmoji) {
-        this.game.onStateChange('emote', {
-          sender: bot.username,
-          emoteId: text
-        });
-      } else {
-        this.game.onStateChange('quickChat', {
-          sender: bot.username,
-          senderId: bot.id,
-          messageId: text,
-          timestamp: new Date()
-        });
-      }
+      this.game.onStateChange('emote', {
+        sender: bot.username,
+        emoteId: emoji
+      });
     }, delayMs);
   }
 

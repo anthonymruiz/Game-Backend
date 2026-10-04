@@ -38,19 +38,30 @@ export class GameService {
               try {
                 const roomService = container.resolve(RoomService);
                 const oldRoom = roomService.getRoom(matchId);
-                const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
 
-                const humanCount = roomPlayers.filter(p => p && p.id && !p.id.startsWith('bot_')).length;
-                if (roomIsPrivate && humanCount >= 2) {
+                // Clean up finished room from RoomService
+                if (matchId) {
+                  roomService.deleteRoom(matchId);
+                }
+
+                const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
+                const humanPlayers = roomPlayers.filter(p => p && p.id && !p.id.startsWith('bot_'));
+                const humanCount = humanPlayers.length;
+                const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA';
+
+                const mmNs = this.io.of('/matchmaking');
+
+                // Recreate private room ONLY for group modes (2v2, 4-FFA, 6-FFA) with >= 2 human players
+                if (isGroupMode && roomIsPrivate && humanCount >= 2) {
                   const dummyOldRoom: any = oldRoom || {
                     id: matchId,
                     code: '',
                     name: roomName || 'Partida Privada',
                     mode,
-                    isPrivate: true,
+                    isPrivate: roomIsPrivate,
                     hostId: playerIds[0],
                     players: roomPlayers,
-                    maxPlayers: mode === '1v1' ? 2 : (mode === '2v2' || mode === '4-FFA' ? 4 : 6),
+                    maxPlayers: mode === '2v2' || mode === '4-FFA' ? 4 : 6,
                     status: 'WAITING',
                     createdAt: new Date()
                   };
@@ -62,10 +73,27 @@ export class GameService {
                     data.newRoomId = newRoom.id;
                     data.newRoom = newRoom;
 
-                    const mmNs = this.io.of('/matchmaking');
                     mmNs.emit('publicRooms', roomService.getPublicRooms());
+
+                    const humanIds = new Set(newRoom.players.filter(p => p && p.id && !p.id.startsWith('bot_')).map(p => p.id));
+                    for (const uId of humanIds) {
+                      mmNs.to(uId).emit('myActiveRoom', newRoom);
+                      mmNs.to(uId).emit('roomUpdated', newRoom);
+                    }
                     mmNs.to(newRoom.id).emit('roomUpdated', newRoom);
+                    return;
                   }
+                }
+
+                // For 1v1 matches, public matches, or matches with < 2 humans: clear active room state for all human players
+                data.autoReturnToLobby = false;
+                data.newRoomId = undefined;
+                data.newRoom = undefined;
+                mmNs.emit('publicRooms', roomService.getPublicRooms());
+
+                const humanIds = new Set(roomPlayers.filter(p => p && p.id && !p.id.startsWith('bot_')).map(p => p.id));
+                for (const uId of humanIds) {
+                  mmNs.to(uId).emit('myActiveRoom', null);
                 }
               } catch (recreateErr) {
                 console.error('Error recreating private room on gameFinished:', recreateErr);

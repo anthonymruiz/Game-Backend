@@ -9,11 +9,7 @@ export const AVAILABLE_COLORS: string[] = [
   '#FFCC00', // Yellow
   '#34C759', // Green
   '#AF52DE', // Purple
-  '#FF9500', // Orange
-  '#5AC8FA', // Cyan
-  '#FF2D55', // Pink
-  '#E5E5EA', // Light Gray
-  '#1C1C1E'  // Dark Gray
+  '#FF9500'  // Orange
 ];
 
 export interface IRoomPlayer {
@@ -33,6 +29,7 @@ export interface IRoom {
   name: string;
   mode: GameMode;
   isPrivate: boolean;
+  isQuickMatch?: boolean;
   hostId: string;
   players: IRoomPlayer[];
   maxPlayers: number;
@@ -72,7 +69,8 @@ export class RoomService {
     isPrivate: boolean = false,
     avatarUrl?: string,
     provider?: string,
-    wins: number = 0
+    wins: number = 0,
+    isQuickMatch: boolean = false
   ): IRoom {
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const code = this.generateRoomCode();
@@ -96,6 +94,7 @@ export class RoomService {
       name: name || `${hostUsername}'s Room`,
       mode,
       isPrivate,
+      isQuickMatch,
       hostId,
       players: [hostPlayer],
       maxPlayers,
@@ -111,10 +110,24 @@ export class RoomService {
     oldRoom: IRoom,
     endPlayers: IRoomPlayer[]
   ): IRoom | null {
+    if (oldRoom && oldRoom.id) {
+      this.rooms.delete(oldRoom.id);
+    }
+
+    if (!oldRoom || !oldRoom.isPrivate) {
+      return null;
+    }
+
+    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA') {
+      return null;
+    }
+
     const humanPlayers = (endPlayers || []).filter(p => p && p.id && !p.id.startsWith('bot_'));
     if (humanPlayers.length < 2) {
       return null;
     }
+
+    const botPlayers = (endPlayers || []).filter(p => p && p.id && p.id.startsWith('bot_'));
 
     const host = humanPlayers.find(p => p.id === oldRoom?.hostId) || humanPlayers[0];
     const newRoom = this.createRoom(
@@ -131,6 +144,17 @@ export class RoomService {
     for (const p of humanPlayers) {
       if (p.id !== host.id) {
         this.joinRoom(newRoom.id, p.id, p.username, p.isGuest, p.avatarUrl, p.provider);
+      }
+    }
+
+    // Re-add bots if any were present in the previous match and mode supports bots
+    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2') {
+      for (const _ of botPlayers) {
+        if (newRoom.players.length < newRoom.maxPlayers) {
+          try {
+            this.addBotToCustomRoom(newRoom.id, host.id);
+          } catch (e) {}
+        }
       }
     }
 
@@ -279,14 +303,12 @@ export class RoomService {
     return true;
   }
 
-  public findRoomByUserId(userId: string): IRoom | null {
-    for (const room of this.rooms.values()) {
-      if (room.players.some(p => p.id === userId)) {
-        return room;
-      }
-    }
-    return null;
+  public deleteRoom(roomId: string): boolean {
+    if (!roomId) return false;
+    return this.rooms.delete(roomId);
   }
+
+
 
   public getAllRooms(): IRoom[] {
     return Array.from(this.rooms.values());

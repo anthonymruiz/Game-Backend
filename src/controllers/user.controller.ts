@@ -146,4 +146,75 @@ export class UserController {
       res.status(500).json({ error: error.message });
     }
   };
+
+  public getDevices = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.sub || req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const { DeviceSessionService } = await import('../services/device-session.service.js');
+      const deviceSessionService = container.resolve(DeviceSessionService);
+      const rawHeader = req.headers['x-device-id'];
+      const currentDeviceId = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader) || (req.query.deviceId as string) || undefined;
+      const devices = await deviceSessionService.getUserSessions(userId, currentDeviceId);
+      res.status(200).json({ devices });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+  public revokeDevice = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.sub || req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const { DeviceSessionService } = await import('../services/device-session.service.js');
+      const deviceSessionService = container.resolve(DeviceSessionService);
+      const sessionId = String(req.params.sessionId);
+      const result = await deviceSessionService.revokeSession(userId, sessionId);
+      if (result.success) {
+        if (result.revokedDeviceId) {
+          const { SocketManager } = await import('../socket/socket.manager.js');
+          const socketManager = container.resolve(SocketManager);
+          socketManager.emitSessionRevoked(userId, [result.revokedDeviceId]);
+        }
+        res.status(200).json({ message: 'Session revoked successfully' });
+      } else {
+        res.status(404).json({ error: 'Session not found' });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+  public revokeOtherDevices = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.sub || req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const { DeviceSessionService } = await import('../services/device-session.service.js');
+      const deviceSessionService = container.resolve(DeviceSessionService);
+      const rawHeader = req.headers['x-device-id'];
+      const currentDeviceId = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader) || (req.body?.deviceId as string) || undefined;
+      if (!currentDeviceId) {
+        res.status(400).json({ error: 'Current device ID is required' });
+        return;
+      }
+      const result = await deviceSessionService.revokeOtherSessions(userId, currentDeviceId);
+      if (result.revokedDeviceIds.length > 0) {
+        const { SocketManager } = await import('../socket/socket.manager.js');
+        const socketManager = container.resolve(SocketManager);
+        socketManager.emitSessionRevoked(userId, result.revokedDeviceIds);
+      }
+      res.status(200).json({ message: 'Other sessions revoked successfully', revokedCount: result.revokedCount });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
 }

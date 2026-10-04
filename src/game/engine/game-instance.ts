@@ -330,6 +330,7 @@ export class GameInstance {
         killerUsername: killer.username,
         board: this.board.toDTO(currentTurn)
       });
+      this.nextTurn();
       return true;
     }
 
@@ -357,11 +358,7 @@ export class GameInstance {
       this.winner = alive[0]?.id || null;
       this.endGame();
     } else {
-      if (currentTurn === targetId) {
-        this.nextTurn();
-      } else {
-        this.onStateChange('turnChanged', { currentTurn, board: this.board.toDTO(currentTurn) });
-      }
+      this.nextTurn();
     }
     return true;
   }

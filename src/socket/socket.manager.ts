@@ -55,15 +55,60 @@ export class SocketManager {
     this.setupNamespaces();
   }
 
-  private authMiddleware(socket: Socket, next: (err?: any) => void): void {
+  private async authMiddleware(socket: Socket, next: (err?: any) => void): Promise<void> {
     const token = socket.handshake.auth?.token;
+    const deviceId = socket.handshake.auth?.deviceId || (socket.handshake.headers['x-device-id'] as string);
     if (!token) return next(new Error('Authentication error: Token missing'));
     try {
       const decoded: any = jwt.verify(token, ENV.JWT_SECRET);
       socket.data.user = decoded;
+      socket.data.deviceId = deviceId;
+
+      if (decoded.role !== 'guest' && !decoded.id?.startsWith('guest_')) {
+        const { DeviceSessionService } = await import('../services/device-session.service.js');
+        const deviceSessionService = container.resolve(DeviceSessionService);
+        const isValid = await deviceSessionService.isSessionValid(decoded.id, token, deviceId);
+        if (!isValid) {
+          return next(new Error('SESSION_REVOKED'));
+        }
+      }
+
       next();
     } catch (err) {
       next(new Error('Authentication error: Invalid token'));
+    }
+  }
+
+  public emitSessionRevoked(userId: string, revokedDeviceIds: string[]): void {
+    if (!this.io || !userId || !revokedDeviceIds || revokedDeviceIds.length === 0) return;
+    const deviceSet = new Set(revokedDeviceIds);
+
+    const namespaces = [this.io.of('/matchmaking'), this.io.of('/game')];
+    for (const ns of namespaces) {
+      for (const s of ns.sockets.values()) {
+        const uId = s.data?.user?.sub || s.data?.user?.id;
+        const dId = s.data?.deviceId || s.handshake.auth?.deviceId || (s.handshake.headers['x-device-id'] as string);
+        if (uId === userId && (dId ? deviceSet.has(dId) : true)) {
+          console.log(`🔌 [SocketManager] Emitting sessionRevoked to socket user ${userId} (device: ${dId})`);
+          s.emit('sessionRevoked', { message: 'Tu sesión ha sido cerrada remotamente desde otro dispositivo.' });
+          s.disconnect(true);
+        }
+      }
+    }
+  }
+
+  public emitNewSessionDetected(userId: string, newDeviceName: string, newDeviceId: string): void {
+    if (!this.io || !userId) return;
+    const namespaces = [this.io.of('/matchmaking'), this.io.of('/game')];
+    for (const ns of namespaces) {
+      for (const s of ns.sockets.values()) {
+        const uId = s.data?.user?.sub || s.data?.user?.id;
+        const dId = s.data?.deviceId || s.handshake.auth?.deviceId || (s.handshake.headers['x-device-id'] as string);
+        if (uId === userId && dId && dId !== newDeviceId) {
+          console.log(`🔔 [SocketManager] Notifying socket user ${userId} of new session on device: ${newDeviceName}`);
+          s.emit('newSessionDetected', { deviceName: newDeviceName });
+        }
+      }
     }
   }
 
@@ -157,7 +202,7 @@ export class SocketManager {
             matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
             matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
 
-            if (room.players.length >= room.maxPlayers) {
+            if (room.isQuickMatch || room.players.length >= room.maxPlayers) {
               room.status = RoomStatus.PLAYING;
               this.lastMatchPlayers.set(room.id, [...room.players]);
               this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
@@ -175,7 +220,8 @@ export class SocketManager {
               false,
               avatarUrl,
               provider,
-              userWins
+              userWins,
+              true
             );
             socket.join(room.id);
             socket.emit('roomCreated', room);
@@ -186,7 +232,7 @@ export class SocketManager {
         }
       });
 
-      socket.on('createRoom', async (data: { name: string; mode: GameMode; isPrivate: boolean; targetInviteUserId?: string }) => {
+      socket.on('createRoom', async (data: { name: string; mode: GameMode; isPrivate: boolean; isQuickMatch?: boolean; targetInviteUserId?: string }) => {
         try {
           const { SystemSettingsService } = await import('../services/system-settings.service.js');
           const settingsService = container.resolve(SystemSettingsService);
@@ -205,7 +251,8 @@ export class SocketManager {
             data.isPrivate,
             avatarUrl,
             provider,
-            userWins
+            userWins,
+            data.isQuickMatch || false
           );
           socket.join(room.id);
           socket.emit('roomCreated', room);
@@ -267,6 +314,14 @@ export class SocketManager {
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+          if (room.isQuickMatch && room.players.length >= 2) {
+            room.status = RoomStatus.PLAYING;
+            this.lastMatchPlayers.set(room.id, [...room.players]);
+            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          }
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -283,6 +338,14 @@ export class SocketManager {
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
           matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+
+          if (room.isQuickMatch && room.players.length >= 2) {
+            room.status = RoomStatus.PLAYING;
+            this.lastMatchPlayers.set(room.id, [...room.players]);
+            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          }
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -459,6 +522,7 @@ export class SocketManager {
       const username = user.username || `Guest_${userId.substring(0, 4)}`;
 
       socket.on('joinRoom', (roomId: string) => {
+        socket.data.currentRoomId = roomId;
         socket.join(roomId);
         this.updateUserPresence(userId, true, PresenceStatus.PLAYING);
         const game = this.gameService.getGame(roomId);
@@ -543,58 +607,86 @@ export class SocketManager {
 
           gameNs.to(roomId).emit('rematchRequested', { requesterId: userId, requesterName: username, count: requests.size });
 
-          const requiredPlayers = players.length > 0 ? players.length : 2;
+          // A rematch ALWAYS requires at least 2 players to accept
+          const requiredPlayers = Math.max(2, players.length);
 
           if (requests.size >= requiredPlayers) {
             this.rematchRequests.delete(roomId);
 
             if (players.length >= 2) {
+              const targetMode: GameMode = (room ? room.mode : '1v1');
               const host = players[0];
-              const newRoom = this.roomService.createRoom(
-                host.id,
-                host.username,
-                host.isGuest,
-                room ? room.name : `Sala de ${host.username}`,
-                room ? room.mode : '1v1',
-                true,
-                host.avatarUrl,
-                host.provider,
-                host.wins || 0
-              );
-              const humanPlayers = players.filter(p => p && p.id && !p.id.startsWith('bot_'));
-              for (let i = 1; i < humanPlayers.length; i++) {
-                try {
-                  this.roomService.joinRoom(
-                    newRoom.id,
-                    humanPlayers[i].id,
-                    humanPlayers[i].username,
-                    humanPlayers[i].isGuest,
-                    humanPlayers[i].avatarUrl,
-                    humanPlayers[i].provider,
-                    humanPlayers[i].wins || 0
-                  );
-                } catch (joinErr) {
-                  console.warn(`Could not join player ${humanPlayers[i].id} to rematch room:`, joinErr);
-                }
-              }
-              newRoom.status = RoomStatus.PLAYING;
-              this.lastMatchPlayers.set(newRoom.id, [...newRoom.players]);
-              this.gameService.createGame(newRoom.id, newRoom.mode, newRoom.players, newRoom.isPrivate, newRoom.name);
 
-              gameNs.to(roomId).emit('gameStarting', { matchId: newRoom.id });
-              this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newRoom.id });
+              if (targetMode === '1v1') {
+                // For 1v1 rematches: NEVER create a lobby room in RoomService. Start match directly!
+                const newMatchId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                this.lastMatchPlayers.set(newMatchId, [...players]);
+                this.gameService.createGame(newMatchId, '1v1', players, true, room ? room.name : `Revancha de ${host.username}`);
 
-              const playerIds = new Set(players.map(p => p.id));
-              for (const s of gameNs.sockets.values()) {
-                const uId = s.data?.user?.sub || s.data?.user?.id;
-                if (uId && playerIds.has(uId)) {
-                  s.emit('gameStarting', { matchId: newRoom.id });
+                gameNs.to(roomId).emit('gameStarting', { matchId: newMatchId });
+                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newMatchId });
+
+                const playerIds = new Set(players.map(p => p.id));
+                for (const s of gameNs.sockets.values()) {
+                  const uId = s.data?.user?.sub || s.data?.user?.id;
+                  if (uId && playerIds.has(uId)) {
+                    s.emit('gameStarting', { matchId: newMatchId });
+                  }
                 }
-              }
-              for (const s of matchmakingNs.sockets.values()) {
-                const uId = s.data?.user?.sub || s.data?.user?.id;
-                if (uId && playerIds.has(uId)) {
-                  s.emit('gameStarting', { matchId: newRoom.id });
+                for (const s of matchmakingNs.sockets.values()) {
+                  const uId = s.data?.user?.sub || s.data?.user?.id;
+                  if (uId && playerIds.has(uId)) {
+                    s.emit('gameStarting', { matchId: newMatchId });
+                  }
+                }
+              } else {
+                // Group modes rematch
+                const newRoom = this.roomService.createRoom(
+                  host.id,
+                  host.username,
+                  host.isGuest,
+                  room ? room.name : `Sala de ${host.username}`,
+                  targetMode,
+                  true,
+                  host.avatarUrl,
+                  host.provider,
+                  host.wins || 0
+                );
+                const humanPlayers = players.filter(p => p && p.id && !p.id.startsWith('bot_'));
+                for (let i = 1; i < humanPlayers.length; i++) {
+                  try {
+                    this.roomService.joinRoom(
+                      newRoom.id,
+                      humanPlayers[i].id,
+                      humanPlayers[i].username,
+                      humanPlayers[i].isGuest,
+                      humanPlayers[i].avatarUrl,
+                      humanPlayers[i].provider,
+                      humanPlayers[i].wins || 0
+                    );
+                  } catch (joinErr) {
+                    console.warn(`Could not join player ${humanPlayers[i].id} to rematch room:`, joinErr);
+                  }
+                }
+                newRoom.status = RoomStatus.PLAYING;
+                this.lastMatchPlayers.set(newRoom.id, [...newRoom.players]);
+                this.gameService.createGame(newRoom.id, newRoom.mode, newRoom.players, newRoom.isPrivate, newRoom.name);
+
+                gameNs.to(roomId).emit('gameStarting', { matchId: newRoom.id });
+                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newRoom.id });
+
+                const playerIds = new Set(players.map(p => p.id));
+                for (const s of gameNs.sockets.values()) {
+                  const uId = s.data?.user?.sub || s.data?.user?.id;
+                  if (uId && playerIds.has(uId)) {
+                    s.emit('gameStarting', { matchId: newRoom.id });
+                  }
+                }
+                for (const s of matchmakingNs.sockets.values()) {
+                  const uId = s.data?.user?.sub || s.data?.user?.id;
+                  if (uId && playerIds.has(uId)) {
+                    s.emit('gameStarting', { matchId: newRoom.id });
+                  }
                 }
               }
             }
@@ -610,6 +702,15 @@ export class SocketManager {
           this.rematchRequests.delete(roomId);
         }
         gameNs.to(roomId).emit('rematchDeclined', { declinerName: username });
+
+        // Ensure active room state is cleared for all players on rematch cancellation
+        const lastPlayers = (roomId ? this.lastMatchPlayers.get(roomId) : []) || [];
+        for (const p of lastPlayers) {
+          if (p && p.id && !p.id.startsWith('bot_')) {
+            matchmakingNs.to(p.id).emit('myActiveRoom', null);
+          }
+        }
+        matchmakingNs.to(userId).emit('myActiveRoom', null);
       });
 
       socket.on('chatMessage', (data: { roomId: string, message: string }) => {
@@ -637,6 +738,11 @@ export class SocketManager {
         const activeGame = this.gameService.getGameByPlayerId(userId);
         if (activeGame && activeGame.state === 'playing') {
           activeGame.surrender(userId);
+        }
+        const roomId = socket.data?.currentRoomId;
+        if (roomId && this.rematchRequests.has(roomId)) {
+          this.rematchRequests.delete(roomId);
+          gameNs.to(roomId).emit('rematchDeclined', { declinerName: username });
         }
       });
     });

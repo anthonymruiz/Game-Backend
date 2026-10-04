@@ -60,7 +60,7 @@ export const TROPHIES_LIST: ITrophy[] = [
   { id: 'spectated_1', icon: '🌟', category: 'SOCIAL', titleKey: 'TROPHIES.SPECTATED_1_TITLE', descKey: 'TROPHIES.SPECTATED_1_DESC', targetCount: 1 },
   { id: 'spectated_3', icon: '🔥', category: 'SOCIAL', titleKey: 'TROPHIES.SPECTATED_3_TITLE', descKey: 'TROPHIES.SPECTATED_3_DESC', targetCount: 3 },
 
-  // 😃 Emotes y Reacciones (4)
+  // 😃 Emojis y Reacciones (4)
   { id: 'first_emote', icon: '💬', category: 'EMOTES', titleKey: 'TROPHIES.FIRST_EMOTE_TITLE', descKey: 'TROPHIES.FIRST_EMOTE_DESC', targetCount: 1 },
   { id: 'emotes_20', icon: '😃', category: 'EMOTES', titleKey: 'TROPHIES.EMOTES_20_TITLE', descKey: 'TROPHIES.EMOTES_20_DESC', targetCount: 20 },
   { id: 'emotes_50', icon: '🎭', category: 'EMOTES', titleKey: 'TROPHIES.EMOTES_50_TITLE', descKey: 'TROPHIES.EMOTES_50_DESC', targetCount: 50 },

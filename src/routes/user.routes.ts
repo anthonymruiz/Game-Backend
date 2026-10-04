@@ -16,7 +16,9 @@ userRoutes.get('/leaderboard', (req, res) => getController().getLeaderboard(req,
 userRoutes.get('/me/stats', requireAuth, (req, res) => getController().getUserStats(req, res));
 userRoutes.get('/me/info', requireAuth, (req, res) => getController().getUserInfo(req, res));
 userRoutes.get('/:userId/stats', (req, res) => getController().getUserStats(req, res));
-userRoutes.get('/:userId/info', (req, res) => getController().getUserInfo(req, res));
+userRoutes.get('/me/devices', requireAuth, (req, res) => getController().getDevices(req, res));
+userRoutes.delete('/me/devices/others', requireAuth, (req, res) => getController().revokeOtherDevices(req, res));
+userRoutes.delete('/me/devices/:sessionId', requireAuth, (req, res) => getController().revokeDevice(req, res));
 userRoutes.delete('/account', requireAuth, (req, res) => getController().deleteAccount(req, res));
 userRoutes.delete('/me', requireAuth, (req, res) => getController().deleteAccount(req, res));
 

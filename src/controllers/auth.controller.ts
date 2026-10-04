@@ -18,6 +18,7 @@ export class AuthController {
       const { email, username, password } = req.body;
       const user = await this.authService.register(email, username, password, 'local');
       const token = this.authService.generateJwt(user);
+      await this.registerDeviceSession(req, user.id, token);
       res.status(201).json({
         message: 'User registered successfully',
         token,
@@ -39,6 +40,7 @@ export class AuthController {
       const { email, login, username, password } = req.body;
       const identifier = login || email || username;
       const result = await this.authService.login(identifier, password);
+      await this.registerDeviceSession(req, result.user.id, result.token);
       res.status(200).json({ 
         message: 'Login successful', 
         token: result.token, 
@@ -59,6 +61,7 @@ export class AuthController {
     try {
       const { provider, token } = req.body;
       const result = await this.authService.loginWithSocialProvider(provider, token);
+      await this.registerDeviceSession(req, result.user.id, result.jwtToken);
       res.status(200).json({ 
         message: 'Social login successful', 
         token: result.jwtToken, 
@@ -272,6 +275,55 @@ export class AuthController {
       res.status(200).json({ available: false, error: error.message || 'Username is already taken' });
     }
   };
+
+  public logout = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      const authHeader = req.headers.authorization;
+      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : '';
+      const headerDevId = req.headers['x-device-id'];
+      const deviceId = (Array.isArray(headerDevId) ? headerDevId[0] : headerDevId) || (req.body?.deviceId as string);
+
+      if (userId && !userId.startsWith('guest_')) {
+        const { DeviceSessionService } = await import('../services/device-session.service.js');
+        const deviceSessionService = container.resolve(DeviceSessionService);
+        await deviceSessionService.logoutSession(userId, token, deviceId);
+      }
+
+      res.status(200).json({ message: 'Logout successful' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Logout failed' });
+    }
+  };
+
+
+  private async registerDeviceSession(req: Request, userId: string, token: string) {
+    if (!userId || userId.startsWith('guest_')) return;
+    try {
+      const headerDevId = req.headers['x-device-id'];
+      const deviceId = (Array.isArray(headerDevId) ? headerDevId[0] : headerDevId) || (req.body?.deviceId as string) || `dev_${userId.substring(0, 6)}`;
+      const headerDevName = req.headers['x-device-name'] || req.headers['user-agent'];
+      const deviceName = (Array.isArray(headerDevName) ? headerDevName[0] : headerDevName) || (req.body?.deviceName as string) || 'Desconocido';
+      const rawIp = req.headers['x-client-ip'] || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '';
+      const ipStr = Array.isArray(rawIp) ? rawIp[0] : rawIp;
+      let ipAddress = ipStr.split(',')[0].trim();
+      const { DeviceSessionService } = await import('../services/device-session.service.js');
+      const deviceSessionService = container.resolve(DeviceSessionService);
+
+      const existingSessions = await deviceSessionService.getUserSessions(userId, deviceId);
+      const hadOtherSessions = existingSessions.some(s => !s.isCurrent);
+
+      await deviceSessionService.registerOrUpdateSession(userId, deviceId, deviceName, token, ipAddress);
+
+      if (hadOtherSessions) {
+        const { SocketManager } = await import('../socket/socket.manager.js');
+        const socketManager = container.resolve(SocketManager);
+        socketManager.emitNewSessionDetected(userId, deviceName, deviceId);
+      }
+    } catch (err) {
+      console.error('Error registering device session:', err);
+    }
+  }
 
   private sendOAuthResponse(res: Response, result: { user: any; jwtToken: string; isNewUser: boolean }) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';

@@ -96,7 +96,7 @@ export class AuthService {
       provider: user.provider
     };
 
-    const expiresIn = user.role === UserRole.GUEST || user.role === 'guest' ? '24h' : '7d';
+    const expiresIn = user.role === UserRole.GUEST || user.role === 'guest' ? '24h' : '100y';
     return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn });
   }
 
@@ -137,12 +137,11 @@ export class AuthService {
       user.username = `user${tempSuffix}`;
       user.provider = provider;
       user.hasUsernameSet = false; // Mark that user must set their username
-      if (avatarUrl) user.avatarUrl = avatarUrl;
       user.preferences = new Preferences();
       user.stats = new Stats();
       user = await this.userRepository.save(user);
-    } else if (avatarUrl && (!user.avatarUrl || user.avatarUrl.includes('googleusercontent') || user.avatarUrl.includes('fbcdn'))) {
-      user.avatarUrl = avatarUrl;
+    } else if (user.avatarUrl && (user.avatarUrl.includes('googleusercontent') || user.avatarUrl.includes('fbcdn'))) {
+      user.avatarUrl = undefined as any;
       await this.userRepository.save(user);
     }
 
@@ -172,7 +171,6 @@ export class AuthService {
 
     const email = payload.email;
     const socialName = payload.name || '';
-    const avatarUrl = payload.picture;
 
     let isNewUser = false;
     let user = await this.userRepository.findByEmail(email.toLowerCase());
@@ -190,12 +188,11 @@ export class AuthService {
       user.username = existingUser ? `user${tempSuffix}` : cleanUsername;
       user.provider = 'google';
       user.hasUsernameSet = false;
-      if (avatarUrl) user.avatarUrl = avatarUrl;
       user.preferences = new Preferences();
       user.stats = new Stats();
       user = await this.userRepository.save(user);
-    } else if (avatarUrl && (!user.avatarUrl || user.avatarUrl.includes('googleusercontent'))) {
-      user.avatarUrl = avatarUrl;
+    } else if (user.avatarUrl && (user.avatarUrl.includes('googleusercontent') || user.avatarUrl.includes('fbcdn'))) {
+      user.avatarUrl = undefined as any;
       await this.userRepository.save(user);
     }
 

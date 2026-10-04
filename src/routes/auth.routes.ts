@@ -14,6 +14,7 @@ authRouter.post('/register', (req, res) => getController().register(req, res));
 authRouter.post('/login', (req, res) => getController().login(req, res));
 authRouter.post('/social', (req, res) => getController().socialLogin(req, res));
 authRouter.post('/guest', (req, res) => getController().guestLogin(req, res));
+authRouter.post('/logout', requireAuth, (req, res) => getController().logout(req, res));
 authRouter.post('/set-username', requireAuth, (req, res) => getController().setUsername(req, res));
 authRouter.get('/check-username', (req, res) => getController().checkUsernameAvailability(req, res));
 authRouter.get('/google', (req, res) => getController().redirectToGoogle(req, res));
