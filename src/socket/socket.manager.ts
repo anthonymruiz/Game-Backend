@@ -17,6 +17,7 @@ import { PresenceStatus } from '../models/presence.enum.js';
 import { RoomStatus } from '../models/room-status.enum.js';
 import { StoreItemCategory } from '../models/store-item.enum.js';
 import { StoreItemService } from '../services/store-item.service.js';
+import { BadgeService } from '../services/badge.service.js';
 
 @singleton()
 export class SocketManager {
@@ -650,6 +651,16 @@ export class SocketManager {
           if (game.state === 'finished') {
             socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
           } else {
+            if (!game.playersList.includes(userId) && !userId.startsWith('guest_') && !userId.startsWith('bot_')) {
+              const badgeService = container.resolve(BadgeService);
+              void badgeService.recordEventOnce(userId, 'spectate', roomId)
+                .catch(error => console.error(`Failed to record spectate badge event for ${userId}:`, error));
+              for (const playerId of game.playersList) {
+                if (playerId.startsWith('guest_') || playerId.startsWith('bot_')) continue;
+                void badgeService.recordEventOnce(playerId, 'spectated', `${roomId}:${userId}`)
+                  .catch(error => console.error(`Failed to record spectated badge event for ${playerId}:`, error));
+              }
+            }
             socket.emit('gameStarted', {
               currentTurn: game.playersList[game.currentTurnIndex],
               board: game.board.toDTO(userId),

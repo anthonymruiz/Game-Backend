@@ -9,13 +9,21 @@ describe('UTC weekly reward periods', () => {
     assert.equal(end.toISOString(), '2026-06-22T00:00:00.000Z');
   });
 
-  it('keeps the previous week pending until Sunday at 23:59 UTC', () => {
+  it('does not close a week early on Sunday and closes it at Monday 00:00 UTC', () => {
     assert.equal(
       getMostRecentCompletedUtcWeekStart(new Date('2026-06-21T23:58:59Z')).toISOString(),
       '2026-06-08T00:00:00.000Z'
     );
     assert.equal(
       getMostRecentCompletedUtcWeekStart(new Date('2026-06-21T23:59:00Z')).toISOString(),
+      '2026-06-08T00:00:00.000Z'
+    );
+    assert.equal(
+      getMostRecentCompletedUtcWeekStart(new Date('2026-06-22T00:00:00Z')).toISOString(),
+      '2026-06-15T00:00:00.000Z'
+    );
+    assert.equal(
+      getMostRecentCompletedUtcWeekStart(new Date('2026-06-22T00:01:00Z')).toISOString(),
       '2026-06-15T00:00:00.000Z'
     );
   });

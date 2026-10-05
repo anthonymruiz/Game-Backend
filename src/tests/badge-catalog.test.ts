@@ -20,6 +20,56 @@ describe('Default badge catalog', () => {
     }
   });
 
+  it('has at least one badge for every supported category-rule pair', () => {
+    const coveredPairs = new Set(badges.map(badge => `${badge.category}:${badge.event}`));
+    for (const [category, events] of Object.entries(BADGE_CATEGORY_EVENTS)) {
+      for (const event of events) {
+        assert.ok(coveredPairs.has(`${category}:${event}`), `Missing badge for ${category}:${event}`);
+      }
+    }
+  });
+
+  it('has one weekly leaderboard badge for each podium place and no store-redemption rule', () => {
+    const placements = badges
+      .filter(badge => badge.category === 'WEEKLY_LEADERBOARD')
+      .map(badge => badge.event)
+      .sort();
+    assert.deepEqual(placements, [
+      'weekly_first_place',
+      'weekly_second_place',
+      'weekly_third_place'
+    ]);
+    assert.ok(!('STORE_REDEMPTIONS' in BADGE_CATEGORY_EVENTS));
+    assert.ok(!badges.some(badge => String(badge.event) === 'store_redeem'));
+  });
+
+  it('uses the requested level, match, and portal milestones without duplicate portal tiers', () => {
+    assert.deepEqual(
+      badges.filter(badge => badge.category === 'LEVELS')
+        .map(badge => badge.target)
+        .sort((a, b) => a - b),
+      [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    );
+    assert.deepEqual(
+      badges.filter(badge => badge.event === 'match_played')
+        .map(badge => badge.target)
+        .sort((a, b) => a - b),
+      [10, 25, 50, 100, 150, 250]
+    );
+    assert.deepEqual(
+      badges.filter(badge => badge.event === 'portal_used')
+        .map(badge => badge.target)
+        .sort((a, b) => a - b),
+      [1, 5, 15, 30, 50]
+    );
+    assert.ok(!badges.some(badge => [
+      'challenge_portal_used_3',
+      'challenge_portal_used_10',
+      'challenge_portal_used_25',
+      'portal_win'
+    ].includes(badge.code)));
+  });
+
   it('provides a complete Spanish and English name, motto, and description', () => {
     for (const badge of badges) {
       for (const language of ['es', 'en'] as const) {

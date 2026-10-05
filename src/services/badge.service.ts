@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { injectable, container } from 'tsyringe';
+import type { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database.config.js';
 import { Badge, type BadgeLocales } from '../models/badge.entity.js';
+import { BadgeEventReceipt } from '../models/badge-event-receipt.entity.js';
 import {
   BADGE_CATEGORIES,
   BADGE_CATEGORY_EVENTS,
@@ -27,6 +29,11 @@ export interface IBadgeEvent {
   event: BadgeEvent;
   amount?: number;
   operation?: 'increment' | 'max' | 'set';
+}
+
+export interface IBadgeUnlockBatch {
+  badges: Badge[];
+  language: 'es' | 'en';
 }
 
 @injectable()
@@ -184,66 +191,110 @@ export class BadgeService {
 
   public async recordEvents(userId: string, events: IBadgeEvent[]): Promise<void> {
     if (!events.length) return;
+    const result = await AppDataSource.transaction(manager =>
+      this.recordEventsInTransaction(manager, userId, events)
+    );
+    await this.notifyUnlockedBadges(userId, result);
+  }
+
+  public async recordEventOnce(
+    userId: string,
+    event: BadgeEvent,
+    sourceId: string
+  ): Promise<void> {
+    if (!sourceId.trim() || sourceId.length > 128) throw new Error('INVALID_BADGE_EVENT_SOURCE');
+    const result = await AppDataSource.transaction(manager =>
+      this.recordEventsInTransaction(
+        manager,
+        userId,
+        [{ event }],
+        { event, sourceId }
+      )
+    );
+    await this.notifyUnlockedBadges(userId, result);
+  }
+
+  public async recordEventsInTransaction(
+    manager: EntityManager,
+    userId: string,
+    events: IBadgeEvent[],
+    receipt?: { event: BadgeEvent; sourceId: string }
+  ): Promise<IBadgeUnlockBatch> {
+    const user = await manager.getRepository(User).createQueryBuilder('user')
+      .leftJoinAndSelect('user.preferences', 'preferences')
+      .where('user.id = :userId', { userId })
+      .setLock('pessimistic_write')
+      .getOne();
+    if (!user) return { badges: [], language: 'en' };
+    const language = user.preferences?.language === 'es' ? 'es' : 'en';
+
+    if (receipt) {
+      const receiptRepository = manager.getRepository(BadgeEventReceipt);
+      const existingReceipt = await receiptRepository.findOneBy({
+        userId,
+        event: receipt.event,
+        sourceId: receipt.sourceId
+      });
+      if (existingReceipt) return { badges: [], language };
+      await receiptRepository.save(receiptRepository.create({
+        userId,
+        event: receipt.event,
+        sourceId: receipt.sourceId
+      }));
+    }
+
     const newlyUnlocked: Badge[] = [];
-    let userLanguage: 'es' | 'en' = 'en';
-
-    await AppDataSource.transaction(async manager => {
-      const user = await manager.getRepository(User).createQueryBuilder('user')
-        .leftJoinAndSelect('user.preferences', 'preferences')
-        .where('user.id = :userId', { userId })
-        .setLock('pessimistic_write')
-        .getOne();
-      if (!user) return;
-      userLanguage = user.preferences?.language === 'es' ? 'es' : 'en';
-
-      const badgeRepository = manager.getRepository(Badge);
-      const userBadgeRepository = manager.getRepository(UserBadge);
-      for (const activity of events) {
-        const amount = activity.amount ?? 1;
-        if (!Number.isFinite(amount) || amount < 0) throw new Error('INVALID_BADGE_EVENT_AMOUNT');
-        const badges = await badgeRepository.find({
-          where: { event: activity.event, isActive: true }
+    const badgeRepository = manager.getRepository(Badge);
+    const userBadgeRepository = manager.getRepository(UserBadge);
+    for (const activity of events) {
+      const amount = activity.amount ?? 1;
+      if (!Number.isFinite(amount) || amount < 0) throw new Error('INVALID_BADGE_EVENT_AMOUNT');
+      const badges = await badgeRepository.find({
+        where: { event: activity.event, isActive: true }
+      });
+      for (const badge of badges) {
+        let userBadge = await userBadgeRepository.findOne({
+          where: { userId, badgeId: badge.id }
         });
-        for (const badge of badges) {
-          let userBadge = await userBadgeRepository.findOne({
-            where: { userId, badgeId: badge.id }
+        if (!userBadge) {
+          userBadge = userBadgeRepository.create({
+            userId,
+            badgeId: badge.id,
+            progress: 0,
+            unlockedAt: null
           });
-          if (!userBadge) {
-            userBadge = userBadgeRepository.create({
-              userId,
-              badgeId: badge.id,
-              progress: 0,
-              unlockedAt: null
-            });
-          }
-          if (userBadge.unlockedAt) continue;
-
-          switch (activity.operation ?? 'increment') {
-            case 'increment':
-              userBadge.progress += amount;
-              break;
-            case 'max':
-              userBadge.progress = Math.max(userBadge.progress, amount);
-              break;
-            case 'set':
-              userBadge.progress = amount;
-              break;
-          }
-
-          if (userBadge.progress >= badge.target) {
-            userBadge.progress = badge.target;
-            userBadge.unlockedAt = new Date();
-            newlyUnlocked.push(badge);
-          }
-          await userBadgeRepository.save(userBadge);
         }
+        if (userBadge.unlockedAt) continue;
+
+        switch (activity.operation ?? 'increment') {
+          case 'increment':
+            userBadge.progress += amount;
+            break;
+          case 'max':
+            userBadge.progress = Math.max(userBadge.progress, amount);
+            break;
+          case 'set':
+            userBadge.progress = amount;
+            break;
+        }
+
+        if (userBadge.progress >= badge.target) {
+          userBadge.progress = badge.target;
+          userBadge.unlockedAt = new Date();
+          newlyUnlocked.push(badge);
+        }
+        await userBadgeRepository.save(userBadge);
       }
-    });
-    if (!newlyUnlocked.length) return;
+    }
+    return { badges: newlyUnlocked, language };
+  }
+
+  public async notifyUnlockedBadges(userId: string, result: IBadgeUnlockBatch): Promise<void> {
+    if (!result.badges.length) return;
     const { NotificationService } = await import('./notification.service.js');
     const notificationService = container.resolve(NotificationService);
-    for (const badge of newlyUnlocked) {
-      const locale = badge.locales[userLanguage];
+    for (const badge of result.badges) {
+      const locale = badge.locales[result.language];
       await notificationService.sendCustomNotification(
         userId,
         'BADGE_UNLOCKED',

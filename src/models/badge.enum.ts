@@ -15,9 +15,9 @@ export const BADGE_CATEGORIES = [
   'FRIEND_MATCHES',
   'EMOTES',
   'SPECTATING',
+  'WEEKLY_LEADERBOARD',
   'LEVELS',
   'STORE_PURCHASES',
-  'STORE_REDEMPTIONS',
   'POINT_PURCHASES'
 ] as const;
 
@@ -42,11 +42,13 @@ export const BADGE_EVENTS = [
   'emote_sent',
   'spectate',
   'spectated',
+  'weekly_first_place',
+  'weekly_second_place',
+  'weekly_third_place',
   'move_completed',
   'win_without_walls',
   'level_reached',
   'store_purchase',
-  'store_redeem',
   'point_purchase'
 ] as const;
 
@@ -69,8 +71,8 @@ export const BADGE_CATEGORY_EVENTS: Record<BadgeCategory, readonly BadgeEvent[]>
   FRIEND_MATCHES: ['friend_match'],
   EMOTES: ['emote_sent'],
   SPECTATING: ['spectate', 'spectated'],
+  WEEKLY_LEADERBOARD: ['weekly_first_place', 'weekly_second_place', 'weekly_third_place'],
   LEVELS: ['level_reached'],
   STORE_PURCHASES: ['store_purchase'],
-  STORE_REDEMPTIONS: ['store_redeem'],
   POINT_PURCHASES: ['point_purchase']
 };

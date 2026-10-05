@@ -142,8 +142,7 @@ export class StoreItemService {
     try {
       const badgeService = container.resolve(BadgeService);
       await Promise.all([
-        badgeService.recordEvent(userId, 'store_purchase'),
-        badgeService.recordEvent(userId, 'store_redeem')
+        badgeService.recordEvent(userId, 'store_purchase')
       ]);
     } catch (error) {
       console.error(`Failed to record store badge events for player ${userId}:`, error);

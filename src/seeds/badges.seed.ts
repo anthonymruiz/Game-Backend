@@ -1,7 +1,12 @@
 import { Badge, type BadgeLocales } from '../models/badge.entity.js';
 import type { BadgeCategory, BadgeEvent } from '../models/badge.enum.js';
+import { UserBadge } from '../models/user-badge.entity.js';
+import { User } from '../models/user.entity.js';
+import { LevelProgressionConfig } from '../models/level-progression-config.entity.js';
 import { AppDataSource } from '../config/database.config.js';
+import { getLevelProgress } from '../services/level-progression.service.js';
 import { TROPHIES_LIST } from '../utils/trophy.util.js';
+import { In } from 'typeorm';
 
 interface IExtraBadgeGroup {
   category: BadgeCategory;
@@ -12,15 +17,16 @@ interface IExtraBadgeGroup {
 }
 
 const LEGACY_RULES: Record<string, { category: BadgeCategory; event: BadgeEvent }> = {
-  level_2: { category: 'LEVELS', event: 'level_reached' },
-  level_3: { category: 'LEVELS', event: 'level_reached' },
-  level_4: { category: 'LEVELS', event: 'level_reached' },
-  level_5: { category: 'LEVELS', event: 'level_reached' },
-  level_6: { category: 'LEVELS', event: 'level_reached' },
-  level_7: { category: 'LEVELS', event: 'level_reached' },
-  level_8: { category: 'LEVELS', event: 'level_reached' },
-  level_9: { category: 'LEVELS', event: 'level_reached' },
   level_10: { category: 'LEVELS', event: 'level_reached' },
+  level_20: { category: 'LEVELS', event: 'level_reached' },
+  level_30: { category: 'LEVELS', event: 'level_reached' },
+  level_40: { category: 'LEVELS', event: 'level_reached' },
+  level_50: { category: 'LEVELS', event: 'level_reached' },
+  level_60: { category: 'LEVELS', event: 'level_reached' },
+  level_70: { category: 'LEVELS', event: 'level_reached' },
+  level_80: { category: 'LEVELS', event: 'level_reached' },
+  level_90: { category: 'LEVELS', event: 'level_reached' },
+  level_100: { category: 'LEVELS', event: 'level_reached' },
   first_win: { category: 'MATCHES', event: 'match_win' },
   bot_win: { category: 'BOT', event: 'bot_win' },
   win_4p_mode: { category: 'MODE_4FFA', event: 'win_4ffa' },
@@ -44,7 +50,6 @@ const LEGACY_RULES: Record<string, { category: BadgeCategory; event: BadgeEvent 
   portals_15: { category: 'PORTALS', event: 'portal_used' },
   portals_30: { category: 'PORTALS', event: 'portal_used' },
   portals_50: { category: 'PORTALS', event: 'portal_used' },
-  portal_win: { category: 'PORTALS', event: 'portal_used' },
   first_friend: { category: 'FRIENDS', event: 'friend_added' },
   friends_5: { category: 'FRIENDS', event: 'friend_added' },
   friends_10: { category: 'FRIENDS', event: 'friend_added' },
@@ -153,11 +158,11 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'PORTALS', event: 'portal_used', icon: '🌀', targets: [3, 10, 25],
+    category: 'MATCHES', event: 'match_played', icon: '🎮', targets: [10, 50, 150],
     titles: [
-      { es: 'Explorador de portales', en: 'Portal Explorer' },
-      { es: 'Nómada dimensional', en: 'Dimensional Nomad' },
-      { es: 'Señor de los portales', en: 'Portal Overlord' }
+      { es: 'Aficionado al tablero', en: 'Board Enthusiast' },
+      { es: 'Habitual de la arena', en: 'Arena Regular' },
+      { es: 'Veterano incansable', en: 'Relentless Veteran' }
     ]
   },
   {
@@ -169,11 +174,21 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'STORE_REDEMPTIONS', event: 'store_redeem', icon: '🎁', targets: [1, 5, 20],
+    category: 'WEEKLY_LEADERBOARD', event: 'weekly_first_place', icon: '🥇', targets: [1],
     titles: [
-      { es: 'Canje inaugural', en: 'First Redemption' },
-      { es: 'Cazador de tesoros', en: 'Treasure Hunter' },
-      { es: 'Leyenda de los canjes', en: 'Redemption Legend' }
+      { es: 'Rey de la semana', en: 'Weekly Champion' }
+    ]
+  },
+  {
+    category: 'WEEKLY_LEADERBOARD', event: 'weekly_second_place', icon: '🥈', targets: [1],
+    titles: [
+      { es: 'Estratega de plata', en: 'Silver Strategist' }
+    ]
+  },
+  {
+    category: 'WEEKLY_LEADERBOARD', event: 'weekly_third_place', icon: '🥉', targets: [1],
+    titles: [
+      { es: 'Podio de bronce', en: 'Bronze Podium' }
     ]
   },
   {
@@ -193,15 +208,16 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
 ];
 
 const LEGACY_TITLES: Record<string, { es: string; en: string }> = {
-  level_2: { es: 'Semilla táctica', en: 'Tactical Seed' },
-  level_3: { es: 'Guardián del tablero', en: 'Board Guardian' },
-  level_4: { es: 'Espíritu de acero', en: 'Steel Spirit' },
-  level_5: { es: 'Arquero de precisión', en: 'Precision Archer' },
-  level_6: { es: 'Muro de confianza', en: 'Reliable Wall' },
-  level_7: { es: 'Rayo estratégico', en: 'Strategic Lightning' },
-  level_8: { es: 'Soberano del tablero', en: 'Board Sovereign' },
-  level_9: { es: 'Corazón de diamante', en: 'Diamond Heart' },
-  level_10: { es: 'Llama legendaria', en: 'Legendary Flame' },
+  level_10: { es: 'Paso firme', en: 'Steady Step' },
+  level_20: { es: 'Estratega en ascenso', en: 'Rising Strategist' },
+  level_30: { es: 'Táctico experto', en: 'Tactical Expert' },
+  level_40: { es: 'Dominio del tablero', en: 'Board Mastery' },
+  level_50: { es: 'Veterano estratégico', en: 'Strategic Veteran' },
+  level_60: { es: 'Maestro de las rutas', en: 'Pathway Master' },
+  level_70: { es: 'Comandante del tablero', en: 'Board Commander' },
+  level_80: { es: 'Élite táctica', en: 'Tactical Elite' },
+  level_90: { es: 'Leyenda estratégica', en: 'Strategic Legend' },
+  level_100: { es: 'Cumbre del tablero', en: 'Board Summit' },
   first_win: { es: 'La primera conquista', en: 'First Conquest' },
   bot_win: { es: 'Primer bot derrotado', en: 'First Bot Down' },
   win_4p_mode: { es: 'Rey entre rivales', en: 'King Among Rivals' },
@@ -225,7 +241,6 @@ const LEGACY_TITLES: Record<string, { es: string; en: string }> = {
   portals_15: { es: 'Cartógrafo dimensional', en: 'Dimensional Cartographer' },
   portals_30: { es: 'Navegante del vacío', en: 'Void Navigator' },
   portals_50: { es: 'Viajero entre mundos', en: 'Worldwalker' },
-  portal_win: { es: 'Victoria al otro lado', en: 'Victory Beyond the Gate' },
   first_friend: { es: 'Nueva alianza', en: 'New Alliance' },
   friends_5: { es: 'Círculo de confianza', en: 'Circle of Trust' },
   friends_10: { es: 'Conector de comunidades', en: 'Community Connector' },
@@ -264,11 +279,13 @@ const EVENT_COPY: Record<BadgeEvent, { es: string; en: string; nameEs: string; n
   emote_sent: { es: 'Envía {target} reacción(es) durante una partida.', en: 'Send {target} reaction(s) during a match.', nameEs: 'Expresivo', nameEn: 'Expressive' },
   spectate: { es: 'Especta {target} partida(s).', en: 'Spectate {target} match(es).', nameEs: 'Observador', nameEn: 'Observer' },
   spectated: { es: 'Recibe {target} visita(s) de espectador.', en: 'Have {target} spectator(s) watch your match.', nameEs: 'Centro de atención', nameEn: 'In the spotlight' },
+  weekly_first_place: { es: 'Queda en primer lugar {target} vez/veces en la clasificatoria semanal.', en: 'Finish first in the weekly leaderboard {target} time(s).', nameEs: 'Campeón semanal', nameEn: 'Weekly champion' },
+  weekly_second_place: { es: 'Queda en segundo lugar {target} vez/veces en la clasificatoria semanal.', en: 'Finish second in the weekly leaderboard {target} time(s).', nameEs: 'Estratega semanal', nameEn: 'Weekly strategist' },
+  weekly_third_place: { es: 'Queda en tercer lugar {target} vez/veces en la clasificatoria semanal.', en: 'Finish third in the weekly leaderboard {target} time(s).', nameEs: 'Podio semanal', nameEn: 'Weekly podium' },
   move_completed: { es: 'Realiza {target} movimiento(s).', en: 'Make {target} move(s).', nameEs: 'Explorador', nameEn: 'Pathfinder' },
   win_without_walls: { es: 'Gana {target} partida(s) sin colocar muros.', en: 'Win {target} match(es) without placing walls.', nameEs: 'Precisión pura', nameEn: 'Pure precision' },
   level_reached: { es: 'Alcanza el nivel {target}.', en: 'Reach level {target}.', nameEs: 'Ascenso', nameEn: 'Rising star' },
   store_purchase: { es: 'Compra {target} artículo(s) en la tienda.', en: 'Purchase {target} store item(s).', nameEs: 'Coleccionista', nameEn: 'Collector' },
-  store_redeem: { es: 'Canjea {target} artículo(s) de tienda.', en: 'Redeem {target} store item(s).', nameEs: 'Cazador de ofertas', nameEn: 'Deal hunter' },
   point_purchase: { es: 'Compra puntos {target} vez/veces.', en: 'Purchase points {target} time(s).', nameEs: 'Inversor', nameEn: 'Investor' }
 };
 
@@ -335,12 +352,136 @@ export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'eve
 export async function seedBadges(): Promise<void> {
   const repository = AppDataSource.getRepository(Badge);
   const defaults = getDefaultBadges();
+  const retiredLevelCodes = Array.from({ length: 8 }, (_, index) => `level_${index + 2}`);
+  const retiredLevelBadges = await repository.find({
+    where: retiredLevelCodes.map(code => ({ code }))
+  });
+  const levelMigrationUserIds = retiredLevelBadges.length
+    ? [...new Set((await AppDataSource.getRepository(UserBadge).find({
+        where: { badgeId: In(retiredLevelBadges.map(badge => badge.id)) }
+      })).map(userBadge => userBadge.userId))]
+    : [];
+  if (retiredLevelBadges.length) {
+    await AppDataSource.transaction(async manager => {
+      const badges = manager.getRepository(Badge);
+      const userBadges = manager.getRepository(UserBadge);
+      await userBadges.delete({ badgeId: In(retiredLevelBadges.map(badge => badge.id)) });
+      await badges.remove(retiredLevelBadges);
+    });
+  }
+
+  const obsoletePortalCodes = [
+    'portal_win',
+    'challenge_portal_used_3',
+    'challenge_portal_used_10',
+    'challenge_portal_used_25'
+  ];
+  const obsoletePortalBadges = await repository.find({
+    where: obsoletePortalCodes.map(code => ({ code }))
+  });
+  if (obsoletePortalBadges.length) {
+    await AppDataSource.transaction(async manager => {
+      const badges = manager.getRepository(Badge);
+      const userBadges = manager.getRepository(UserBadge);
+      await userBadges.delete({ badgeId: In(obsoletePortalBadges.map(badge => badge.id)) });
+      await badges.remove(obsoletePortalBadges);
+    });
+  }
+
+  const retiredRedemptions = ['challenge_store_redeem_1', 'challenge_store_redeem_5', 'challenge_store_redeem_20'];
+  const weeklyDefinitions = defaults
+    .filter(badge => badge.category === 'WEEKLY_LEADERBOARD')
+    .sort((a, b) => a.event.localeCompare(b.event));
+  for (const [index, retiredCode] of retiredRedemptions.entries()) {
+    const retired = await repository.findOneBy({ code: retiredCode });
+    const replacement = weeklyDefinitions[index];
+    if (!retired || !replacement) continue;
+
+    await AppDataSource.transaction(async manager => {
+      const badges = manager.getRepository(Badge);
+      const userBadges = manager.getRepository(UserBadge);
+      const collision = await badges.findOneBy({ code: replacement.code });
+      await userBadges.delete({ badgeId: retired.id });
+      if (collision) {
+        await badges.delete(retired.id);
+        return;
+      }
+      Object.assign(retired, replacement);
+      await badges.save(retired);
+    });
+  }
   const existing = await repository.find({ select: { id: true, code: true, locales: true } });
   const existingByCode = new Map(existing.map(badge => [badge.code, badge]));
   const missing = defaults
     .filter(badge => !existingByCode.has(badge.code))
     .map(badge => repository.create(badge));
   if (missing.length) await repository.save(missing);
+  const levelDefinitions = defaults.filter(badge => badge.category === 'LEVELS');
+  if (levelDefinitions.length) {
+    const existingLevelBadges = await repository.find({
+      where: levelDefinitions.map(badge => ({ code: badge.code }))
+    });
+    for (const badge of existingLevelBadges) {
+      const definition = levelDefinitions.find(item => item.code === badge.code);
+      if (!definition) continue;
+      badge.category = definition.category;
+      badge.event = definition.event;
+      badge.target = definition.target;
+      badge.icon = definition.icon;
+      badge.locales = {
+        es: {
+          ...badge.locales.es,
+          name: definition.locales.es.name,
+          description: definition.locales.es.description
+        },
+        en: {
+          ...badge.locales.en,
+          name: definition.locales.en.name,
+          description: definition.locales.en.description
+        }
+      };
+    }
+    await repository.save(existingLevelBadges);
+  }
+
+  if (levelMigrationUserIds.length) {
+    const progression = await AppDataSource.getRepository(LevelProgressionConfig)
+      .findOneBy({ singletonKey: 1 });
+    if (!progression) throw new Error('LEVEL_PROGRESSION_CONFIGURATION_NOT_FOUND');
+    const persistedLevelBadges = await repository.find({
+      where: levelDefinitions.map(badge => ({ code: badge.code }))
+    });
+    const players = await AppDataSource.getRepository(User).find({
+      where: levelMigrationUserIds.map(id => ({ id })),
+      relations: { stats: true }
+    });
+    const userBadgeRepository = AppDataSource.getRepository(UserBadge);
+    for (const player of players) {
+      const currentLevel = getLevelProgress(player.stats?.xp ?? 0, {
+        baseXpPerLevel: progression.baseXpPerLevel,
+        exponentialMultiplier: Number(progression.exponentialMultiplier),
+        maxLevel: progression.maxLevel
+      }).level;
+      const progressRows = await userBadgeRepository.find({
+        where: persistedLevelBadges.map(badge => ({ userId: player.id, badgeId: badge.id }))
+      });
+      const progressByBadgeId = new Map(progressRows.map(row => [row.badgeId, row]));
+      for (const badge of persistedLevelBadges) {
+        const row = progressByBadgeId.get(badge.id) ?? userBadgeRepository.create({
+          userId: player.id,
+          badgeId: badge.id,
+          progress: 0,
+          unlockedAt: null
+        });
+        row.progress = Math.min(currentLevel, badge.target);
+        row.unlockedAt = currentLevel >= badge.target
+          ? row.unlockedAt ?? new Date()
+          : null;
+        await userBadgeRepository.save(row);
+      }
+    }
+  }
+
   const defaultByCode = new Map(defaults.map(badge => [badge.code, badge]));
   const staleSeededBadges = existing
     .map(badge => {

@@ -8,16 +8,17 @@ export interface ITrophy {
 }
 
 export const TROPHIES_LIST: ITrophy[] = [
-  // 📈 Progresión de Niveles (9)
-  { id: 'level_2', icon: '🌱', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_2_TITLE', descKey: 'TROPHIES.LEVEL_2_DESC', targetCount: 2 },
-  { id: 'level_3', icon: '🛡️', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_3_TITLE', descKey: 'TROPHIES.LEVEL_3_DESC', targetCount: 3 },
-  { id: 'level_4', icon: '🗡️', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_4_TITLE', descKey: 'TROPHIES.LEVEL_4_DESC', targetCount: 4 },
-  { id: 'level_5', icon: '🏹', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_5_TITLE', descKey: 'TROPHIES.LEVEL_5_DESC', targetCount: 5 },
-  { id: 'level_6', icon: '🧱', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_6_TITLE', descKey: 'TROPHIES.LEVEL_6_DESC', targetCount: 6 },
-  { id: 'level_7', icon: '⚡', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_7_TITLE', descKey: 'TROPHIES.LEVEL_7_DESC', targetCount: 7 },
-  { id: 'level_8', icon: '👑', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_8_TITLE', descKey: 'TROPHIES.LEVEL_8_DESC', targetCount: 8 },
-  { id: 'level_9', icon: '💎', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_9_TITLE', descKey: 'TROPHIES.LEVEL_9_DESC', targetCount: 9 },
-  { id: 'level_10', icon: '🔥', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_10_TITLE', descKey: 'TROPHIES.LEVEL_10_DESC', targetCount: 10 },
+  // 📈 Progression milestones
+  { id: 'level_10', icon: '🌱', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_10_TITLE', descKey: 'TROPHIES.LEVEL_10_DESC', targetCount: 10 },
+  { id: 'level_20', icon: '🛡️', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_20_TITLE', descKey: 'TROPHIES.LEVEL_20_DESC', targetCount: 20 },
+  { id: 'level_30', icon: '🗡️', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_30_TITLE', descKey: 'TROPHIES.LEVEL_30_DESC', targetCount: 30 },
+  { id: 'level_40', icon: '🏹', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_40_TITLE', descKey: 'TROPHIES.LEVEL_40_DESC', targetCount: 40 },
+  { id: 'level_50', icon: '🧱', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_50_TITLE', descKey: 'TROPHIES.LEVEL_50_DESC', targetCount: 50 },
+  { id: 'level_60', icon: '⚡', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_60_TITLE', descKey: 'TROPHIES.LEVEL_60_DESC', targetCount: 60 },
+  { id: 'level_70', icon: '👑', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_70_TITLE', descKey: 'TROPHIES.LEVEL_70_DESC', targetCount: 70 },
+  { id: 'level_80', icon: '💎', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_80_TITLE', descKey: 'TROPHIES.LEVEL_80_DESC', targetCount: 80 },
+  { id: 'level_90', icon: '🔥', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_90_TITLE', descKey: 'TROPHIES.LEVEL_90_DESC', targetCount: 90 },
+  { id: 'level_100', icon: '🏆', category: 'LEVELS', titleKey: 'TROPHIES.LEVEL_100_TITLE', descKey: 'TROPHIES.LEVEL_100_DESC', targetCount: 100 },
 
   // 🎮 Modos de Juego (5)
   { id: 'first_win', icon: '🎉', category: 'MODES', titleKey: 'TROPHIES.FIRST_WIN_TITLE', descKey: 'TROPHIES.FIRST_WIN_DESC', targetCount: 1 },
@@ -49,7 +50,6 @@ export const TROPHIES_LIST: ITrophy[] = [
   { id: 'portals_15', icon: '☄️', category: 'PORTALS', titleKey: 'TROPHIES.PORTALS_15_TITLE', descKey: 'TROPHIES.PORTALS_15_DESC', targetCount: 15 },
   { id: 'portals_30', icon: '✨', category: 'PORTALS', titleKey: 'TROPHIES.PORTALS_30_TITLE', descKey: 'TROPHIES.PORTALS_30_DESC', targetCount: 30 },
   { id: 'portals_50', icon: '🔮', category: 'PORTALS', titleKey: 'TROPHIES.PORTALS_50_TITLE', descKey: 'TROPHIES.PORTALS_50_DESC', targetCount: 50 },
-  { id: 'portal_win', icon: '⚡', category: 'PORTALS', titleKey: 'TROPHIES.PORTAL_WIN_TITLE', descKey: 'TROPHIES.PORTAL_WIN_DESC', targetCount: 1 },
 
   // 👥 Social y Espectadores (7)
   { id: 'first_friend', icon: '🤝', category: 'SOCIAL', titleKey: 'TROPHIES.FIRST_FRIEND_TITLE', descKey: 'TROPHIES.FIRST_FRIEND_DESC', targetCount: 1 },

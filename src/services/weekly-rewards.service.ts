@@ -8,6 +8,7 @@ import { UserStoreItem } from '../models/user-store-item.entity.js';
 import { WeeklyRewardPayout } from '../models/weekly-reward-payout.entity.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { getMostRecentCompletedUtcWeekStart, getUtcWeekRange } from '../utils/utc-week.util.js';
+import { BadgeService, type IBadgeUnlockBatch } from './badge.service.js';
 import { NotificationService } from './notification.service.js';
 
 @injectable()
@@ -54,6 +55,7 @@ export class WeeklyRewardsService {
         userId: string;
         fcmToken?: string | null;
       }> = [];
+      const badgeDeliveries: Array<{ userId: string; unlocks: IBadgeUnlockBatch }> = [];
       const [firstWinner, secondWinner, thirdWinner] = winners;
       const payout = payoutRepository.create({
         weekStart: weekStart.toISOString().slice(0, 10),
@@ -90,12 +92,24 @@ export class WeeklyRewardsService {
             ? { en: giftItem.configuration.en.name, es: giftItem.configuration.es.name }
             : undefined
         ));
+        const placementEvent = ([
+          'weekly_first_place',
+          'weekly_second_place',
+          'weekly_third_place'
+        ] as const)[index];
+        if (!placementEvent) throw new Error(`WEEKLY_REWARD_PLACEMENT_EVENT_NOT_FOUND:${index + 1}`);
+        const unlocks = await container.resolve(BadgeService).recordEventsInTransaction(
+          manager,
+          user.id,
+          [{ event: placementEvent }]
+        );
+        badgeDeliveries.push({ userId: user.id, unlocks });
       }
-      return notificationDeliveries;
+      return { notificationDeliveries, badgeDeliveries };
     });
 
     if (deliveries === null) return false;
-    for (const delivery of deliveries) {
+    for (const delivery of deliveries.notificationDeliveries) {
       try {
         await notificationService.publishWeeklyRewardNotification(
           delivery.notification,
@@ -104,6 +118,13 @@ export class WeeklyRewardsService {
         );
       } catch (error) {
         console.error(`[WeeklyRewards] Could not publish notification to ${delivery.userId}:`, error);
+      }
+    }
+    for (const delivery of deliveries.badgeDeliveries) {
+      try {
+        await container.resolve(BadgeService).notifyUnlockedBadges(delivery.userId, delivery.unlocks);
+      } catch (error) {
+        console.error(`[WeeklyRewards] Could not publish badge notification to ${delivery.userId}:`, error);
       }
     }
     return true;

@@ -201,7 +201,7 @@ export class GameLogService {
           }
         }
 
-        const badgeEvents: IBadgeEvent[] = [{ event: 'match_played' }];
+        const badgeEvents: IBadgeEvent[] = abandoned ? [] : [{ event: 'match_played' }];
         if (isWin) {
           badgeEvents.push({ event: 'match_win' });
           const modeWinEvents: Record<string, BadgeEvent> = {

@@ -14,10 +14,6 @@ export function getUtcWeekRange(date: Date): IUtcWeekRange {
 
 export function getMostRecentCompletedUtcWeekStart(date: Date): Date {
   const { start } = getUtcWeekRange(date);
-  const isSundayBeforePayout = date.getUTCDay() === 0 &&
-    (date.getUTCHours() < 23 || (date.getUTCHours() === 23 && date.getUTCMinutes() < 59));
-  if (date.getUTCDay() !== 0 || isSundayBeforePayout) {
-    start.setUTCDate(start.getUTCDate() - 7);
-  }
+  start.setUTCDate(start.getUTCDate() - 7);
   return start;
 }
