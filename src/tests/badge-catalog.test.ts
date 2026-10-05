@@ -30,4 +30,20 @@ describe('Default badge catalog', () => {
       }
     }
   });
+
+  it('uses distinct, descriptive localized names instead of numbered tiers', () => {
+    for (const language of ['es', 'en'] as const) {
+      const names = badges.map(badge => badge.locales[language].name);
+      assert.equal(new Set(names).size, names.length);
+      assert.ok(names.every(name => !/\s\d+$/.test(name)));
+    }
+
+    const botBadges = new Map(
+      badges.filter(badge => badge.category === 'BOT').map(badge => [badge.code, badge.locales.es.name])
+    );
+    assert.equal(botBadges.get('bot_win'), 'Primer bot derrotado');
+    assert.equal(botBadges.get('challenge_bot_win_3'), 'Cazador de bots');
+    assert.equal(botBadges.get('challenge_bot_win_5'), 'Asesino de bots');
+    assert.equal(botBadges.get('challenge_bot_win_10'), 'Aniquilador de bots');
+  });
 });

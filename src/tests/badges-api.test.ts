@@ -50,6 +50,22 @@ describe('Badge administration and player progress', () => {
     assert.equal(response.body.badges.length, 100);
   });
 
+  it('refreshes names for existing seed badges without replacing other edits', async () => {
+    const repository = AppDataSource.getRepository(Badge);
+    const seededBadge = await repository.findOneByOrFail({ code: 'bot_win' });
+    seededBadge.locales.es.name = 'Nombre antiguo';
+    seededBadge.locales.es.motto = 'Lema personalizado';
+    seededBadge.isActive = false;
+    await repository.save(seededBadge);
+
+    await seedBadges();
+
+    const refreshedBadge = await repository.findOneByOrFail({ code: 'bot_win' });
+    assert.equal(refreshedBadge.locales.es.name, 'Primer bot derrotado');
+    assert.equal(refreshedBadge.locales.es.motto, 'Lema personalizado');
+    assert.equal(refreshedBadge.isActive, false);
+  });
+
   it('validates badge rules and persists unique progress and unlock notifications', async () => {
     const locales = {
       es: { name: 'Partidas iniciales', motto: 'Cada partida cuenta.', description: 'Completa dos partidas.' },
