@@ -293,8 +293,8 @@ function makeLocales(
   };
 }
 
-export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'event' | 'target' | 'icon' | 'locales' | 'isActive' | 'sortOrder'>> {
-  const legacy = TROPHIES_LIST.map((trophy, index) => {
+export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'event' | 'target' | 'icon' | 'locales' | 'isActive'>> {
+  const legacy = TROPHIES_LIST.map(trophy => {
     const rule = LEGACY_RULES[trophy.id];
     if (!rule) throw new Error(`Missing badge rule for legacy trophy ${trophy.id}`);
     const title = LEGACY_TITLES[trophy.id];
@@ -306,13 +306,11 @@ export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'eve
       event: rule.event,
       target,
       icon: trophy.icon,
-      locales: makeLocales(rule.event, target, index + 1, title),
-      isActive: true,
-      sortOrder: index
+      locales: makeLocales(rule.event, target, 1, title),
+      isActive: true
     };
   });
 
-  let nextOrder = legacy.length;
   const extra = EXTRA_GROUPS.flatMap(group => group.targets.map((target, index) => {
     const title = group.titles[index];
     if (!title) throw new Error(`Missing badge title for ${group.event} target ${target}`);
@@ -323,8 +321,7 @@ export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'eve
       target,
       icon: group.icon,
       locales: makeLocales(group.event, target, index + 1, title),
-      isActive: true,
-      sortOrder: nextOrder++
+      isActive: true
     };
   }));
 

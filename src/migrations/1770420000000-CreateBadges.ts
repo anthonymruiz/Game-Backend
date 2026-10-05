@@ -16,7 +16,6 @@ export class CreateBadges1770420000000 implements MigrationInterface {
         \`icon\` varchar(16) NOT NULL,
         \`locales\` json NOT NULL,
         \`isActive\` tinyint NOT NULL DEFAULT 1,
-        \`sortOrder\` int NOT NULL DEFAULT 0,
         UNIQUE INDEX \`UQ_badges_code\` (\`code\`),
         PRIMARY KEY (\`id\`)
       ) ENGINE=InnoDB

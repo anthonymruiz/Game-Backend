@@ -33,7 +33,4 @@ export class Badge extends AbstractBaseEntity {
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
-
-  @Column({ type: 'int', default: 0 })
-  sortOrder!: number;
 }
