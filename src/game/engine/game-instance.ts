@@ -1,13 +1,14 @@
 import { Board } from './board.js';
-import { Player, Wall } from './models.js';
+import { Player, Wall, type Boost } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
 import { IRoomPlayer } from '../../services/room.service.js';
 import { GameModeRegistry, IGameModeRules } from './game-modes.js';
 import { BotReactionManager } from './bot-reaction.manager.js';
+import type { BadgeEvent } from '../../models/badge.enum.js';
 
 export interface IGameInstanceOptions {
-  turnTimeLimitSeconds?: number;
-  maxStrikesBeforeKick?: number;
+  turnTimeLimitSeconds: number;
+  maxStrikesBeforeKick: number;
 }
 
 type BoostDecisionType = 'killer_item' | 'exchange_item';
@@ -32,8 +33,8 @@ export class GameInstance {
   public winner: string | null = null;
   public startTime?: number;
   
-  public turnTimeLimitSeconds: number = 30;
-  public maxStrikesBeforeKick: number = 3;
+  public turnTimeLimitSeconds: number;
+  public maxStrikesBeforeKick: number;
   public hasSpawnedKillerItem: boolean = false;
   public hasSpawnedExchangeItem: boolean = false;
 
@@ -43,6 +44,12 @@ export class GameInstance {
   private portalTimer: NodeJS.Timeout | null = null;
   public onStateChange: (event: string, data: any) => void;
   public botReactionManager: BotReactionManager;
+  public onBadgeEvent: (
+    playerId: string,
+    event: BadgeEvent,
+    amount?: number,
+    operation?: 'increment' | 'max' | 'set'
+  ) => void = () => {};
 
   public isPrivate: boolean = false;
 
@@ -51,7 +58,7 @@ export class GameInstance {
     mode: GameMode, 
     roomPlayers: IRoomPlayer[], 
     onStateChange: (event: string, data: any) => void,
-    options?: IGameInstanceOptions,
+    options: IGameInstanceOptions,
     isPrivate: boolean = false
   ) {
     this.id = id;
@@ -61,12 +68,15 @@ export class GameInstance {
     this.rules = GameModeRegistry.get(mode);
     this.botReactionManager = new BotReactionManager(this);
 
-    if (options?.turnTimeLimitSeconds && options.turnTimeLimitSeconds >= 10 && options.turnTimeLimitSeconds <= 60) {
-      this.turnTimeLimitSeconds = options.turnTimeLimitSeconds;
+    if (!Number.isInteger(options.turnTimeLimitSeconds) ||
+        options.turnTimeLimitSeconds < 10 || options.turnTimeLimitSeconds > 60) {
+      throw new Error('A valid system turn time limit is required to start a game.');
     }
-    if (options?.maxStrikesBeforeKick && options.maxStrikesBeforeKick >= 1) {
-      this.maxStrikesBeforeKick = options.maxStrikesBeforeKick;
+    if (!Number.isInteger(options.maxStrikesBeforeKick) || options.maxStrikesBeforeKick < 1) {
+      throw new Error('A valid system strike limit is required to start a game.');
     }
+    this.turnTimeLimitSeconds = options.turnTimeLimitSeconds;
+    this.maxStrikesBeforeKick = options.maxStrikesBeforeKick;
 
     const size = this.rules.boardSize;
     this.board = new Board(size);
@@ -120,13 +130,18 @@ export class GameInstance {
     } else {
       this.board.spawnSingleRandomBoost();
     }
-    if (this.mode !== '1v1' && !this.hasSpawnedExchangeItem) {
+    if (!this.hasSpawnedExchangeItem) {
       this.board.spawnExchangeItem();
       this.hasSpawnedExchangeItem = true;
     }
     this.startTurnTimer();
     this.startBoostTimer();
-    this.onStateChange('gameStarted', { currentTurn: this.getCurrentPlayer(), board: this.board.toDTO(this.getCurrentPlayer()) });
+    this.onStateChange('gameStarted', {
+      currentTurn: this.getCurrentPlayer(),
+      board: this.board.toDTO(this.getCurrentPlayer()),
+      turnTimeLimitSeconds: this.turnTimeLimitSeconds,
+      turnSecondsRemaining: this.turnTimeLimitSeconds
+    });
     this.checkTriggerBotTurn();
   }
 
@@ -270,12 +285,22 @@ export class GameInstance {
     this.board.ensureMinWallPickups(2);
 
     const currentTurnPlayer = this.getCurrentPlayer();
-    this.onStateChange('turnChanged', { currentTurn: currentTurnPlayer, board: this.board.toDTO(currentTurnPlayer) });
+    this.onStateChange('turnChanged', {
+      currentTurn: currentTurnPlayer,
+      board: this.board.toDTO(currentTurnPlayer),
+      turnTimeLimitSeconds: this.turnTimeLimitSeconds,
+      turnSecondsRemaining: this.turnTimeLimitSeconds
+    });
     this.checkTriggerBotTurn();
   }
 
   public getCurrentPlayer() {
     return this.playersList[this.currentTurnIndex];
+  }
+
+  public getRemainingTurnSeconds(): number {
+    if (this.turnDeadlineAt === null) return this.turnTimeLimitSeconds;
+    return Math.max(0, Math.ceil((this.turnDeadlineAt - Date.now()) / 1000));
   }
 
   public getPendingBoostDecision(): Omit<IPendingBoostDecision, 'timeout'> | null {
@@ -313,8 +338,20 @@ export class GameInstance {
     const hadExchangeItem = p.hasExchangeItem;
     const fromX = p.x;
     const fromY = p.y;
+    const landedBoost = this.board.boosts.find(boost => boost.x === newX && boost.y === newY);
     const success = this.board.movePlayer(playerId, newX, newY);
     if (success) {
+      this.onBadgeEvent(playerId, 'move_completed');
+      if (landedBoost) {
+        const boostEvents: Record<Boost['type'], BadgeEvent> = {
+          wall_pickup: 'boost_wall',
+          extra_wall: 'boost_wall',
+          killer_item: 'boost_killer',
+          exchange_item: 'boost_exchange',
+          portal: 'portal_used'
+        };
+        this.onBadgeEvent(playerId, boostEvents[landedBoost.type]);
+      }
       this.onStateChange('playerMoved', {
         playerId,
         fromX,
@@ -353,6 +390,7 @@ export class GameInstance {
     const success = this.board.placeWall(wall);
     
     if (success) {
+      this.onBadgeEvent(playerId, 'wall_placed');
       this.onStateChange('wallPlaced', { wall, wallEffectId: p?.wallEffectId });
 
       const pathChanges = new Map<string, { before: number; after: number }>();
@@ -388,6 +426,9 @@ export class GameInstance {
 
     if (this.rules.checkWinCondition(player, this.board)) {
       this.winner = playerId;
+      if (!this.board.walls.some(wall => wall.ownerId === playerId)) {
+        this.onBadgeEvent(playerId, 'win_without_walls');
+      }
       this.endGame();
       return true;
     }
@@ -452,6 +493,13 @@ export class GameInstance {
         (type === 'killer_item' && !player.hasKillerItem) ||
         (type === 'exchange_item' && !player.hasExchangeItem)) return false;
 
+    if (type === 'exchange_item' && (this.mode === '1v1' || this.mode === 'vs_ai')) {
+      const target = this.playersList
+        .map(id => this.board.players.get(id))
+        .find(candidate => candidate && candidate.id !== playerId && !candidate.isDead);
+      return this.executeExchangeItem(playerId, target?.id || 'none');
+    }
+
     if (playerId.startsWith('bot_')) {
       this.pendingBoostDecision = {
         playerId,
@@ -492,15 +540,18 @@ export class GameInstance {
 
   public executeExchangeItem(playerId: string, targetId: string): boolean {
     const decision = this.pendingBoostDecision;
-    if (this.state !== 'playing' || !decision || decision.playerId !== playerId ||
-        decision.type !== 'exchange_item') return false;
+    const isAutomaticDuelExchange = !decision &&
+      (this.mode === '1v1' || this.mode === 'vs_ai') &&
+      playerId === this.getCurrentPlayer();
+    if (this.state !== 'playing' || (!isAutomaticDuelExchange &&
+        (!decision || decision.playerId !== playerId || decision.type !== 'exchange_item'))) return false;
     const exchanger = this.board.players.get(playerId);
     if (!exchanger || exchanger.isDead || !exchanger.hasExchangeItem) return false;
 
     if (!targetId || targetId === 'none' || targetId === 'discard') {
       exchanger.hasExchangeItem = false;
       this.clearPendingBoostDecision();
-      this.finishBoostDecision(playerId, 'exchange_item', 'discarded');
+      if (decision) this.finishBoostDecision(playerId, 'exchange_item', 'discarded');
       this.continueAfterBoostDecision(playerId);
       return true;
     }
@@ -530,7 +581,7 @@ export class GameInstance {
       targetUsername: target.username,
       board: this.board.toDTO(this.getCurrentPlayer())
     });
-    this.finishBoostDecision(playerId, 'exchange_item', 'used');
+    if (decision) this.finishBoostDecision(playerId, 'exchange_item', 'used');
 
     if (this.checkWinCondition(playerId) || this.state !== 'playing') return true;
     if (this.checkWinCondition(targetId) || this.state !== 'playing') return true;

@@ -20,6 +20,10 @@ import { UserStoreItem } from '../models/user-store-item.entity.js';
 import { PointPackagePayment } from '../models/point-package-payment.entity.js';
 import { StripeWebhookEvent } from '../models/stripe-webhook-event.entity.js';
 import { RankTier } from '../models/rank-tier.entity.js';
+import { RewardsSettings } from '../models/rewards-settings.entity.js';
+import { WeeklyRewardPayout } from '../models/weekly-reward-payout.entity.js';
+import { Badge } from '../models/badge.entity.js';
+import { UserBadge } from '../models/user-badge.entity.js';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -31,7 +35,7 @@ export const AppDataSource = new DataSource({
   synchronize: true,
   migrationsRun: true,
   logging: ENV.NODE_ENV === 'development',
-  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings, Friendship, DeviceSession, LevelProgressionConfig, DailyRewardClaim, PointPackage, StoreItem, UserStoreItem, PointPackagePayment, StripeWebhookEvent, RankTier],
+  entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings, Friendship, DeviceSession, LevelProgressionConfig, DailyRewardClaim, PointPackage, StoreItem, UserStoreItem, PointPackagePayment, StripeWebhookEvent, RankTier, RewardsSettings, WeeklyRewardPayout, Badge, UserBadge],
   migrations: ENV.NODE_ENV === 'production'
     ? ['dist/migrations/**/*.js']
     : ['src/migrations/**/*.ts'],

@@ -1,9 +1,10 @@
-import { singleton, inject } from 'tsyringe';
+import { singleton, inject, container } from 'tsyringe';
 import { GameInstance } from '../game/engine/game-instance.js';
+import { BadgeService } from './badge.service.js';
 import { GameMode, GROUP_GAME_MODES } from './matchmaking.service.js';
 import { IRoomPlayer } from './room.service.js';
 import { Server } from 'socket.io';
-import { GameLogService } from './game-log.service.js';
+import { GameLogService, hasBotPlayers } from './game-log.service.js';
 import { SystemSettingsService } from './system-settings.service.js';
 
 @singleton()
@@ -48,6 +49,15 @@ export class GameService {
       },
       isPrivate
     );
+    game.onBadgeEvent = (playerId, event, amount, operation) => {
+      if (playerId.startsWith('bot_') || playerId.startsWith('guest_')) return;
+      try {
+        void container.resolve(BadgeService).recordEvent(playerId, event, amount, operation)
+          .catch(error => console.error(`Failed to record ${event} badge event for ${playerId}:`, error));
+      } catch (error) {
+        console.error(`Could not initialize badge tracking for ${event} event from ${playerId}:`, error);
+      }
+    };
 
     this.activeGames.set(matchId, game);
     game.start();
@@ -66,7 +76,8 @@ export class GameService {
   ): Promise<void> {
     this.activeGames.delete(matchId);
     data.isRanked = isRanked;
-    if (data.abandoned) {
+    const matchIncludesBots = hasBotPlayers(roomPlayers);
+    if (data.abandoned && !matchIncludesBots) {
       data.rewardsByPlayer = {};
     } else {
       try {
@@ -76,7 +87,8 @@ export class GameService {
           roomPlayers,
           mode,
           data.durationSeconds,
-          isRanked
+          isRanked,
+          Boolean(data.abandoned)
         );
       } catch (error) {
         console.error('Failed to persist match rewards:', error);
@@ -166,6 +178,16 @@ export class GameService {
 
   public getGame(matchId: string): GameInstance | undefined {
     return this.activeGames.get(matchId);
+  }
+
+  public getActiveGameCountsByMode(): { mode: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const game of this.activeGames.values()) {
+      if (game.state === 'playing') {
+        counts.set(game.mode, (counts.get(game.mode) ?? 0) + 1);
+      }
+    }
+    return [...counts].map(([mode, count]) => ({ mode, count }));
   }
 
   public getGameByPlayerId(playerId: string): GameInstance | undefined {

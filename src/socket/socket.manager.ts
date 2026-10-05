@@ -268,7 +268,7 @@ export class SocketManager {
             matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
             void this.broadcastPublicRooms();
 
-            if (room.isQuickMatch || room.players.length >= room.maxPlayers) {
+            if (room.isQuickMatch) {
               room.status = RoomStatus.PLAYING;
               this.lastMatchPlayers.set(room.id, [...room.players]);
               this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
@@ -653,6 +653,8 @@ export class SocketManager {
             socket.emit('gameStarted', {
               currentTurn: game.playersList[game.currentTurnIndex],
               board: game.board.toDTO(userId),
+              turnTimeLimitSeconds: game.turnTimeLimitSeconds,
+              turnSecondsRemaining: game.getRemainingTurnSeconds(),
               pendingBoostDecision: game.getPendingBoostDecision()
             });
           }
@@ -873,6 +875,7 @@ export class SocketManager {
             displayedEmote = item.icon;
           }
           gameNs.to(roomId).emit('emote', { sender: username, emoteId: displayedEmote });
+          game.onBadgeEvent(userId, 'emote_sent');
         } catch (error: any) {
           if (error.message === 'Only players in this game can react' || error.message === 'You do not own this reaction') {
             socket.emit('error', error.message);

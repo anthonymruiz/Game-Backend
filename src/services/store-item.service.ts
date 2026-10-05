@@ -1,4 +1,4 @@
-import { singleton } from 'tsyringe';
+import { container, singleton } from 'tsyringe';
 import { randomUUID } from 'node:crypto';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database.config.js';
@@ -7,6 +7,7 @@ import { UserStoreItem } from '../models/user-store-item.entity.js';
 import { User } from '../models/user.entity.js';
 import { UserRole } from '../models/user-role.enum.js';
 import { Stats } from '../models/stats.entity.js';
+import { BadgeService } from './badge.service.js';
 import {
   StoreItemCategory,
   StoreItemRarity,
@@ -103,7 +104,7 @@ export class StoreItemService {
     acquisition: UserStoreItem;
     itemName: { en: string; es: string };
   }> {
-    return AppDataSource.transaction(async manager => {
+    const result = await AppDataSource.transaction(async manager => {
       const user = await manager.getRepository(User).createQueryBuilder('user')
         .leftJoinAndSelect('user.stats', 'stats')
         .where('user.id = :userId', { userId })
@@ -138,6 +139,16 @@ export class StoreItemService {
         }
       };
     });
+    try {
+      const badgeService = container.resolve(BadgeService);
+      await Promise.all([
+        badgeService.recordEvent(userId, 'store_purchase'),
+        badgeService.recordEvent(userId, 'store_redeem')
+      ]);
+    } catch (error) {
+      console.error(`Failed to record store badge events for player ${userId}:`, error);
+    }
+    return result;
   }
 
   public async searchGiftRecipients(query: string): Promise<Array<Pick<User, 'id' | 'username' | 'email' | 'avatarUrl'>>> {

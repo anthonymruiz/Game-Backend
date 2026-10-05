@@ -6,6 +6,9 @@ import { UserRepository } from '../repositories/user.repository.js';
 import { Preferences } from '../models/preferences.entity.js';
 import { DailyRewardService } from '../services/daily-reward.service.js';
 import { RankTierService } from '../services/rank-tier.service.js';
+import { RewardsSettingsService } from '../services/rewards-settings.service.js';
+import { AppDataSource } from '../config/database.config.js';
+import { StoreItem } from '../models/store-item.entity.js';
 
 @injectable()
 export class UserController {
@@ -32,6 +35,27 @@ export class UserController {
       res.status(200).json(await this.dailyRewardService.getStatus(userId));
     } catch (error) {
       this.respondDailyRewardError(error, res);
+    }
+  };
+
+  public getPublicRewardsSettings = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const config = await container.resolve(RewardsSettingsService).getConfiguration();
+      const mysteryGift = config.weeklyMysteryGiftItemId
+        ? await AppDataSource.getRepository(StoreItem).findOneBy({ id: config.weeklyMysteryGiftItemId })
+        : null;
+      res.status(200).json({
+        settings: {
+          dailyRewardPoints: config.dailyRewardPoints,
+          weeklyFirstPlacePoints: config.weeklyFirstPlacePoints,
+          weeklySecondPlacePoints: config.weeklySecondPlacePoints,
+          weeklyThirdPlacePoints: config.weeklyThirdPlacePoints,
+          hasWeeklyMysteryGift: Boolean(mysteryGift)
+        }
+      });
+    } catch (error) {
+      console.error('Could not load public rewards settings:', error);
+      res.status(503).json({ error: 'REWARDS_CONFIGURATION_UNAVAILABLE' });
     }
   };
 
@@ -63,7 +87,7 @@ export class UserController {
       res.status(403).json({ error: code });
       return;
     }
-    if (code === 'PROGRESSION_CONFIG_NOT_FOUND') {
+    if (code === 'REWARDS_CONFIGURATION_NOT_FOUND') {
       res.status(503).json({ error: code });
       return;
     }
@@ -124,6 +148,14 @@ export class UserController {
         return;
       }
 
+      if (
+        req.body.hasCompletedLobbyTour !== undefined
+        && typeof req.body.hasCompletedLobbyTour !== 'boolean'
+      ) {
+        res.status(400).json({ error: 'hasCompletedLobbyTour must be a boolean' });
+        return;
+      }
+
       const user = await this.userRepository.findWithPreferences(userId);
       if (user) {
         if (!user.preferences) {
@@ -133,6 +165,9 @@ export class UserController {
         user.preferences.theme = req.body.theme || user.preferences.theme;
         if (req.body.fcmToken) {
           user.preferences.fcmToken = req.body.fcmToken;
+        }
+        if (req.body.hasCompletedLobbyTour !== undefined) {
+          user.preferences.hasCompletedLobbyTour = req.body.hasCompletedLobbyTour;
         }
         await this.userRepository.save(user);
         res.status(200).json({ success: true, preferences: user.preferences });
@@ -144,13 +179,40 @@ export class UserController {
     }
   };
 
+  public getMyPreferences = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.sub || req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const user = await this.userRepository.findWithPreferences(userId);
+      if (!user) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      if (!user.preferences) {
+        user.preferences = new Preferences();
+        await this.userRepository.save(user);
+      }
+
+      res.status(200).json({
+        hasCompletedLobbyTour: user.preferences.hasCompletedLobbyTour
+      });
+    } catch (error) {
+      console.error('Failed to retrieve user preferences:', error);
+      res.status(500).json({ error: 'PREFERENCES_RETRIEVAL_FAILED' });
+    }
+  };
+
   public getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     try {
       const rankKey = typeof req.query.rankKey === 'string' && req.query.rankKey !== 'all'
         ? req.query.rankKey
         : undefined;
       const period = typeof req.query.period === 'string' ? req.query.period : 'history';
-      if (period !== 'today' && period !== 'history') {
+      if (period !== 'today' && period !== 'history' && period !== 'weekly') {
         res.status(400).json({ error: 'INVALID_LEADERBOARD_PERIOD' });
         return;
       }
@@ -178,6 +240,27 @@ export class UserController {
         return;
       }
       res.status(500).json({ error: error.message });
+    }
+  };
+
+  public getPublicRankTiers = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const ranks = await container.resolve(RankTierService).getRanks();
+      res.status(200).json({
+        ranks: ranks.map(({ key, level, emoji, badgeBg, textColor, configuration, minXp, maxXp }) => ({
+          key,
+          level,
+          emoji,
+          badgeBg,
+          textColor,
+          configuration,
+          minXp,
+          maxXp
+        }))
+      });
+    } catch (error) {
+      console.error('Could not load public rank tiers:', error);
+      res.status(503).json({ error: 'RANK_TIERS_UNAVAILABLE' });
     }
   };
 

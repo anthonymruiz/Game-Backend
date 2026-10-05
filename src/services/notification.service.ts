@@ -1,5 +1,6 @@
 import { singleton, container } from 'tsyringe';
 import { MoreThan } from 'typeorm';
+import type { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database.config.js';
 import { Notification } from '../models/notification.entity.js';
 import { User } from '../models/user.entity.js';
@@ -41,7 +42,11 @@ const TRANSLATIONS: ITranslations = {
     STORE_ITEM_GIFTED_TITLE: 'You received a gift!',
     STORE_ITEM_GIFTED_MSG: 'You received "{{data}}" as a gift.',
     POINTS_GIFTED_TITLE: 'You received points!',
-    POINTS_GIFTED_MSG: 'You received {{data}} points as a gift.'
+    POINTS_GIFTED_MSG: 'You received {{data}} points as a gift.',
+    WEEKLY_REWARD_TITLE: 'Weekly leaderboard reward',
+    WEEKLY_REWARD_MSG: 'You finished in {{rank}} in the weekly leaderboard and received {{data}} points.',
+    WEEKLY_FIRST_REWARD_MSG: 'You finished 1st in the weekly leaderboard and received {{data}} points, plus the Mystery Gift: {{gift}}.',
+    WEEKLY_FIRST_REWARD_NO_GIFT_MSG: 'You finished 1st in the weekly leaderboard and received {{data}} points.'
   },
   es: {
     MATCH_WON_TITLE: '¡Partida Ganada!',
@@ -64,7 +69,11 @@ const TRANSLATIONS: ITranslations = {
     STORE_ITEM_GIFTED_TITLE: '¡Has recibido un regalo!',
     STORE_ITEM_GIFTED_MSG: 'Te han regalado "{{data}}".',
     POINTS_GIFTED_TITLE: '¡Has recibido puntos!',
-    POINTS_GIFTED_MSG: 'Te han regalado {{data}} puntos.'
+    POINTS_GIFTED_MSG: 'Te han regalado {{data}} puntos.',
+    WEEKLY_REWARD_TITLE: 'Recompensa de clasificación semanal',
+    WEEKLY_REWARD_MSG: 'Terminaste en {{rank}} en la clasificación semanal y recibiste {{data}} puntos.',
+    WEEKLY_FIRST_REWARD_MSG: 'Terminaste en 1.er lugar en la clasificación semanal y recibiste {{data}} puntos, además del Mystery Gift: {{gift}}.',
+    WEEKLY_FIRST_REWARD_NO_GIFT_MSG: 'Terminaste en 1.er lugar en la clasificación semanal y recibiste {{data}} puntos.'
   }
 };
 
@@ -146,6 +155,100 @@ export class NotificationService {
         });
       } catch (fcmError) {
         console.error('FCM send failed:', fcmError);
+      }
+    }
+  }
+
+  public async sendCustomNotification(
+    userId: string,
+    type: string,
+    title: Partial<Record<SupportedLanguage, string>>,
+    message: Partial<Record<SupportedLanguage, string>>
+  ): Promise<void> {
+    const user = await AppDataSource.getRepository(User).findOne({
+      where: { id: userId },
+      relations: { preferences: true }
+    });
+    if (!user) throw new Error(`Cannot notify missing user ${userId}`);
+
+    const language: SupportedLanguage = user.preferences?.language === 'es' ? 'es' : 'en';
+    const notification = new Notification();
+    notification.user = user;
+    notification.type = type;
+    notification.title = title[language] || title.en || '';
+    notification.message = message[language] || message.en || '';
+    await AppDataSource.getRepository(Notification).save(notification);
+
+    const socketManager = container.resolve(SocketManager);
+    if (socketManager.io) {
+      socketManager.io.of('/matchmaking').to(userId).emit('newNotification', notification);
+    }
+
+    if (user.preferences?.fcmToken && getApps().length > 0) {
+      try {
+        await getMessaging().send({
+          token: user.preferences.fcmToken,
+          notification: { title: notification.title, body: notification.message },
+          data: { type: notification.type, id: notification.id.toString() }
+        });
+      } catch (error) {
+        console.error('FCM custom notification send failed:', error);
+      }
+    }
+  }
+
+  public async createWeeklyRewardNotification(
+    manager: EntityManager,
+    userId: string,
+    user: User,
+    rank: number,
+    points: number,
+    mysteryGiftName?: Partial<Record<SupportedLanguage, string>>
+  ): Promise<{ notification: Notification; userId: string; fcmToken?: string | null }> {
+    const language: SupportedLanguage = user.preferences?.language === 'es' ? 'es' : 'en';
+    const dictionary = TRANSLATIONS[language];
+    const rankLabel = language === 'es'
+      ? rank === 2 ? '2.º lugar' : '3.er lugar'
+      : rank === 2 ? '2nd place' : '3rd place';
+    const message = rank === 1
+      ? (mysteryGiftName
+          ? dictionary.WEEKLY_FIRST_REWARD_MSG
+              .replace('{{data}}', points.toLocaleString(language))
+              .replace('{{gift}}', mysteryGiftName[language] || mysteryGiftName.en || '')
+          : dictionary.WEEKLY_FIRST_REWARD_NO_GIFT_MSG
+              .replace('{{data}}', points.toLocaleString(language)))
+      : dictionary.WEEKLY_REWARD_MSG
+          .replace('{{rank}}', rankLabel)
+          .replace('{{data}}', points.toLocaleString(language));
+
+    const notification = new Notification();
+    notification.user = user;
+    notification.type = 'WEEKLY_REWARD';
+    notification.title = dictionary.WEEKLY_REWARD_TITLE;
+    notification.message = message;
+    await manager.getRepository(Notification).save(notification);
+    return { notification, userId, fcmToken: user.preferences?.fcmToken };
+  }
+
+  public async publishWeeklyRewardNotification(
+    notification: Notification,
+    userId: string,
+    fcmToken?: string | null
+  ): Promise<void> {
+    const socketManager = container.resolve(SocketManager);
+    if (socketManager.io) {
+      socketManager.io.of('/matchmaking').to(userId).emit('newNotification', notification);
+    }
+
+    if (fcmToken && getApps().length > 0) {
+      try {
+        await getMessaging().send({
+          token: fcmToken,
+          notification: { title: notification.title, body: notification.message },
+          data: { type: notification.type, id: notification.id.toString() }
+        });
+      } catch (error) {
+        console.error('[NotificationService] Weekly reward push notification failed:', error);
       }
     }
   }

@@ -1,4 +1,4 @@
-import { singleton } from 'tsyringe';
+import { container, singleton } from 'tsyringe';
 import Stripe from 'stripe';
 import { AppDataSource } from '../config/database.config.js';
 import { ENV } from '../config/env.config.js';
@@ -7,6 +7,7 @@ import { PointPackagePayment, PointPackagePaymentStatus } from '../models/point-
 import { Stats } from '../models/stats.entity.js';
 import { StripeWebhookEvent } from '../models/stripe-webhook-event.entity.js';
 import { User } from '../models/user.entity.js';
+import { BadgeService } from './badge.service.js';
 
 export class StripeWebhookSignatureError extends Error {
   constructor() {
@@ -191,7 +192,7 @@ export class StripePaymentService {
     const pointPackageId = session.metadata?.pointPackageId;
     if (!paymentId || !userId || !pointPackageId) throw new Error('PAYMENT_METADATA_INVALID');
 
-    return AppDataSource.transaction(async manager => {
+    const result = await AppDataSource.transaction(async manager => {
       const payment = await manager.getRepository(PointPackagePayment).createQueryBuilder('payment')
         .where('payment.id = :paymentId', { paymentId })
         .setLock('pessimistic_write')
@@ -216,20 +217,35 @@ export class StripePaymentService {
       const paymentIntentId = typeof session.payment_intent === 'string'
         ? session.payment_intent
         : session.payment_intent?.id ?? null;
+      let newlyPaid = false;
       if (payment.status !== PointPackagePaymentStatus.PAID) {
         user.stats.points += payment.points;
         await manager.getRepository(Stats).save(user.stats);
         payment.status = PointPackagePaymentStatus.PAID;
         payment.stripePaymentIntentId = paymentIntentId;
         await manager.getRepository(PointPackagePayment).save(payment);
+        newlyPaid = true;
       }
 
       return {
         status: payment.status,
         pointsAwarded: payment.points,
-        balancePoints: user.stats.points
+        balancePoints: user.stats.points,
+        newlyPaid
       };
     });
+    if (result.newlyPaid) {
+      try {
+        await container.resolve(BadgeService).recordEvent(userId, 'point_purchase');
+      } catch (error) {
+        console.error(`Failed to record point-purchase badge event for player ${userId}:`, error);
+      }
+    }
+    return {
+      status: result.status,
+      pointsAwarded: result.pointsAwarded,
+      balancePoints: result.balancePoints
+    };
   }
 
   private async createLineItem(

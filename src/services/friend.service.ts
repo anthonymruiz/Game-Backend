@@ -8,6 +8,7 @@ import { Notification } from '../models/notification.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
 import { NotificationService } from './notification.service.js';
 import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
+import { BadgeService } from './badge.service.js';
 
 @singleton()
 export class FriendService {
@@ -108,6 +109,16 @@ export class FriendService {
 
     friendship.status = FriendshipStatus.ACCEPTED;
     await this.repo.save(friendship);
+
+    try {
+      const badgeService = container.resolve(BadgeService);
+      await Promise.all([
+        badgeService.recordEvent(friendship.requester.id, 'friend_added'),
+        badgeService.recordEvent(friendship.addressee.id, 'friend_added')
+      ]);
+    } catch (error) {
+      console.error(`Failed to record friend badges for friendship ${friendship.id}:`, error);
+    }
 
     try {
       const notifService = container.resolve(NotificationService);

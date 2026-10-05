@@ -10,11 +10,20 @@ import { LevelProgressionConfig } from '../models/level-progression-config.entit
 import { DEFAULT_LEVEL_PROGRESSION_CONFIG } from '../services/level-progression.service.js';
 import { RankTier } from '../models/rank-tier.entity.js';
 import { DEFAULT_RANK_TIERS, createDefaultRankTier } from '../seeds/rank-tiers.seed.js';
+import { RewardsSettings } from '../models/rewards-settings.entity.js';
+import { DEFAULT_REWARDS_SETTINGS } from '../services/rewards-settings.service.js';
+import { DEFAULT_SYSTEM_SETTINGS } from '../services/system-settings.service.js';
 
 export async function seedLevelProgressionConfig(): Promise<void> {
   const repository = AppDataSource.getRepository(LevelProgressionConfig);
   const existing = await repository.findOne({ where: { singletonKey: 1 } });
-  if (existing) return;
+  if (existing) {
+    if (existing.maxLevel !== DEFAULT_LEVEL_PROGRESSION_CONFIG.maxLevel) {
+      existing.maxLevel = DEFAULT_LEVEL_PROGRESSION_CONFIG.maxLevel;
+      await repository.save(existing);
+    }
+    return;
+  }
 
   await repository.save(repository.create({
     singletonKey: 1,
@@ -23,12 +32,81 @@ export async function seedLevelProgressionConfig(): Promise<void> {
   console.log('[SEED] Default level progression configuration created.');
 }
 
+export async function seedRewardsSettings(): Promise<void> {
+  const repository = AppDataSource.getRepository(RewardsSettings);
+  const existing = await repository.findOne({ where: { singletonKey: 1 } });
+  if (existing) {
+    const rewardFields = [
+      'pointsPerWin',
+      'rankedPointsPerWin',
+      'dailyRewardPoints',
+      'pointsPerLevelUp',
+      'pointsPerRankUp',
+      'pointsPerBadge',
+      'weeklyFirstPlacePoints',
+      'weeklySecondPlacePoints',
+      'weeklyThirdPlacePoints'
+    ] as const;
+    let changed = false;
+    for (const field of rewardFields) {
+      if (existing[field] < 1) {
+        existing[field] = DEFAULT_REWARDS_SETTINGS[field];
+        changed = true;
+      }
+    }
+    if (changed) await repository.save(existing);
+    return;
+  }
+  await repository.save(repository.create({ singletonKey: 1, ...DEFAULT_REWARDS_SETTINGS }));
+  console.log('[SEED] Default rewards settings created.');
+}
+
 export async function seedRankTiers(): Promise<void> {
   const repository = AppDataSource.getRepository(RankTier);
-  if (await repository.count() > 0) return;
+  const existing = await repository.find({ order: { level: 'ASC' } });
+  if (existing.length === 0) {
+    await repository.save(DEFAULT_RANK_TIERS.map(createDefaultRankTier));
+    console.log('[SEED] Default rank tiers created.');
+    return;
+  }
 
-  await repository.save(DEFAULT_RANK_TIERS.map(createDefaultRankTier));
-  console.log('[SEED] Default rank tiers created.');
+  const existingByKey = new Map(existing.map(rank => [rank.key, rank]));
+  const missingDefaults = DEFAULT_RANK_TIERS.filter(rank => !existingByKey.has(rank.key));
+  const novice = existingByKey.get('NOVATO');
+  if (novice?.emoji === '🌱') novice.emoji = '🔰';
+  const recruit = existingByKey.get('INICIADO');
+  if (recruit?.configuration.es.name === 'Iniciado' && recruit.configuration.en.name === 'Adept') {
+    recruit.configuration = {
+      ...recruit.configuration,
+      es: { ...recruit.configuration.es, name: 'Recluta' },
+      en: { ...recruit.configuration.en, name: 'Recruit' }
+    };
+  }
+
+  const updatedLegacyDefaults = [novice, recruit].filter((rank): rank is RankTier => !!rank);
+  if (missingDefaults.length === 0) {
+    if (updatedLegacyDefaults.length > 0) await repository.save(updatedLegacyDefaults);
+    return;
+  }
+
+  await AppDataSource.transaction(async manager => {
+    const transactionRepository = manager.getRepository(RankTier);
+    const customRanks = existing.filter(rank => !DEFAULT_RANK_TIERS.some(defaultRank => defaultRank.key === rank.key));
+    const orderedRanks = DEFAULT_RANK_TIERS.map(defaultRank =>
+      existingByKey.get(defaultRank.key) ?? transactionRepository.create(createDefaultRankTier(defaultRank))
+    ).concat(customRanks);
+
+    for (const [index, rank] of orderedRanks.entries()) {
+      rank.level = -(index + 1);
+    }
+    await transactionRepository.save(orderedRanks);
+
+    for (const [index, rank] of orderedRanks.entries()) {
+      rank.level = index + 1;
+    }
+    await transactionRepository.save(orderedRanks);
+  });
+  console.log(`[SEED] Added ${missingDefaults.length} default rank tier(s).`);
 }
 
 export async function seedSuperAdmin(): Promise<void> {
@@ -127,11 +205,7 @@ export async function seedSystemSettings(): Promise<void> {
     if (!existing) {
       console.log('[SEED] Creating default SystemSettings record...');
       const s = new SystemSettings();
-      s.maintenanceMode = false;
-      s.turnTimeLimitSeconds = 30;
-      s.maxStrikesBeforeKick = 3;
-      s.allowNewRegistrations = true;
-      s.announcementBanner = '';
+      Object.assign(s, DEFAULT_SYSTEM_SETTINGS);
       await settingsRepo.save(s);
       console.log('[SEED] ✅ Default SystemSettings created successfully!');
     }
