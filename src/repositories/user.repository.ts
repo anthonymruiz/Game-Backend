@@ -100,7 +100,7 @@ export class UserRepository {
       .addOrderBy('totalGames', 'DESC')
       .addOrderBy('xp', 'DESC')
       .addOrderBy('username', 'ASC')
-      .take(Math.min(Math.max(1, Math.floor(limit)), 100));
+      .limit(Math.min(Math.max(1, Math.floor(limit)), 100));
 
     if (minXp !== undefined) {
       query.andWhere('COALESCE(stats.xp, 0) >= :minXp', { minXp });

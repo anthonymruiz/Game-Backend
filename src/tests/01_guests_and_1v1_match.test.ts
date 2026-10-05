@@ -164,8 +164,13 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.equal(game.getCurrentPlayer(), 'guest_a');
     assert.ok(events.some(e => e.event === 'gameStarted'));
 
-    // Execute valid move for guest_a (starts at x=4, y=8 -> move to 4, 7)
-    const moved = game.executeMove('guest_a', 4, 7);
+    // Avoid random boosts so the move always completes without a boost decision.
+    const destinations = [[4, 7], [3, 8], [5, 8], [4, 9]];
+    const destination = destinations.find(([x, y]) =>
+      !game.board.boosts.some(boost => boost.x === x && boost.y === y)
+    );
+    assert.ok(destination);
+    const moved = game.executeMove('guest_a', destination[0], destination[1]);
     assert.equal(moved, true);
     assert.equal(game.getCurrentPlayer(), 'guest_b');
 
