@@ -61,7 +61,7 @@ export class BadgeService {
       query.andWhere('badge.isActive = :isActive', { isActive: filters.active === 'true' });
     }
     if (filters.search?.trim()) {
-      query.andWhere('(badge.code LIKE :search OR badge.locales LIKE :search)', {
+      query.andWhere('(badge.code LIKE :search OR CAST(badge.locales AS CHAR) LIKE :search)', {
         search: `%${filters.search.trim()}%`
       });
     }

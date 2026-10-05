@@ -67,6 +67,26 @@ describe('Badge administration and player progress', () => {
     assert.equal(created.status, 201, JSON.stringify(created.body));
     badgeId = created.body.badge.id;
 
+    const filteredCatalog = await makeRequest(
+      app,
+      'GET',
+      '/api/admin/badges?category=MATCHES&event=match_played&active=true&search=First%20Matches',
+      undefined,
+      adminToken
+    );
+    assert.equal(filteredCatalog.status, 200, JSON.stringify(filteredCatalog.body));
+    assert.ok(filteredCatalog.body.badges.some((badge: { id: string }) => badge.id === badgeId));
+
+    const mismatchedFilter = await makeRequest(
+      app,
+      'GET',
+      '/api/admin/badges?category=BOT&event=match_played',
+      undefined,
+      adminToken
+    );
+    assert.equal(mismatchedFilter.status, 200, JSON.stringify(mismatchedFilter.body));
+    assert.equal(mismatchedFilter.body.badges.length, 0);
+
     const invalid = await makeRequest(app, 'POST', '/api/admin/badges', {
       category: 'BOT',
       event: 'match_played',
