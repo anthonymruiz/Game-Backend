@@ -5,6 +5,7 @@ import { container } from 'tsyringe';
 import { AppDataSource } from '../config/database.config.js';
 import { Badge } from '../models/badge.entity.js';
 import { Notification } from '../models/notification.entity.js';
+import { UserBadge } from '../models/user-badge.entity.js';
 import { BadgeService } from '../services/badge.service.js';
 import { seedBadges } from '../seeds/badges.seed.js';
 import { makeRequest, setupTestEnvironment, teardownTestEnvironment } from './test-helper.js';
@@ -61,8 +62,7 @@ describe('Badge administration and player progress', () => {
       target: 2,
       icon: '🧪',
       locales,
-      isActive: true,
-      sortOrder: 200
+      isActive: true
     }, adminToken);
     assert.equal(created.status, 201, JSON.stringify(created.body));
     badgeId = created.body.badge.id;
@@ -76,6 +76,12 @@ describe('Badge administration and player progress', () => {
     );
     assert.equal(filteredCatalog.status, 200, JSON.stringify(filteredCatalog.body));
     assert.ok(filteredCatalog.body.badges.some((badge: { id: string }) => badge.id === badgeId));
+
+    const catalog = await makeRequest(app, 'GET', '/api/admin/badges', undefined, adminToken);
+    const createdAtValues = catalog.body.badges.map((badge: { createdAt: string }) =>
+      new Date(badge.createdAt).getTime()
+    );
+    assert.deepEqual(createdAtValues, [...createdAtValues].sort((a: number, b: number) => b - a));
 
     const mismatchedFilter = await makeRequest(
       app,
@@ -112,6 +118,28 @@ describe('Badge administration and player progress', () => {
     assert.equal(userBadge.name, 'First Matches');
     assert.equal(userBadge.progress, 2);
     assert.ok(userBadge.unlockedAt);
+
+    const activeBadges = await AppDataSource.getRepository(Badge).find({
+      where: { isActive: true },
+      order: { createdAt: 'ASC' },
+      take: 2
+    });
+    const earlierBadge = activeBadges.find(badge => badge.id !== badgeId);
+    assert.ok(earlierBadge);
+    const userBadgeRepository = AppDataSource.getRepository(UserBadge);
+    const earlierUnlock = await userBadgeRepository.findOneBy({ userId, badgeId: earlierBadge.id }) ??
+      userBadgeRepository.create({ userId, badgeId: earlierBadge.id, progress: earlierBadge.target });
+    const currentUnlock = await userBadgeRepository.findOneBy({ userId, badgeId });
+    assert.ok(currentUnlock);
+    earlierUnlock.progress = earlierBadge.target;
+    earlierUnlock.unlockedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    currentUnlock.unlockedAt = new Date(Date.now() - 60 * 60 * 1000);
+    await userBadgeRepository.save([earlierUnlock, currentUnlock]);
+    profile = await makeRequest(app, 'GET', `/api/users/${userId}/badges?language=en`);
+    const earnedIds = profile.body.items
+      .filter((badge: { unlockedAt: string | null }) => badge.unlockedAt)
+      .map((badge: { id: string }) => badge.id);
+    assert.ok(earnedIds.indexOf(earlierBadge.id) < earnedIds.indexOf(badgeId));
 
     const notifications = await AppDataSource.getRepository(Notification).count({
       where: { user: { id: userId }, type: 'BADGE_UNLOCKED' }

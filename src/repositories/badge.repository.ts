@@ -14,14 +14,14 @@ export class BadgeRepository {
   }
 
   public list(): Promise<Badge[]> {
-    return this.badges.find({ order: { sortOrder: 'ASC', createdAt: 'ASC' } });
+    return this.badges.find({ order: { createdAt: 'DESC', id: 'DESC' } });
   }
 
   public async listForUser(userId: string): Promise<UserBadge[]> {
     return this.userBadges.find({
       where: { userId },
       relations: { badge: true },
-      order: { unlockedAt: 'DESC', createdAt: 'ASC' }
+      order: { unlockedAt: 'ASC', createdAt: 'ASC' }
     });
   }
 

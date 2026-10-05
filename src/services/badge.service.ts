@@ -21,7 +21,6 @@ export interface IBadgeInput {
   icon: string;
   locales: BadgeLocales;
   isActive?: boolean;
-  sortOrder?: number;
 }
 
 export interface IBadgeEvent {
@@ -48,8 +47,8 @@ export class BadgeService {
       .leftJoin(UserBadge, 'userBadge', 'userBadge.badgeId = badge.id AND userBadge.unlockedAt IS NOT NULL')
       .addSelect('COUNT(DISTINCT userBadge.userId)', 'unlockedUsers')
       .groupBy('badge.id')
-      .orderBy('badge.sortOrder', 'ASC')
-      .addOrderBy('badge.createdAt', 'ASC');
+      .orderBy('badge.createdAt', 'DESC')
+      .addOrderBy('badge.id', 'DESC');
 
     if (filters.category && BADGE_CATEGORIES.includes(filters.category as BadgeCategory)) {
       query.andWhere('badge.category = :category', { category: filters.category });
@@ -98,8 +97,7 @@ export class BadgeService {
     return this.badgeRepository.badges.save(this.badgeRepository.badges.create({
       ...input,
       code,
-      isActive: input.isActive ?? true,
-      sortOrder: input.sortOrder ?? 0
+      isActive: input.isActive ?? true
     }));
   }
 
@@ -121,7 +119,6 @@ export class BadgeService {
     badge.icon = input.icon;
     badge.locales = input.locales;
     badge.isActive = input.isActive ?? badge.isActive;
-    badge.sortOrder = input.sortOrder ?? badge.sortOrder;
     const saved = await this.badgeRepository.badges.save(badge);
     if (ruleChanged) {
       await this.badgeRepository.userBadges.createQueryBuilder()
@@ -160,6 +157,12 @@ export class BadgeService {
         progress: Math.min(userBadge?.progress ?? 0, badge.target),
         unlockedAt: userBadge?.unlockedAt ?? null
       };
+    });
+    items.sort((a, b) => {
+      if (!a.unlockedAt) return b.unlockedAt ? 1 : 0;
+      if (!b.unlockedAt) return -1;
+      return new Date(a.unlockedAt).getTime() - new Date(b.unlockedAt).getTime() ||
+        a.code.localeCompare(b.code);
     });
     const earnedCount = items.filter(badge => badge.unlockedAt !== null).length;
     return {
