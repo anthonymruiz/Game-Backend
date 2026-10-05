@@ -71,6 +71,16 @@ export class AdminController {
     }
   };
 
+  public getTransactions = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const transactions = await this.adminService.getTransactions();
+      res.status(200).json({ transactions });
+    } catch (error) {
+      console.error('[AdminController] Failed to load transactions:', error);
+      res.status(500).json({ message: 'Could not load transactions.' });
+    }
+  };
+
   public getReports = async (req: Request, res: Response): Promise<void> => {
     try {
       const statusFilter = req.query.status as string;
@@ -142,6 +152,16 @@ export class AdminController {
     }
   };
 
+  public getMatchSummary = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const summary = await this.adminService.getMatchSummary();
+      res.status(200).json(summary);
+    } catch (error: any) {
+      console.error('[AdminController] Failed to load match summary:', error);
+      res.status(500).json({ message: error.message || 'Could not load match summary.' });
+    }
+  };
+
   public getLevelProgressionConfig = async (_req: Request, res: Response): Promise<void> => {
     try {
       const config = await this.adminService.getLevelProgressionConfig();
@@ -159,6 +179,25 @@ export class AdminController {
       const message = error.message || 'Internal server error';
       const isValidationError = message.includes('must be');
       res.status(isValidationError ? 400 : 500).json({ message });
+    }
+  };
+
+  public getRewardsSettings = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const config = await this.adminService.getRewardsSettings();
+      res.status(200).json({ config });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public updateRewardsSettings = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const config = await this.adminService.updateRewardsSettings(req.body);
+      res.status(200).json({ message: 'Rewards settings updated successfully', config });
+    } catch (error: any) {
+      const message = error.message || 'Internal server error';
+      res.status(message.includes('must be') ? 400 : 500).json({ message });
     }
   };
 

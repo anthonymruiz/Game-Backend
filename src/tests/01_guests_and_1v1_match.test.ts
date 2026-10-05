@@ -5,6 +5,7 @@ import { container } from 'tsyringe';
 import { RoomService, AVAILABLE_COLORS } from '../services/room.service.js';
 import { GameService } from '../services/game.service.js';
 import { GameInstance } from '../game/engine/game-instance.js';
+import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
   let roomService: RoomService;
@@ -81,6 +82,24 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.ok(roomService.getPublicRooms().some(room => room.id === casualRoom.id));
   });
 
+  it('Quick match does not join a public custom room', () => {
+    const testRank = 'QUICK_MATCH_CUSTOM_ROOM_EXCLUSION';
+    const customRoom = roomService.createRoom(
+      'custom_room_host', 'CustomHost', false, 'Custom public room', '1v1',
+      false, undefined, undefined, 0, false, true, testRank
+    );
+
+    assert.equal(customRoom.isQuickMatch, false);
+    assert.equal(roomService.findQuickMatchRoom('1v1', true, testRank), undefined);
+
+    const quickMatchRoom = roomService.createRoom(
+      'quick_room_host', 'QuickHost', false, 'Quick match room', '1v1',
+      false, undefined, undefined, 0, true, true, testRank
+    );
+
+    assert.equal(roomService.findQuickMatchRoom('1v1', true, testRank)?.id, quickMatchRoom.id);
+  });
+
   it('Active room lookup prefers a waiting quick-match over an older custom room', () => {
     const userId = 'user_with_multiple_waiting_rooms';
     const customRoom = roomService.createRoom(userId, 'MultiRoomUser', false, 'Custom room', '1v1');
@@ -138,7 +157,7 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     const events: { event: string; data: any }[] = [];
     const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
       events.push({ event, data });
-    });
+    }, GAME_INSTANCE_TEST_OPTIONS);
 
     game.start();
     assert.equal(game.state, 'playing');

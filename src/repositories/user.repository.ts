@@ -187,6 +187,7 @@ export class UserRepository {
         'user.id',
         'user.username',
         'user.email',
+        'user.avatarUrl',
         'user.role',
         'user.isOnline',
         'user.presenceStatus',

@@ -65,8 +65,10 @@ export class ReportRepository {
         'report.createdAt',
         'reporter.id',
         'reporter.username',
+        'reporter.avatarUrl',
         'reportedUser.id',
         'reportedUser.username',
+        'reportedUser.avatarUrl',
         'reportedUser.role'
       ]);
 

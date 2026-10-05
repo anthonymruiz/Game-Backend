@@ -2,16 +2,31 @@ import 'reflect-metadata';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_LEVEL_PROGRESSION_CONFIG,
   getLevelProgress,
   getTotalXpForLevel
 } from '../services/level-progression.service.js';
+import { DEFAULT_REWARDS_SETTINGS } from '../services/rewards-settings.service.js';
+import { DEFAULT_LEVEL_PROGRESSION_CONFIG } from '../services/level-progression.service.js';
 
 describe('Level progression formula', () => {
-  it('seeds an independent ranked-match points setting', () => {
-    assert.strictEqual(DEFAULT_LEVEL_PROGRESSION_CONFIG.rankedPointsPerMatch, 10);
-    assert.strictEqual(DEFAULT_LEVEL_PROGRESSION_CONFIG.pointsPerLevelUp, 10);
-    assert.strictEqual(DEFAULT_LEVEL_PROGRESSION_CONFIG.dailyRewardPoints, 10);
+  it('keeps reward settings separate from level progression configuration', () => {
+    assert.deepStrictEqual(DEFAULT_REWARDS_SETTINGS, {
+      pointsPerWin: 10,
+      rankedPointsPerWin: 10,
+      dailyRewardPoints: 10,
+      pointsPerLevelUp: 10,
+      pointsPerRankUp: 10,
+      pointsPerBadge: 10,
+      weeklyFirstPlacePoints: 500,
+      weeklySecondPlacePoints: 300,
+      weeklyThirdPlacePoints: 100,
+      weeklyMysteryGiftItemId: null
+    });
+    assert.deepStrictEqual(Object.keys(DEFAULT_LEVEL_PROGRESSION_CONFIG).sort(), [
+      'baseXpPerLevel',
+      'exponentialMultiplier',
+      'maxLevel'
+    ]);
   });
 
   it('uses configured exponential thresholds and computes progress within the current level', () => {

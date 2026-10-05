@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { Board } from '../game/engine/board.js';
 import { Player, Wall } from '../game/engine/models.js';
 import { GameInstance } from '../game/engine/game-instance.js';
+import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
   let board: Board;
@@ -168,7 +169,7 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
     let lastEvent = '';
     const game = new GameInstance('room_test', '1v1', roomPlayers, (ev, data) => {
       lastEvent = ev;
-    });
+    }, GAME_INSTANCE_TEST_OPTIONS);
 
     game.start();
     assert.strictEqual(game.state, 'playing');

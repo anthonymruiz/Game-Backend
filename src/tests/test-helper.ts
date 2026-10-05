@@ -6,7 +6,7 @@ import http from 'http';
 import { container } from 'tsyringe';
 import { App } from '../app.js';
 import { AppDataSource } from '../config/database.config.js';
-import { seedLevelProgressionConfig, seedRankTiers, seedSuperAdmin, seedSystemSettings } from '../utils/seed.utils.js';
+import { seedLevelProgressionConfig, seedRankTiers, seedRewardsSettings, seedSuperAdmin, seedSystemSettings } from '../utils/seed.utils.js';
 
 let appInstance: App | null = null;
 
@@ -18,6 +18,7 @@ export async function setupTestEnvironment() {
   await seedSuperAdmin();
   await seedSystemSettings();
   await seedLevelProgressionConfig();
+  await seedRewardsSettings();
   await seedRankTiers();
 
   if (!appInstance) {

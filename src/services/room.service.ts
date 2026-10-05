@@ -16,6 +16,7 @@ export interface IRoomPlayer {
   id: string;
   username: string;
   isGuest: boolean;
+  isBot?: boolean;
   color: string;
   pawnColor?: string;
   pawnColorItemId?: string;
@@ -346,6 +347,7 @@ export class RoomService {
 
   public findQuickMatchRoom(mode: GameMode, isRanked: boolean, rankKey?: string): IRoom | undefined {
     return this.getPublicRooms().find(room =>
+      room.isQuickMatch === true &&
       room.mode === mode &&
       !!room.isRanked === isRanked &&
       (!isRanked || (!!rankKey && room.rankKey === rankKey))

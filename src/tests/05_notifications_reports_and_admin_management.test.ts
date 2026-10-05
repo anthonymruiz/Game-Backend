@@ -4,6 +4,10 @@ import { setupTestEnvironment, teardownTestEnvironment, makeRequest } from './te
 import { Application } from 'express';
 import { container } from 'tsyringe';
 import { NotificationService } from '../services/notification.service.js';
+import { AppDataSource } from '../config/database.config.js';
+import { User } from '../models/user.entity.js';
+import { MatchHistory } from '../models/match-history.entity.js';
+import { Report, ReportCategory, ReportStatus } from '../models/report.entity.js';
 
 describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () => {
   let app: Application;
@@ -78,6 +82,56 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
     assert.ok(res.body.report);
     assert.equal(res.body.report.reportedUserId, user2Id);
     assert.equal(res.body.report.status, 'pending');
+  });
+
+  it('Admin reports and match records include social avatars for their users', async () => {
+    const userRepository = AppDataSource.getRepository(User);
+    const reportRepository = AppDataSource.getRepository(Report);
+    const matchRepository = AppDataSource.getRepository(MatchHistory);
+    const reporter = await userRepository.findOneByOrFail({ id: user1Id });
+    const reportedUser = await userRepository.findOneByOrFail({ id: user2Id });
+    const reporterAvatar = reporter.avatarUrl;
+    const reportedAvatar = reportedUser.avatarUrl;
+    reporter.avatarUrl = 'https://lh3.googleusercontent.com/reporter-avatar';
+    reportedUser.avatarUrl = 'https://lh3.googleusercontent.com/reported-avatar';
+    await userRepository.save([reporter, reportedUser]);
+
+    const report = await reportRepository.save(reportRepository.create({
+      reporterId: reporter.id,
+      reportedUserId: reportedUser.id,
+      category: ReportCategory.CHEATING,
+      details: 'Avatar response test',
+      language: 'es',
+      status: ReportStatus.PENDING
+    }));
+    const match = await matchRepository.save(matchRepository.create({
+      userId: reporter.id,
+      matchId: `avatar-test-${Date.now()}`,
+      result: 'loss',
+      mode: '1v1',
+      opponentUsername: reportedUser.username,
+      durationSeconds: 90
+    }));
+
+    try {
+      const reportsResponse = await makeRequest(app, 'GET', '/api/admin/reports?limit=100', undefined, adminToken);
+      assert.equal(reportsResponse.status, 200);
+      const reportResult = reportsResponse.body.data.find((item: { id: string }) => item.id === report.id);
+      assert.equal(reportResult?.reporter.avatarUrl, reporter.avatarUrl);
+      assert.equal(reportResult?.reportedUser.avatarUrl, reportedUser.avatarUrl);
+
+      const matchesResponse = await makeRequest(app, 'GET', '/api/admin/matches?limit=100', undefined, adminToken);
+      assert.equal(matchesResponse.status, 200);
+      const matchResult = matchesResponse.body.data.find((item: { id: string }) => item.id === match.id);
+      assert.equal(matchResult?.user.avatarUrl, reporter.avatarUrl);
+      assert.equal(matchResult?.opponent.avatarUrl, reportedUser.avatarUrl);
+    } finally {
+      await reportRepository.delete(report.id);
+      await matchRepository.delete(match.id);
+      reporter.avatarUrl = reporterAvatar;
+      reportedUser.avatarUrl = reportedAvatar;
+      await userRepository.save([reporter, reportedUser]);
+    }
   });
 
   it('Admin should be able to view global reports and update a report status to "reviewed"', async () => {

@@ -77,6 +77,26 @@ describe('03 - User Profile, Preferences & Admin Settings Tests', () => {
     assert.equal(res.body.preferences.theme, 'dark');
   });
 
+  it('User should be able to read and complete the lobby tour preference', async () => {
+    const initialRes = await makeRequest(app, 'GET', '/api/users/me/preferences', undefined, userToken);
+    assert.equal(initialRes.status, 200);
+    assert.equal(initialRes.body.hasCompletedLobbyTour, false);
+
+    const updateRes = await makeRequest(
+      app,
+      'PUT',
+      '/api/users/preferences',
+      { hasCompletedLobbyTour: true },
+      userToken
+    );
+    assert.equal(updateRes.status, 200);
+    assert.equal(updateRes.body.preferences.hasCompletedLobbyTour, true);
+
+    const persistedRes = await makeRequest(app, 'GET', '/api/users/me/preferences', undefined, userToken);
+    assert.equal(persistedRes.status, 200);
+    assert.equal(persistedRes.body.hasCompletedLobbyTour, true);
+  });
+
   it('Admin should be able to retrieve and update system settings', async () => {
     const getRes = await makeRequest(app, 'GET', '/api/admin/settings', undefined, adminToken);
     assert.equal(getRes.status, 200);

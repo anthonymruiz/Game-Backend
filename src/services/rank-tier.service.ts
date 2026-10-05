@@ -53,10 +53,6 @@ export class RankTierService {
     const progressionConfig = {
       baseXpPerLevel: progression.baseXpPerLevel,
       exponentialMultiplier: Number(progression.exponentialMultiplier),
-      pointsPerMatch: progression.pointsPerMatch,
-      rankedPointsPerMatch: progression.rankedPointsPerMatch,
-      pointsPerLevelUp: progression.pointsPerLevelUp,
-      dailyRewardPoints: progression.dailyRewardPoints,
       maxLevel: progression.maxLevel,
     };
     const maxRankXp = getTotalXpForLevel(progression.maxLevel, progressionConfig);

@@ -9,6 +9,9 @@ export class Preferences extends AbstractBaseEntity {
   @Column({ type: 'varchar', default: 'light' })
   theme!: string;
 
+  @Column({ type: 'boolean', default: false })
+  hasCompletedLobbyTour = false;
+
   @Column({ type: 'varchar', nullable: true })
   fcmToken?: string;
 }

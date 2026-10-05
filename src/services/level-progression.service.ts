@@ -5,20 +5,12 @@ import { LevelProgressionConfig } from '../models/level-progression-config.entit
 export interface ILevelProgressionConfig {
   baseXpPerLevel: number;
   exponentialMultiplier: number;
-  pointsPerMatch: number;
-  rankedPointsPerMatch: number;
-  pointsPerLevelUp: number;
-  dailyRewardPoints: number;
   maxLevel: number;
 }
 
 export const DEFAULT_LEVEL_PROGRESSION_CONFIG: ILevelProgressionConfig = {
   baseXpPerLevel: 10,
   exponentialMultiplier: 1.0493,
-  pointsPerMatch: 10,
-  rankedPointsPerMatch: 10,
-  pointsPerLevelUp: 10,
-  dailyRewardPoints: 10,
   maxLevel: 100
 };
 
@@ -45,25 +37,6 @@ export class LevelProgressionService {
     }
 
     const baseXpPerLevel = this.validateInteger(input.baseXpPerLevel, record.baseXpPerLevel, 'baseXpPerLevel', 1);
-    const pointsPerMatch = this.validateInteger(input.pointsPerMatch, record.pointsPerMatch, 'pointsPerMatch', 0);
-    const rankedPointsPerMatch = this.validateInteger(
-      input.rankedPointsPerMatch,
-      record.rankedPointsPerMatch,
-      'rankedPointsPerMatch',
-      0
-    );
-    const pointsPerLevelUp = this.validateInteger(
-      input.pointsPerLevelUp,
-      record.pointsPerLevelUp,
-      'pointsPerLevelUp',
-      0
-    );
-    const dailyRewardPoints = this.validateInteger(
-      input.dailyRewardPoints,
-      record.dailyRewardPoints,
-      'dailyRewardPoints',
-      0
-    );
     const exponentialMultiplier = input.exponentialMultiplier === undefined
       ? record.exponentialMultiplier
       : Number(input.exponentialMultiplier);
@@ -73,10 +46,6 @@ export class LevelProgressionService {
     }
 
     record.baseXpPerLevel = baseXpPerLevel;
-    record.pointsPerMatch = pointsPerMatch;
-    record.rankedPointsPerMatch = rankedPointsPerMatch;
-    record.pointsPerLevelUp = pointsPerLevelUp;
-    record.dailyRewardPoints = dailyRewardPoints;
     record.exponentialMultiplier = exponentialMultiplier;
     record.maxLevel = DEFAULT_LEVEL_PROGRESSION_CONFIG.maxLevel;
 
@@ -99,10 +68,6 @@ export class LevelProgressionService {
     return {
       baseXpPerLevel: record.baseXpPerLevel,
       exponentialMultiplier: Number(record.exponentialMultiplier),
-      pointsPerMatch: record.pointsPerMatch,
-      rankedPointsPerMatch: record.rankedPointsPerMatch,
-      pointsPerLevelUp: record.pointsPerLevelUp,
-      dailyRewardPoints: record.dailyRewardPoints,
       maxLevel: record.maxLevel
     };
   }

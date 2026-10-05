@@ -18,18 +18,23 @@ describe('Persistent rank tiers', () => {
     const ranks = await service.getRanks();
     const progression = await container.resolve(LevelProgressionService).getConfiguration();
     const maxLevelXp = getTotalXpForLevel(progression.maxLevel, progression);
-    assert.equal(ranks.length, 10);
+    assert.equal(ranks.length, 20);
     assert.deepEqual(
       ranks.map((rank) => rank.level),
-      Array.from({ length: 10 }, (_, index) => index + 1),
+      Array.from({ length: 20 }, (_, index) => index + 1),
     );
     assert.equal(ranks[0].key, 'NOVATO');
+    assert.equal(ranks[0].emoji, '🔰');
     assert.equal(ranks[0].configuration.es.name, 'Novato');
     assert.ok(ranks[0].configuration.es.description);
     assert.ok(ranks[0].configuration.es.motto);
     assert.equal(ranks[0].configuration.en.name, 'Novice');
     assert.ok(ranks[0].configuration.en.description);
     assert.ok(ranks[0].configuration.en.motto);
+    assert.equal(ranks[2].configuration.es.name, 'Recluta');
+    assert.equal(ranks[3].key, 'SOLDADO');
+    assert.equal(ranks[10].key, 'MITICO');
+    assert.equal(ranks.at(-1)?.key, 'LEGENDARIO');
     assert.equal(ranks[0].minXp, 0);
     assert.equal(ranks.at(-1)?.maxXp, maxLevelXp);
     assert.equal(ranks[1].minXp, ranks[0].maxXp);

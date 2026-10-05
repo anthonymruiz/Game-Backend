@@ -10,54 +10,37 @@ export interface ISystemSettings {
   announcementBanner?: string;
 }
 
+export const DEFAULT_SYSTEM_SETTINGS: ISystemSettings = {
+  maintenanceMode: false,
+  turnTimeLimitSeconds: 30,
+  maxStrikesBeforeKick: 3,
+  allowNewRegistrations: true,
+  announcementBanner: ''
+};
+
 @singleton()
 export class SystemSettingsService {
-  private defaultSettings: ISystemSettings = {
-    maintenanceMode: false,
-    turnTimeLimitSeconds: 30,
-    maxStrikesBeforeKick: 3,
-    allowNewRegistrations: true,
-    announcementBanner: ''
-  };
-
   private get repository() {
     return AppDataSource.getRepository(SystemSettings);
   }
 
   public async getSettings(): Promise<ISystemSettings> {
-    try {
-      let record = await this.repository.findOne({ where: {}, order: { createdAt: 'ASC' } });
-      if (!record) {
-        record = this.repository.create(this.defaultSettings);
-        record = await this.repository.save(record);
-      }
-      return {
-        maintenanceMode: !!record.maintenanceMode,
-        turnTimeLimitSeconds: record.turnTimeLimitSeconds || 30,
-        maxStrikesBeforeKick: record.maxStrikesBeforeKick || 3,
-        allowNewRegistrations: record.allowNewRegistrations !== false,
-        announcementBanner: record.announcementBanner || ''
-      };
-    } catch {
-      return { ...this.defaultSettings };
+    let record = await this.repository.findOne({ where: {}, order: { createdAt: 'ASC' } });
+    if (!record) {
+      record = await this.repository.save(this.repository.create(DEFAULT_SYSTEM_SETTINGS));
     }
+    return this.toSettings(record);
   }
 
   public async updateSettings(partial: Partial<ISystemSettings>): Promise<ISystemSettings> {
-    let record: SystemSettings | null = null;
-    try {
-      record = await this.repository.findOne({ where: {}, order: { createdAt: 'ASC' } });
-    } catch (err) {
-      console.error('[SystemSettingsService] Error finding settings record:', err);
-    }
-
+    let record = await this.repository.findOne({ where: {}, order: { createdAt: 'ASC' } });
     if (!record) {
-      record = this.repository.create(this.defaultSettings);
+      record = this.repository.create(DEFAULT_SYSTEM_SETTINGS);
     }
 
     if (partial.turnTimeLimitSeconds !== undefined) {
       const val = Number(partial.turnTimeLimitSeconds);
-      if (isNaN(val) || val < 10 || val > 60) {
+      if (!Number.isInteger(val) || val < 10 || val > 60) {
         throw new Error('turnTimeLimitSeconds must be between 10 and 60 seconds.');
       }
       record.turnTimeLimitSeconds = val;
@@ -65,7 +48,7 @@ export class SystemSettingsService {
 
     if (partial.maxStrikesBeforeKick !== undefined) {
       const val = Number(partial.maxStrikesBeforeKick);
-      if (isNaN(val) || val < 1) {
+      if (!Number.isInteger(val) || val < 1) {
         throw new Error('maxStrikesBeforeKick must be at least 1.');
       }
       record.maxStrikesBeforeKick = val;
@@ -84,7 +67,17 @@ export class SystemSettingsService {
     }
 
     record = await this.repository.save(record);
+    return this.toSettings(record);
+  }
 
+  private toSettings(record: SystemSettings): ISystemSettings {
+    if (!Number.isInteger(record.turnTimeLimitSeconds) ||
+        record.turnTimeLimitSeconds < 10 || record.turnTimeLimitSeconds > 60) {
+      throw new Error('Stored turnTimeLimitSeconds is invalid.');
+    }
+    if (!Number.isInteger(record.maxStrikesBeforeKick) || record.maxStrikesBeforeKick < 1) {
+      throw new Error('Stored maxStrikesBeforeKick is invalid.');
+    }
     return {
       maintenanceMode: !!record.maintenanceMode,
       turnTimeLimitSeconds: record.turnTimeLimitSeconds,

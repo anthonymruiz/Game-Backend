@@ -4,6 +4,7 @@ import { setupTestEnvironment, teardownTestEnvironment } from './test-helper.js'
 import { container } from 'tsyringe';
 import { RoomService } from '../services/room.service.js';
 import { GameInstance } from '../game/engine/game-instance.js';
+import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () => {
   let roomService: RoomService;
@@ -22,11 +23,17 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     roomService.joinRoom(room.id, 'p2', 'Player2', false);
     roomService.joinRoom(room.id, 'p3', 'Player3', true);
     roomService.joinRoom(room.id, 'p4', 'Player4', true);
+    Object.assign(room.players[0], {
+      pawnColor: '#92400E',
+      pawnColorItemId: 'wood-color',
+      skinItemId: 'non-tintable-skin',
+      skinAllowsColor: false
+    });
 
     assert.equal(room.players.length, 4);
     assert.equal(room.maxPlayers, 4);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
     assert.equal(game.board.players.size, 4);
@@ -44,6 +51,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     // Each player in 4-FFA starts with 5 walls
     assert.equal(p1?.wallsLeft, 5);
     assert.equal(p2?.wallsLeft, 5);
+    assert.equal(p1?.pawnColor, '#92400E');
+    assert.equal(game.board.toDTO('p1').players.p1.pawnColor, '#92400E');
 
     game.destroy();
   });
@@ -60,7 +69,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(room.players[2].team, 1);
     assert.equal(room.players[3].team, 2);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
     assert.equal(game.state, 'playing');
     game.destroy();
@@ -76,7 +85,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     let finishedEvent: { winner: string | null; abandoned: boolean } | null = null;
     const game = new GameInstance('bot_match_abandon', '4-FFA', players, (event, data) => {
       if (event === 'gameFinished') finishedEvent = data;
-    });
+    }, GAME_INSTANCE_TEST_OPTIONS);
 
     game.start();
     assert.equal(game.hasBots(), true);
@@ -91,11 +100,11 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const room = roomService.createRoom('p1', 'Player1', true, 'Wall Room', '1v1');
     roomService.joinRoom(room.id, 'p2', 'Player2', true);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
-    assert.equal(game.hasSpawnedExchangeItem, false);
-    assert.equal(game.board.boosts.some(boost => boost.type === 'exchange_item'), false);
+    assert.equal(game.hasSpawnedExchangeItem, true);
+    assert.equal(game.board.boosts.some(boost => boost.type === 'exchange_item'), true);
 
     // Player 1 places a horizontal wall at (2, 2)
     const wall1Success = game.executeWall('p1', 'wall1', 2, 2, true);
@@ -108,11 +117,52 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
+  it('Should automatically exchange positions after collecting the boost in 1v1 and VS AI', () => {
+    for (const mode of ['1v1', 'vs_ai'] as const) {
+      const opponentId = mode === 'vs_ai' ? 'bot_opponent' : `opponent_${mode}`;
+      const room = roomService.createRoom(`human_${mode}`, 'Human', false, `Exchange ${mode}`, mode);
+      roomService.joinRoom(room.id, opponentId, mode === 'vs_ai' ? 'BOT' : 'Opponent', mode === 'vs_ai');
+
+      const emittedEvents: string[] = [];
+      let exchangedEvent: any;
+      const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
+        emittedEvents.push(event);
+        if (event === 'playersExchanged') exchangedEvent = data;
+      }, GAME_INSTANCE_TEST_OPTIONS);
+      game.start();
+
+      assert.equal(game.hasSpawnedExchangeItem, true);
+      const exchangeBoost = game.board.boosts.find(boost => boost.type === 'exchange_item');
+      assert.ok(exchangeBoost);
+
+      const human = game.board.players.get(`human_${mode}`)!;
+      const opponent = game.board.players.get(opponentId)!;
+      const opponentPosition = { x: opponent.x, y: opponent.y };
+      const moveToBoost = game.board.getValidMoves(human.id)[0]!;
+      game.board.grid[exchangeBoost.y][exchangeBoost.x].hasBoost = null;
+      exchangeBoost.x = moveToBoost.x;
+      exchangeBoost.y = moveToBoost.y;
+      game.board.grid[moveToBoost.y][moveToBoost.x].hasBoost = exchangeBoost.id;
+
+      assert.equal(game.executeMove(human.id, moveToBoost.x, moveToBoost.y), true);
+      assert.deepEqual({ x: human.x, y: human.y }, opponentPosition);
+      assert.deepEqual({ x: opponent.x, y: opponent.y }, { x: moveToBoost.x, y: moveToBoost.y });
+      assert.equal(human.hasExchangeItem, false);
+      assert.equal(game.getPendingBoostDecision(), null);
+      assert.equal(exchangedEvent.exchangerId, human.id);
+      assert.equal(exchangedEvent.targetId, opponent.id);
+      assert.ok(emittedEvents.includes('playersExchanged'));
+      assert.equal(emittedEvents.includes('boostDecisionStarted'), false);
+      assert.equal(emittedEvents.includes('boostDecisionResolved'), false);
+      game.destroy();
+    }
+  });
+
   it('Should allow spawning random extra wall boosts on the board', () => {
     const room = roomService.createRoom('p1', 'Player1', true, 'Boost Room', '1v1');
     roomService.joinRoom(room.id, 'p2', 'Player2', true);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
     game.board.spawnRandomBoost();
@@ -127,7 +177,10 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     roomService.joinRoom(room.id, 'p3', 'Player3', true);
     roomService.joinRoom(room.id, 'p4', 'Player4', true);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => {});
+    let killEvent: any;
+    const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
+      if (event === 'playerKilled') killEvent = data;
+    }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
     assert.equal(game.hasSpawnedKillerItem, true);
@@ -144,6 +197,10 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(killSuccess, true);
     assert.equal(p2.isDead, true);
     assert.equal(p1.hasKillerItem, false);
+    assert.equal(killEvent.killerId, 'p1');
+    assert.equal(killEvent.killerUsername, 'Player1');
+    assert.equal(killEvent.targetId, 'p2');
+    assert.equal(killEvent.targetUsername, 'Player2');
 
     // Player 2 cannot take turn or execute moves/walls
     assert.equal(game.executeMove('p2', 5, 1), false);
@@ -166,13 +223,22 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
   });
 
   it('Should spawn one exchange item in multiplayer modes and freeze the turn until the selected swap resolves', () => {
-    const room = roomService.createRoom('swap1', 'Player1', false, 'Swap 2v2', '2v2');
+    const room = roomService.createRoom('swap1', 'Player1', false, 'Swap 4-FFA', '4-FFA');
     roomService.joinRoom(room.id, 'swap2', 'Player2', false);
     roomService.joinRoom(room.id, 'swap3', 'Player3', false);
     roomService.joinRoom(room.id, 'swap4', 'Player4', false);
+    room.players[0].pawnColor = '#92400E';
+    room.players[0].pawnColorItemId = 'wood-color';
+    room.players[2].id = 'bot_yellow';
+    room.players[2].username = 'BOT - Amarillo';
+    room.players[2].color = '#FFCC00';
 
     const emittedEvents: string[] = [];
-    const game = new GameInstance(room.id, room.mode, room.players, event => emittedEvents.push(event));
+    let exchangedEvent: any;
+    const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
+      emittedEvents.push(event);
+      if (event === 'playersExchanged') exchangedEvent = data;
+    }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
     assert.equal(game.hasSpawnedExchangeItem, true);
@@ -181,7 +247,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       game.board.boosts.filter(boost => boost.type === 'exchange_item')[0]?.y === 5, false);
 
     const exchanger = game.board.players.get('swap1')!;
-    const target = game.board.players.get('swap3')!;
+    const target = game.board.players.get('bot_yellow')!;
     const exchangeBoost = game.board.boosts.find(boost => boost.type === 'exchange_item')!;
     const exchangeBoostCell = game.board.grid[exchangeBoost.y][exchangeBoost.x];
     exchangeBoostCell.hasBoost = null;
@@ -202,15 +268,30 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(game.executeExchangeItem('swap1', 'missing-player'), false);
     assert.equal(exchanger.hasExchangeItem, true);
 
-    assert.equal(game.executeExchangeItem('swap1', 'swap3'), true);
+    assert.equal(game.executeExchangeItem('swap1', 'bot_yellow'), true);
     assert.deepEqual({ x: exchanger.x, y: exchanger.y }, targetPosition);
     assert.deepEqual({ x: target.x, y: target.y }, exchangerPosition);
     assert.equal(game.board.grid[targetPosition.y][targetPosition.x].hasPlayer, exchanger.id);
     assert.equal(game.board.grid[exchangerPosition.y][exchangerPosition.x].hasPlayer, target.id);
+    assert.equal(exchanger.isDead, false);
+    assert.equal(target.isDead, false);
+    assert.equal(game.state, 'playing');
+    assert.equal(exchanger.pawnColor, '#92400E');
+    assert.equal(exchangedEvent.exchangerId, 'swap1');
+    assert.equal(exchangedEvent.exchangerUsername, 'Player1');
+    assert.equal(exchangedEvent.targetId, 'bot_yellow');
+    assert.equal(exchangedEvent.targetUsername, 'BOT - Amarillo');
+    assert.equal(exchangedEvent.board.players.swap1.pawnColor, '#92400E');
+    assert.equal(exchangedEvent.board.players.swap1.color, exchanger.color);
+    assert.equal(exchangedEvent.board.players.swap1.x, targetPosition.x);
+    assert.equal(exchangedEvent.board.players.swap1.y, targetPosition.y);
+    assert.equal(exchangedEvent.board.players.bot_yellow.color, '#FFCC00');
+    assert.equal(exchangedEvent.board.players.bot_yellow.pawnColor, undefined);
     assert.equal(exchanger.hasExchangeItem, false);
     assert.notEqual(game.getCurrentPlayer(), 'swap1');
     assert.ok(emittedEvents.includes('boostDecisionStarted'));
     assert.ok(emittedEvents.includes('playersExchanged'));
+    assert.equal(emittedEvents.includes('playerKilled'), false);
     game.destroy();
   });
 
@@ -223,7 +304,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const expiredTypes: string[] = [];
     const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
       if (event === 'boostDecisionExpired') expiredTypes.push(data.type);
-    });
+    }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
     const player = game.board.players.get('timeout1')!;
     player.hasExchangeItem = true;

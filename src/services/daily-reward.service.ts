@@ -1,7 +1,7 @@
 import { injectable } from 'tsyringe';
 import { AppDataSource } from '../config/database.config.js';
 import { DailyRewardClaim } from '../models/daily-reward-claim.entity.js';
-import { LevelProgressionConfig } from '../models/level-progression-config.entity.js';
+import { RewardsSettings } from '../models/rewards-settings.entity.js';
 import { Stats } from '../models/stats.entity.js';
 import { User } from '../models/user.entity.js';
 
@@ -19,14 +19,14 @@ export class DailyRewardService {
   public async getStatus(userId: string): Promise<IDailyRewardStatus> {
     const [user, config, claimedToday] = await Promise.all([
       AppDataSource.getRepository(User).findOne({ where: { id: userId } }),
-      AppDataSource.getRepository(LevelProgressionConfig).findOne({ where: { singletonKey: 1 } }),
+      AppDataSource.getRepository(RewardsSettings).findOne({ where: { singletonKey: 1 } }),
       AppDataSource.getRepository(DailyRewardClaim).exists({
         where: { userId, claimDate: this.getUtcDate() }
       })
     ]);
     if (!user) throw new Error('USER_NOT_FOUND');
     if (user.provider === 'guest' || user.id.startsWith('guest_')) throw new Error('DAILY_REWARD_NOT_ELIGIBLE');
-    if (!config) throw new Error('PROGRESSION_CONFIG_NOT_FOUND');
+    if (!config) throw new Error('REWARDS_CONFIGURATION_NOT_FOUND');
 
     return {
       points: config.dailyRewardPoints,
@@ -44,10 +44,10 @@ export class DailyRewardService {
       if (user.provider === 'guest' || user.id.startsWith('guest_')) throw new Error('DAILY_REWARD_NOT_ELIGIBLE');
 
       const today = this.getUtcDate();
-      const config = await manager.findOne(LevelProgressionConfig, {
+      const config = await manager.findOne(RewardsSettings, {
         where: { singletonKey: 1 }
       });
-      if (!config) throw new Error('PROGRESSION_CONFIG_NOT_FOUND');
+      if (!config) throw new Error('REWARDS_CONFIGURATION_NOT_FOUND');
 
       try {
         await manager.insert(DailyRewardClaim, { userId, claimDate: today });

@@ -4,6 +4,7 @@ import { GameInstance } from '../game/engine/game-instance.js';
 import { IRoomPlayer } from '../services/room.service.js';
 import { BOT_EMOJIS, BOT_REACTION_TIMINGS } from '../game/engine/bot-reaction.manager.js';
 import { GameMode } from '../services/matchmaking.service.js';
+import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 async function captureBotReactions(
   action: (game: GameInstance) => void,
@@ -17,7 +18,7 @@ async function captureBotReactions(
   const reactions: { sender: string; emoteId: string }[] = [];
   const game = new GameInstance(`test_reactions_${Date.now()}`, mode, players, (event, data) => {
     if (event === 'emote') reactions.push(data);
-  });
+  }, GAME_INSTANCE_TEST_OPTIONS);
   const originalRandom = Math.random;
   game.state = 'playing';
   Math.random = () => randomValue;
@@ -51,7 +52,7 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
       { id: 'bot_red', username: 'BOT - Rojo', isGuest: true, color: '#007AFF' }
     ];
 
-    const game = new GameInstance('test_1v1_reactions', '1v1', players, () => {});
+    const game = new GameInstance('test_1v1_reactions', '1v1', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     const p1 = game.board.players.get('user_1')!;
     const bot = game.board.players.get('bot_red')!;
 
@@ -71,7 +72,7 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
       { id: 'bot_blue', username: 'BOT - Azul', isGuest: true, color: '#007AFF', team: 2 }
     ];
 
-    const game = new GameInstance('test_2v2_reactions', '2v2', players, () => {});
+    const game = new GameInstance('test_2v2_reactions', '2v2', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     const p1 = game.board.players.get('user_1')!;
     const botRed = game.board.players.get('bot_red')!;
     const p2 = game.board.players.get('user_2')!;
@@ -92,7 +93,7 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
 
   it('4-FFA and 6-FFA treat every other player, including bots, as an enemy', () => {
     for (const [mode, count] of [['4-FFA', 4], ['6-FFA', 6]] as const) {
-      const game = new GameInstance(`test_${mode}_reactions`, mode, createFfaPlayers(count), () => {});
+      const game = new GameInstance(`test_${mode}_reactions`, mode, createFfaPlayers(count), () => {}, GAME_INSTANCE_TEST_OPTIONS);
       const bot = game.board.players.get('bot_1')!;
       const human = game.board.players.get('user_1')!;
       const otherBot = game.board.players.get('bot_2')!;

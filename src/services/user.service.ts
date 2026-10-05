@@ -6,6 +6,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { isValidUsernameFormat, isValidEmailFormat } from '../utils/regex.util.js';
 import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
 import { RankTierService } from './rank-tier.service.js';
+import { getUtcWeekRange } from '../utils/utc-week.util.js';
 
 @injectable()
 export class UserService {
@@ -125,13 +126,13 @@ export class UserService {
   public async getLeaderboard(
     limit: number = 100,
     rankKey?: string,
-    period: 'today' | 'history' = 'history'
+    period: 'today' | 'history' | 'weekly' = 'history'
   ) {
     const rankTierService = container.resolve(RankTierService);
     const ranks = await rankTierService.getRanks();
     const selectedRankIndex = rankKey ? ranks.findIndex(rank => rank.key === rankKey) : -1;
     if (rankKey && selectedRankIndex < 0) throw new Error('INVALID_RANK_KEY');
-    if (period !== 'today' && period !== 'history') throw new Error('INVALID_LEADERBOARD_PERIOD');
+    if (period !== 'today' && period !== 'history' && period !== 'weekly') throw new Error('INVALID_LEADERBOARD_PERIOD');
     const selectedRank = selectedRankIndex >= 0 ? ranks[selectedRankIndex] : undefined;
     const nextRank = selectedRankIndex >= 0 ? ranks[selectedRankIndex + 1] : undefined;
     let playedAfter: Date | undefined;
@@ -140,6 +141,8 @@ export class UserService {
       const now = new Date();
       playedAfter = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       playedBefore = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    } else if (period === 'weekly') {
+      ({ start: playedAfter, end: playedBefore } = getUtcWeekRange(new Date()));
     }
     const users = await this.userRepository.getTopPlayersByWins(
       limit,

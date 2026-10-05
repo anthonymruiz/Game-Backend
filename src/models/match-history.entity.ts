@@ -7,6 +7,8 @@ export class MatchHistory extends AbstractBaseEntity {
   @ManyToOne(() => User, (user) => user.matchHistory, { onDelete: 'CASCADE' })
   user!: any;
 
+  opponent?: User;
+
   @Column({ type: 'varchar' })
   userId!: string;
 

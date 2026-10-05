@@ -22,6 +22,10 @@ export interface ITranslationKeys {
   STORE_ITEM_GIFTED_MSG: string;
   POINTS_GIFTED_TITLE: string;
   POINTS_GIFTED_MSG: string;
+  WEEKLY_REWARD_TITLE: string;
+  WEEKLY_REWARD_MSG: string;
+  WEEKLY_FIRST_REWARD_MSG: string;
+  WEEKLY_FIRST_REWARD_NO_GIFT_MSG: string;
 }
 
 export type ITranslations = Record<SupportedLanguage, ITranslationKeys>;

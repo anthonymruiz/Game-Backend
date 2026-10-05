@@ -12,17 +12,23 @@ import { UserRole } from '../models/user-role.enum.js';
 import { SocketManager } from '../socket/socket.manager.js';
 import { NotificationService } from './notification.service.js';
 import { ILevelProgressionConfig, LevelProgressionService } from './level-progression.service.js';
+import { IRewardsSettings, RewardsSettingsService } from './rewards-settings.service.js';
+import { AppDataSource } from '../config/database.config.js';
+import { PointPackagePayment, PointPackagePaymentStatus } from '../models/point-package-payment.entity.js';
+import { GameService } from './game.service.js';
 
 @injectable()
 export class AdminService {
   private userRepository: UserRepository;
   private matchRepository: MatchHistoryRepository;
   private reportRepository: ReportRepository;
+  private gameService: GameService;
 
   constructor() {
     this.userRepository = container.resolve(UserRepository);
     this.matchRepository = container.resolve(MatchHistoryRepository);
     this.reportRepository = container.resolve(ReportRepository);
+    this.gameService = container.resolve(GameService);
   }
 
   public async getMetrics() {
@@ -48,6 +54,43 @@ export class AdminService {
     return this.userRepository.getPaginatedUsers(currentUserRole, filterRole, filterPresence, options);
   }
 
+  public async getTransactions() {
+    const payments = await AppDataSource.getRepository(PointPackagePayment).find({
+      relations: { user: true },
+      order: { createdAt: 'DESC' },
+      take: 100
+    });
+
+    return payments.map(payment => ({
+      id: payment.id,
+      code: `TXN-${payment.id.slice(0, 8).toUpperCase()}`,
+      user: {
+        id: payment.user.id,
+        username: payment.user.username,
+        avatarUrl: payment.user.avatarUrl || null
+      },
+      itemName: payment.packageName,
+      category: 'GEM_PACK',
+      type: 'GEM_RECHARGE',
+      pointsCount: payment.points,
+      paymentMethod: 'STRIPE',
+      status: this.getTransactionStatus(payment.status),
+      createdAt: payment.createdAt
+    }));
+  }
+
+  private getTransactionStatus(status: PointPackagePaymentStatus): string {
+    switch (status) {
+      case PointPackagePaymentStatus.PAID: return 'COMPLETED';
+      case PointPackagePaymentStatus.PENDING: return 'PENDING';
+      case PointPackagePaymentStatus.EXPIRED:
+      case PointPackagePaymentStatus.FAILED:
+        return 'FAILED';
+      default:
+        throw new Error(`Unsupported point package payment status: ${status}`);
+    }
+  }
+
   public async getReports(
     statusFilter?: string,
     categoryFilter?: string,
@@ -67,6 +110,31 @@ export class AdminService {
     return this.matchRepository.getModeDistribution();
   }
 
+  public async getMatchSummary(): Promise<{
+    totalMatches: number;
+    activeMatches: number;
+    matchesByMode: { mode: string; count: number }[];
+    archivedMatchesByMode: { mode: string; count: number }[];
+  }> {
+    const [storedMatchCount, storedMatchesByMode] = await Promise.all([
+      this.matchRepository.getTotalDistinctMatchCount(),
+      this.matchRepository.getModeDistribution()
+    ]);
+    const activeMatchesByMode = this.gameService.getActiveGameCountsByMode();
+    const matchesByModeCounts = new Map(storedMatchesByMode.map(({ mode, count }) => [mode, count]));
+    for (const { mode, count } of activeMatchesByMode) {
+      matchesByModeCounts.set(mode, (matchesByModeCounts.get(mode) ?? 0) + count);
+    }
+    const activeMatches = activeMatchesByMode.reduce((total, { count }) => total + count, 0);
+
+    return {
+      totalMatches: storedMatchCount + activeMatches,
+      activeMatches,
+      matchesByMode: [...matchesByModeCounts].map(([mode, count]) => ({ mode, count })),
+      archivedMatchesByMode: storedMatchesByMode
+    };
+  }
+
   public async getLevelProgressionConfig(): Promise<ILevelProgressionConfig> {
     return container.resolve(LevelProgressionService).getConfiguration();
   }
@@ -75,6 +143,14 @@ export class AdminService {
     config: Partial<ILevelProgressionConfig>
   ): Promise<ILevelProgressionConfig> {
     return container.resolve(LevelProgressionService).updateConfiguration(config);
+  }
+
+  public async getRewardsSettings(): Promise<IRewardsSettings> {
+    return container.resolve(RewardsSettingsService).getConfiguration();
+  }
+
+  public async updateRewardsSettings(config: Partial<IRewardsSettings>): Promise<IRewardsSettings> {
+    return container.resolve(RewardsSettingsService).updateConfiguration(config);
   }
 
   public async getSystemSettings(): Promise<ISystemSettings> {

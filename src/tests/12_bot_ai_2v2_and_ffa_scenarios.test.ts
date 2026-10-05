@@ -6,6 +6,7 @@ import { Board } from '../game/engine/board.js';
 import { Boost, Player, Wall } from '../game/engine/models.js';
 import { GameInstance } from '../game/engine/game-instance.js';
 import { container } from 'tsyringe';
+import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
   let roomService: RoomService;
@@ -152,7 +153,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
     assert.equal(room.players.length, 6);
 
-    const game = new GameInstance(room.id, room.mode, room.players, () => { });
+    const game = new GameInstance(room.id, room.mode, room.players, () => { }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
     assert.equal(game.state, 'playing');
 
