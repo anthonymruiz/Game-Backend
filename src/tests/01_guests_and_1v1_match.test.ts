@@ -57,6 +57,42 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.notEqual(updatedRoom.players[1].color, updatedRoom.players[0].color);
   });
 
+  it('Ranked quick-match rooms are listed and matched only within the same rank', () => {
+    const sameRankRoom = roomService.createRoom(
+      'ranked_host_a', 'RankedA', false, 'Ranked room A', '1v1',
+      false, undefined, undefined, 0, true, true, 'NOVATO'
+    );
+    const otherRankRoom = roomService.createRoom(
+      'ranked_host_b', 'RankedB', false, 'Ranked room B', '1v1',
+      false, undefined, undefined, 0, true, true, 'APRENDIZ'
+    );
+    const casualRoom = roomService.createRoom(
+      'casual_host', 'Casual', false, 'Casual room', '1v1',
+      false, undefined, undefined, 0, true
+    );
+
+    assert.ok(roomService.getPublicRooms().some(room => room.id === sameRankRoom.id));
+    assert.ok(roomService.getPublicRooms().some(room => room.id === otherRankRoom.id));
+    assert.equal(roomService.findQuickMatchRoom('1v1', true, 'NOVATO')?.id, sameRankRoom.id);
+    assert.equal(roomService.findQuickMatchRoom('1v1', true, 'LEGENDARIO'), undefined);
+    const casualMatch = roomService.findQuickMatchRoom('1v1', false);
+    assert.ok(casualMatch);
+    assert.notEqual(casualMatch.isRanked, true);
+    assert.ok(roomService.getPublicRooms().some(room => room.id === casualRoom.id));
+  });
+
+  it('Active room lookup prefers a waiting quick-match over an older custom room', () => {
+    const userId = 'user_with_multiple_waiting_rooms';
+    const customRoom = roomService.createRoom(userId, 'MultiRoomUser', false, 'Custom room', '1v1');
+    const quickMatchRoom = roomService.createRoom(
+      userId, 'MultiRoomUser', false, 'Quick match', '1v1',
+      false, undefined, undefined, 0, true
+    );
+
+    assert.notEqual(customRoom.id, quickMatchRoom.id);
+    assert.equal(roomService.findRoomByUserId(userId)?.id, quickMatchRoom.id);
+  });
+
   it('Should enforce room max capacity for 1v1 mode (reject 3rd player)', () => {
     const r = roomService.createRoom('g1', 'G1', true, 'Full Room', '1v1');
     roomService.joinRoom(r.id, 'g2', 'G2', true);

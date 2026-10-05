@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { setupTestEnvironment, teardownTestEnvironment } from './test-helper.js';
 import { RoomService } from '../services/room.service.js';
 import { Board } from '../game/engine/board.js';
-import { Player, Wall } from '../game/engine/models.js';
+import { Boost, Player, Wall } from '../game/engine/models.js';
 import { GameInstance } from '../game/engine/game-instance.js';
 import { container } from 'tsyringe';
 
@@ -78,7 +78,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     board.addPlayer(enemy2);
 
     // Simulate bot turn for bot1
-    const action = board.getBotAction('bot_team1');
+    const action = board.getBotAction('bot_team1', true);
     assert.notEqual(action, null);
 
     // If bot places a wall, verify that the wall does NOT increase the shortest path of human1 (its teammate)
@@ -89,6 +89,28 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       assert.notEqual(teammatePath.length, 0, 'Teammate must not be trapped');
       board.walls.pop();
     }
+  });
+
+  it('2v2 bots should prioritize moving over non-critical walls at the start', () => {
+    const board = new Board(11);
+    board.addPlayer(new Player('red_human', 'Red Human', false, 0, 10, 0, undefined, 6, 0, '#FF3B30', 1));
+    board.addPlayer(new Player('red_bot', 'Red Bot', true, 10, 10, 0, undefined, 6, 0, '#FF3B30', 1));
+    board.addPlayer(new Player('blue_human', 'Blue Human', false, 10, 0, 10, undefined, 6, 0, '#007AFF', 2));
+    board.addPlayer(new Player('blue_bot', 'Blue Bot', true, 0, 0, 10, undefined, 6, 0, '#007AFF', 2));
+
+    const action = board.getBotAction('blue_bot', true);
+    assert.equal(action?.type, 'move', 'An early non-critical wall should not consume the bot team wall reserve');
+  });
+
+  it('4-FFA bots should not spend walls on the opening turn around the center', () => {
+    const board = new Board(11);
+    board.addPlayer(new Player('north_bot', 'North Bot', true, 5, 0, 5, 5, 5));
+    board.addPlayer(new Player('south_bot', 'South Bot', true, 5, 10, 5, 5, 5));
+    board.addPlayer(new Player('west_bot', 'West Bot', true, 0, 5, 5, 5, 5));
+    board.addPlayer(new Player('east_bot', 'East Bot', true, 10, 5, 5, 5, 5));
+
+    const action = board.getBotAction('north_bot');
+    assert.equal(action?.type, 'move', 'Bots should advance toward the center before spending walls');
   });
 
   // 3. 4-FFA Bot AI: Multi-Enemy Target Priority
@@ -143,6 +165,68 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
 
     game.destroy();
+  });
+
+  it('Bot blocks a useful portal only when an enemy is one move away', () => {
+    const board = new Board(9);
+    const human = new Player('human', 'Human', false, 4, 6, 0, undefined, 5, 0, '#FF3B30', 1);
+    const bot = new Player('bot_defender', 'Bot', true, 0, 8, 0, undefined, 5, 0, '#007AFF', 2);
+    board.addPlayer(human);
+    board.addPlayer(bot);
+    board.boosts.push(
+      new Boost('portal_a', 'portal', 4, 5, 4, 1),
+      new Boost('portal_b', 'portal', 4, 1, 4, 5)
+    );
+
+    const normalDistance = board.getShortestPathLength(human.x, human.y, human.targetY, human.targetX, human.id);
+    const portalDistance = 1 + board.getShortestPathLength(4, 1, human.targetY, human.targetX);
+    assert.ok(portalDistance < normalDistance, 'Portal should provide a real shortcut');
+
+    const action = board.getBotAction(bot.id);
+    assert.equal(action?.type, 'wall');
+    if (action?.type === 'wall') {
+      board.walls.push(new Wall('test-portal-block', bot.id, action.x, action.y, action.isHorizontal));
+      const pathToPortal = board.findShortestPathToGoal(human.x, human.y, 5, 4);
+      assert.ok(pathToPortal.length - 1 > 1, 'Chosen wall should complicate immediate access to the portal');
+    }
+  });
+
+  it('Bot does not spend a wall to block a portal that does not benefit an enemy or a teammate', () => {
+    const board = new Board(9);
+    const human = new Player('human', 'Human', false, 4, 6, 0, undefined, 5, 0, '#FF3B30', 1);
+    const bot = new Player('bot_defender', 'Bot', true, 0, 8, 0, undefined, 0, 0, '#007AFF', 2);
+    board.addPlayer(human);
+    board.addPlayer(bot);
+    board.boosts.push(
+      new Boost('portal_a', 'portal', 4, 5, 4, 7),
+      new Boost('portal_b', 'portal', 4, 7, 4, 5)
+    );
+
+    const normalDistance = board.getShortestPathLength(human.x, human.y, human.targetY, human.targetX, human.id);
+    const portalDistance = 1 + board.getShortestPathLength(4, 7, human.targetY, human.targetX);
+    assert.ok(portalDistance >= normalDistance, 'Portal should not shorten the human route');
+    assert.equal(board.getBotAction(bot.id)?.type, 'move');
+  });
+
+  it('2v2 bot does not treat its teammate as a portal threat', () => {
+    const board = new Board(9);
+    const teammate = new Player('teammate', 'Teammate', false, 4, 6, 0, undefined, 5, 0, '#FF3B30', 1);
+    const bot = new Player('bot_teammate', 'Bot', true, 0, 6, 0, undefined, 5, 0, '#FF3B30', 1);
+    const enemy = new Player('enemy', 'Enemy', false, 8, 0, 8, undefined, 5, 0, '#007AFF', 2);
+    board.addPlayer(teammate);
+    board.addPlayer(bot);
+    board.addPlayer(enemy);
+    board.boosts.push(
+      new Boost('portal_a', 'portal', 4, 5, 4, 1),
+      new Boost('portal_b', 'portal', 4, 1, 4, 5)
+    );
+
+    const action = board.getBotAction(bot.id, true);
+    if (action?.type === 'wall') {
+      board.walls.push(new Wall('test-teammate-portal', bot.id, action.x, action.y, action.isHorizontal));
+      const pathToPortal = board.findShortestPathToGoal(teammate.x, teammate.y, 5, 4);
+      assert.equal(pathToPortal.length - 1, 1, 'Bot must not block its teammate from using the portal');
+    }
   });
 
   it('Teardown test environment', async () => {

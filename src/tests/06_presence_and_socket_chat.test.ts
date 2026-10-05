@@ -70,8 +70,6 @@ describe('06 - User Presence, Chat Translations & Match History Tests', () => {
     historyItem.result = 'win';
     historyItem.opponentUsername = 'Guest_Opponent';
     historyItem.durationSeconds = 145;
-    historyItem.eloChange = 25;
-
     await matchRepo.save(historyItem);
 
     const res = await makeRequest(app, 'GET', '/api/admin/matches?limit=10', undefined, adminToken);

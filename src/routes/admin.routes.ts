@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { AdminController } from '../controllers/admin.controller.js';
+import { StoreController } from '../controllers/store.controller.js';
 import { requireRole } from '../middlewares/role.middleware.js';
 
 export const adminRoutes: Router = Router();
@@ -9,6 +10,7 @@ const getController = () => {
   if (!_controller) _controller = container.resolve(AdminController);
   return _controller;
 };
+const getStoreController = () => container.resolve(StoreController);
 
 adminRoutes.use(requireRole(['admin', 'superadmin']));
 
@@ -18,6 +20,20 @@ adminRoutes.get('/active-users', (req, res) => getController().getActiveUsers(re
 adminRoutes.get('/reports', (req, res) => getController().getReports(req, res));
 adminRoutes.put('/reports/:id/status', (req, res) => getController().updateReportStatus(req, res));
 adminRoutes.delete('/reports/:id', (req, res) => getController().deleteReport(req, res));
+adminRoutes.get('/matches/mode-distribution', (req, res) => getController().getMatchModeDistribution(req, res));
+adminRoutes.get('/level-progression', (req, res) => getController().getLevelProgressionConfig(req, res));
+adminRoutes.put('/level-progression', (req, res) => getController().updateLevelProgressionConfig(req, res));
+adminRoutes.get('/ranks', (req, res) => getController().getRankTiers(req, res));
+adminRoutes.put('/ranks', (req, res) => getController().replaceRankTiers(req, res));
+adminRoutes.get('/store/point-packages', (req, res) => getController().getPointPackages(req, res));
+adminRoutes.put('/store/point-packages', (req, res) => getController().updatePointPackages(req, res));
+adminRoutes.get('/store/users/search', (req, res) => getStoreController().searchGiftRecipients(req, res));
+adminRoutes.get('/store/items', (req, res) => getStoreController().getAdminItems(req, res));
+adminRoutes.post('/store/items', (req, res) => getStoreController().createItem(req, res));
+adminRoutes.put('/store/items/:id', (req, res) => getStoreController().updateItem(req, res));
+adminRoutes.patch('/store/items/:id/status', (req, res) => getStoreController().updateItemStatus(req, res));
+adminRoutes.post('/store/items/:id/gift', (req, res) => getStoreController().giftItem(req, res));
+adminRoutes.post('/store/point-packages/:id/gift', requireRole(['superadmin']), (req, res) => getStoreController().giftPointPackage(req, res));
 adminRoutes.get('/matches', (req, res) => getController().getMatches(req, res));
 adminRoutes.get('/settings', (req, res) => getController().getSettings(req, res));
 adminRoutes.put('/settings', (req, res) => getController().updateSettings(req, res));

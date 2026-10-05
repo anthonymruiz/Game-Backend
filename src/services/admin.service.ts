@@ -11,6 +11,7 @@ import { IPaginatedResult, IPaginationOptions } from '../utils/pagination.util.j
 import { UserRole } from '../models/user-role.enum.js';
 import { SocketManager } from '../socket/socket.manager.js';
 import { NotificationService } from './notification.service.js';
+import { ILevelProgressionConfig, LevelProgressionService } from './level-progression.service.js';
 
 @injectable()
 export class AdminService {
@@ -60,6 +61,20 @@ export class AdminService {
     options?: IPaginationOptions
   ): Promise<IPaginatedResult<MatchHistory>> {
     return this.matchRepository.getPaginatedMatches(modeFilter, options);
+  }
+
+  public async getMatchModeDistribution(): Promise<{ mode: string; count: number }[]> {
+    return this.matchRepository.getModeDistribution();
+  }
+
+  public async getLevelProgressionConfig(): Promise<ILevelProgressionConfig> {
+    return container.resolve(LevelProgressionService).getConfiguration();
+  }
+
+  public async updateLevelProgressionConfig(
+    config: Partial<ILevelProgressionConfig>
+  ): Promise<ILevelProgressionConfig> {
+    return container.resolve(LevelProgressionService).updateConfiguration(config);
   }
 
   public async getSystemSettings(): Promise<ISystemSettings> {

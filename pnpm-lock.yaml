@@ -217,6 +217,9 @@ importers:
       socket.io:
         specifier: ^4.8.4
         version: 4.8.4
+      stripe:
+        specifier: ^23.0.0
+        version: 23.0.0(@types/node@26.6.3)
       swagger-jsdoc:
         specifier: ^6.3.0
         version: 6.3.0(openapi-types@12.1.3)
@@ -2211,6 +2214,15 @@ packages:
   strip-bom@3.0.0:
     resolution: {integrity: sha512-vavAMRXOgBVNF6nyEEmL3DBK19iRpDcoIwW+swQ+CbGiu7lju6t+JklA1MHweoWtadgt4ISVUsXLyDq34ddcwA==}
     engines: {node: '>=4'}
+
+  stripe@23.0.0:
+    resolution: {integrity: sha512-MDE2A5ZVVluYURORaZEVghSmnLJc3w6aHAlZSxDQMsOjOb3V0O6ro/CiaeFlJS4N7uIVmsg98ocRsPmUK6YfyA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@types/node': '>=20'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
 
   strnum@2.4.2:
     resolution: {integrity: sha512-rDG3Ah4TV0k1hWvLSzkZtMmLN9+eS+h3knq4MP6A42Y3Yh5qGNnOUs1jJkoSr8FG5dsL28c7KgkIBzSEykqtuw==}
@@ -4543,6 +4555,10 @@ snapshots:
       ansi-regex: 6.4.0
 
   strip-bom@3.0.0: {}
+
+  stripe@23.0.0(@types/node@26.6.3):
+    optionalDependencies:
+      '@types/node': 26.6.3
 
   strnum@2.4.2:
     dependencies:

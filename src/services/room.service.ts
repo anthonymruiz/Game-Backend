@@ -17,6 +17,16 @@ export interface IRoomPlayer {
   username: string;
   isGuest: boolean;
   color: string;
+  pawnColor?: string;
+  pawnColorItemId?: string;
+  skinItemId?: string;
+  skinIcon?: string;
+  skinName?: { en: string; es: string };
+  skinAllowsColor?: boolean;
+  movementTrailId?: string;
+  movementTrailIcon?: string;
+  wallEffectId?: string;
+  wallEffectIcon?: string;
   team?: number;
   avatarUrl?: string;
   provider?: string;
@@ -30,6 +40,8 @@ export interface IRoom {
   mode: GameMode;
   isPrivate: boolean;
   isQuickMatch?: boolean;
+  isRanked?: boolean;
+  rankKey?: string;
   hostId: string;
   players: IRoomPlayer[];
   maxPlayers: number;
@@ -70,7 +82,9 @@ export class RoomService {
     avatarUrl?: string,
     provider?: string,
     wins: number = 0,
-    isQuickMatch: boolean = false
+    isQuickMatch: boolean = false,
+    isRanked: boolean = false,
+    rankKey?: string
   ): IRoom {
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const code = this.generateRoomCode();
@@ -95,6 +109,8 @@ export class RoomService {
       mode,
       isPrivate,
       isQuickMatch,
+      isRanked,
+      rankKey,
       hostId,
       players: [hostPlayer],
       maxPlayers,
@@ -328,6 +344,14 @@ export class RoomService {
     return this.rooms.get(roomId) || null;
   }
 
+  public findQuickMatchRoom(mode: GameMode, isRanked: boolean, rankKey?: string): IRoom | undefined {
+    return this.getPublicRooms().find(room =>
+      room.mode === mode &&
+      !!room.isRanked === isRanked &&
+      (!isRanked || (!!rankKey && room.rankKey === rankKey))
+    );
+  }
+
   public joinRoom(
     roomId: string,
     userId: string,
@@ -430,6 +454,33 @@ export class RoomService {
     return room;
   }
 
+  public setPlayerCosmetic(roomId: string, userId: string, category: string, itemId: string | null, value?: string, allowColor = false, name?: { en: string; es: string }): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.status !== RoomStatus.WAITING) throw new Error('Cosmetics can only be changed before the game starts');
+    const player = room.players.find(p => p.id === userId);
+    if (!player) throw new Error('Player not in room');
+
+    switch (category) {
+      case 'PAWN_COLOR':
+        if (room.mode === '2v2' && itemId) {
+          throw new Error('Premium pawn colors are not available in 2v2 mode');
+        }
+        player.pawnColorItemId = itemId || undefined;
+        player.pawnColor = itemId ? value : undefined;
+        break;
+      case 'PAWN_SKIN':
+        player.skinItemId = itemId || undefined;
+        player.skinIcon = itemId ? value : undefined;
+        player.skinName = itemId ? name : undefined;
+        player.skinAllowsColor = itemId ? allowColor : undefined;
+        break;
+      default:
+        throw new Error('Unsupported lobby cosmetic category');
+    }
+    return room;
+  }
+
   public switchTeam(roomId: string, userId: string): IRoom {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
@@ -505,12 +556,20 @@ export class RoomService {
 
   public getUserRoom(userId: string): IRoom | null {
     if (!userId) return null;
+    let quickMatchRoom: IRoom | null = null;
+    let fallbackRoom: IRoom | null = null;
+
     for (const room of this.rooms.values()) {
       if (room.status === RoomStatus.WAITING && room.players.some(p => p.id === userId)) {
-        return room;
+        if (room.isQuickMatch) {
+          quickMatchRoom = room;
+        } else {
+          fallbackRoom = room;
+        }
       }
     }
-    return null;
+
+    return quickMatchRoom || fallbackRoom;
   }
 
   public findRoomByUserId(userId: string): IRoom | null {

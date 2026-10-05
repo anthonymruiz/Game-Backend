@@ -6,6 +6,7 @@ import { MatchHistory } from './match-history.entity.js';
 import { Ban } from './ban.entity.js';
 import { Report } from './report.entity.js';
 import { DeviceSession } from './device-session.entity.js';
+import { UserStoreItem } from './user-store-item.entity.js';
 import { UserRole } from './user-role.enum.js';
 import { PresenceStatus } from './presence.enum.js';
 
@@ -69,4 +70,7 @@ export class User extends AbstractBaseEntity {
 
   @OneToMany(() => DeviceSession, (session) => session.user)
   deviceSessions!: any[];
+
+  @OneToMany(() => UserStoreItem, (ownership) => ownership.user)
+  storeItemOwnerships!: UserStoreItem[];
 }

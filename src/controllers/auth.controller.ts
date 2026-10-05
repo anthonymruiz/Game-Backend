@@ -49,6 +49,7 @@ export class AuthController {
           username: result.user.username,
           email: result.user.email,
           role: result.user.role,
+          avatarUrl: result.user.avatarUrl,
           hasUsernameSet: result.user.hasUsernameSet
         }
       });
@@ -70,6 +71,7 @@ export class AuthController {
           username: result.user.username,
           email: result.user.email,
           role: result.user.role,
+          avatarUrl: result.user.avatarUrl,
           hasUsernameSet: result.user.hasUsernameSet
         },
         isNewUser: result.isNewUser
@@ -332,6 +334,7 @@ export class AuthController {
       username: result.user.username,
       email: result.user.email,
       role: result.user.role,
+      avatarUrl: result.user.avatarUrl,
       hasUsernameSet: result.user.hasUsernameSet
     }));
     const redirectUrl = `${frontendUrl}/auth/callback?token=${result.jwtToken}&user=${userPayload}`;

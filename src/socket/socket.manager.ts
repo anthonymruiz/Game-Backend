@@ -7,13 +7,16 @@ import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env.config.js';
 import { MatchmakingService, GameMode } from '../services/matchmaking.service.js';
 import { GameService } from '../services/game.service.js';
-import { RoomService, AVAILABLE_COLORS } from '../services/room.service.js';
+import { RoomService, AVAILABLE_COLORS, IRoom } from '../services/room.service.js';
 import { AppDataSource } from '../config/database.config.js';
 import { User } from '../models/user.entity.js';
+import { RankTierService } from '../services/rank-tier.service.js';
 
 import { UserRole } from '../models/user-role.enum.js';
 import { PresenceStatus } from '../models/presence.enum.js';
 import { RoomStatus } from '../models/room-status.enum.js';
+import { StoreItemCategory } from '../models/store-item.enum.js';
+import { StoreItemService } from '../services/store-item.service.js';
 
 @singleton()
 export class SocketManager {
@@ -24,8 +27,52 @@ export class SocketManager {
   constructor(
     @inject(MatchmakingService) private matchmakingService: MatchmakingService,
     @inject(GameService) private gameService: GameService,
-    @inject(RoomService) private roomService: RoomService
+    @inject(RoomService) private roomService: RoomService,
+    @inject(StoreItemService) private storeItemService: StoreItemService
   ) {}
+
+  private async getUserRankKey(userId: string): Promise<string> {
+    const rankTierService = container.resolve(RankTierService);
+    if (userId.startsWith('guest_')) {
+      return (await rankTierService.getRankInfo(0)).rankKey;
+    }
+
+    const user = await AppDataSource.getRepository(User).findOne({
+      where: { id: userId },
+      relations: { stats: true }
+    });
+    if (!user) throw new Error('No se pudo determinar el rango del usuario.');
+    return (await rankTierService.getRankInfo(user.stats?.xp ?? 0)).rankKey;
+  }
+
+  private async assertRankedRoomAccess(userId: string, room: IRoom): Promise<void> {
+    if (!room.isRanked) return;
+    const rankKey = await this.getUserRankKey(userId);
+    if (!room.rankKey || room.rankKey !== rankKey) {
+      throw new Error('Solo puedes unirte a partidas ranked de tu mismo rango.');
+    }
+  }
+
+  private async sendPublicRoomsToSocket(socket: Socket): Promise<void> {
+    const rooms = this.roomService.getPublicRooms();
+    const hasRankedRooms = rooms.some(room => room.isRanked);
+    const rankKey = hasRankedRooms
+      ? await this.getUserRankKey(socket.data.user?.sub || socket.data.user?.id || '')
+      : null;
+    socket.emit('publicRooms', rooms.filter(room => !room.isRanked || room.rankKey === rankKey));
+  }
+
+  private async broadcastPublicRooms(): Promise<void> {
+    const namespace = this.io.of('/matchmaking');
+    await Promise.all(Array.from(namespace.sockets.values()).map(async socket => {
+      try {
+        await this.sendPublicRoomsToSocket(socket);
+      } catch (error) {
+        console.error('Failed to send rank-eligible public rooms:', error);
+        socket.emit('error', 'No se pudieron cargar las salas compatibles con tu rango.');
+      }
+    }));
+  }
   
   public async initialize(httpServer: HttpServer): Promise<void> {
     this.io = new Server(httpServer, {
@@ -70,6 +117,16 @@ export class SocketManager {
         const isValid = await deviceSessionService.isSessionValid(decoded.id, token, deviceId);
         if (!isValid) {
           return next(new Error('SESSION_REVOKED'));
+        }
+
+        const currentUser = await AppDataSource.getRepository(User).findOne({
+          where: { id: decoded.id },
+          select: { id: true, username: true, avatarUrl: true, provider: true }
+        });
+        if (currentUser) {
+          decoded.username = currentUser.username;
+          decoded.avatarUrl = currentUser.avatarUrl;
+          decoded.provider = currentUser.provider;
         }
       }
 
@@ -158,14 +215,21 @@ export class SocketManager {
       }
 
       // Send available public rooms on connect
-      socket.emit('publicRooms', this.roomService.getPublicRooms());
+      void this.sendPublicRoomsToSocket(socket).catch(error => {
+        console.error('Failed to load rank-eligible public rooms:', error);
+        socket.emit('error', 'No se pudieron cargar las salas compatibles con tu rango.');
+      });
 
       socket.on('getPublicRooms', () => {
-        socket.emit('publicRooms', this.roomService.getPublicRooms());
+        void this.sendPublicRoomsToSocket(socket).catch(error => {
+          console.error('Failed to load rank-eligible public rooms:', error);
+          socket.emit('error', 'No se pudieron cargar las salas compatibles con tu rango.');
+        });
       });
 
       socket.on('requestActiveRoom', () => {
         const room = this.roomService.findRoomByUserId(userId);
+        if (room) socket.join(room.id);
         socket.emit('myActiveRoom', room || null);
       });
 
@@ -180,7 +244,7 @@ export class SocketManager {
         }
       };
 
-      socket.on('joinQueue', async (mode: GameMode | string) => {
+      socket.on('joinQueue', async (request: GameMode | string | { mode?: GameMode | string; ranked?: boolean }) => {
         try {
           const { SystemSettingsService } = await import('../services/system-settings.service.js');
           const settingsService = container.resolve(SystemSettingsService);
@@ -189,25 +253,27 @@ export class SocketManager {
             return socket.emit('error', 'El servidor está en modo mantenimiento. Intenta más tarde.');
           }
 
-          const gameMode: GameMode = (mode as GameMode) || '1v1';
-          const publicRooms = this.roomService.getPublicRooms();
-          const openRoom = publicRooms.find(r => r.mode === gameMode && r.players.length < r.maxPlayers);
+          const gameMode: GameMode = (typeof request === 'object' ? request.mode : request) as GameMode || '1v1';
+          const isRanked = typeof request === 'object' && request.ranked === true;
+          const rankKey = isRanked ? await this.getUserRankKey(userId) : undefined;
+          const openRoom = this.roomService.findQuickMatchRoom(gameMode, isRanked, rankKey);
           const userWins = await getUserWins(userId);
 
           if (openRoom) {
+            await this.assertRankedRoomAccess(userId, openRoom);
             const room = this.roomService.joinRoom(openRoom.id, userId, username, isGuest, avatarUrl, provider, userWins);
             socket.join(room.id);
             socket.emit('joinedByCodeSuccess', room);
             matchmakingNs.to(room.id).emit('roomUpdated', room);
             matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
-            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            void this.broadcastPublicRooms();
 
             if (room.isQuickMatch || room.players.length >= room.maxPlayers) {
               room.status = RoomStatus.PLAYING;
               this.lastMatchPlayers.set(room.id, [...room.players]);
-              this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+              this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
               matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
-              matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+              void this.broadcastPublicRooms();
             }
           } else {
             const roomName = `Sala de ${username}`;
@@ -221,11 +287,13 @@ export class SocketManager {
               avatarUrl,
               provider,
               userWins,
-              true
+              true,
+              isRanked,
+              rankKey
             );
             socket.join(room.id);
             socket.emit('roomCreated', room);
-            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            void this.broadcastPublicRooms();
           }
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -256,7 +324,7 @@ export class SocketManager {
           );
           socket.join(room.id);
           socket.emit('roomCreated', room);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
 
           if (data.targetInviteUserId) {
             matchmakingNs.to(data.targetInviteUserId).emit('gameInviteReceived', {
@@ -294,12 +362,12 @@ export class SocketManager {
         });
       });
 
-      socket.on('createVsAiRoom', () => {
+      socket.on('createVsAiRoom', async () => {
         try {
           const room = this.roomService.createVsAiRoom(userId, username, isGuest);
           socket.join(room.id);
           room.status = RoomStatus.PLAYING;
-          this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+          await this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
           socket.emit('gameStarting', { matchId: room.id });
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -308,19 +376,22 @@ export class SocketManager {
 
       socket.on('joinCustomRoom', async (data: { roomId: string }) => {
         try {
+          const targetRoom = this.roomService.getRoom(data.roomId);
+          if (!targetRoom) throw new Error('Room not found');
+          await this.assertRankedRoomAccess(userId, targetRoom);
           const userWins = await getUserWins(userId);
           const room = this.roomService.joinRoom(data.roomId, userId, username, isGuest, avatarUrl, provider, userWins);
           socket.join(room.id);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
 
           if (room.isQuickMatch && room.players.length >= 2) {
             room.status = RoomStatus.PLAYING;
             this.lastMatchPlayers.set(room.id, [...room.players]);
-            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
             matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
-            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            void this.broadcastPublicRooms();
           }
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -331,20 +402,21 @@ export class SocketManager {
         try {
           const targetRoom = this.roomService.getRoomByCode(data.code);
           if (!targetRoom) throw new Error('No room found with this code.');
+          await this.assertRankedRoomAccess(userId, targetRoom);
           const userWins = await getUserWins(userId);
           const room = this.roomService.joinRoom(targetRoom.id, userId, username, isGuest, avatarUrl, provider, userWins);
           socket.join(room.id);
           socket.emit('joinedByCodeSuccess', room);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.to(room.id).emit('playerJoinedRoom', { userId, username });
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
 
           if (room.isQuickMatch && room.players.length >= 2) {
             room.status = RoomStatus.PLAYING;
             this.lastMatchPlayers.set(room.id, [...room.players]);
-            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
             matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
-            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            void this.broadcastPublicRooms();
           }
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -366,7 +438,7 @@ export class SocketManager {
         try {
           const room = this.roomService.toggleRoomPrivacy(data.roomId, userId, data.isPrivate);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -375,10 +447,15 @@ export class SocketManager {
       socket.on('cancelRoom', (data: { roomId: string }) => {
         try {
           this.roomService.cancelRoom(data.roomId, userId);
-          matchmakingNs.to(data.roomId).emit('roomCancelled', { message: 'La partida fue cancelada por el anfitrión.' });
-          socket.emit('roomCancelled', { message: 'La partida fue cancelada por el anfitrión.' });
+          const cancellation = {
+            roomId: data.roomId,
+            cancelledBy: userId,
+            message: 'La partida fue cancelada por el anfitrión.'
+          };
+          matchmakingNs.to(data.roomId).emit('roomCancelled', cancellation);
+          socket.emit('roomCancelled', cancellation);
           socket.emit('myActiveRoom', null);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -396,6 +473,49 @@ export class SocketManager {
       socket.on('selectColor', (data: { roomId: string; color: string; targetUserId?: string }) => {
         try {
           const room = this.roomService.selectPlayerColor(data.roomId, userId, data.color, data.targetUserId);
+          matchmakingNs.to(room.id).emit('roomUpdated', room);
+        } catch (err: any) {
+          socket.emit('error', err.message);
+        }
+      });
+
+      socket.on('selectRoomCosmetic', async (data: { roomId: string; category: string; itemId: string | null }) => {
+        try {
+          if (data.category !== StoreItemCategory.PAWN_COLOR && data.category !== StoreItemCategory.PAWN_SKIN) {
+            throw new Error('Unsupported lobby cosmetic category');
+          }
+          let cosmeticValue: string | undefined;
+          let cosmeticName: { en: string; es: string } | undefined;
+          let allowColor = false;
+          if (data.itemId) {
+            const item = await this.storeItemService.getOwnedItem(userId, data.itemId, data.category as StoreItemCategory);
+            if (!item) throw new Error('You do not own this cosmetic');
+            if (data.category === StoreItemCategory.PAWN_COLOR) {
+              const pawnColors: Record<string, string> = {
+                'PWN-101': '#EAB308', 'PWN-102': '#CBD5E1', 'PWN-103': '#C2410C',
+                'PWN-104': '#E11D48', 'PWN-105': '#0284C7', 'PWN-106': '#16A34A',
+                'PWN-107': '#0F172A', 'PWN-108': '#92400E', 'PWN-109': '#F1F5F9',
+                'PWN-110': '#FF2D55', 'PWN-111': '#5AC8FA'
+              };
+              const code = item.code.trim().toUpperCase();
+              cosmeticValue = pawnColors[code];
+              if (!cosmeticValue) {
+                const colorName = `${item.configuration.es.name} ${item.configuration.en.name}`.toLocaleLowerCase();
+                if (colorName.includes('rosa') || colorName.includes('pink')) {
+                  cosmeticValue = pawnColors['PWN-110'];
+                }
+              }
+              if (!cosmeticValue) throw new Error('Invalid pawn color item');
+            } else {
+              cosmeticValue = item.icon;
+              cosmeticName = {
+                en: item.configuration.en.name,
+                es: item.configuration.es.name
+              };
+              allowColor = item.allowColor;
+            }
+          }
+          const room = this.roomService.setPlayerCosmetic(data.roomId, userId, data.category, data.itemId || null, cosmeticValue, allowColor, cosmeticName);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -437,10 +557,10 @@ export class SocketManager {
           setTimeout(() => {
             room.status = RoomStatus.PLAYING;
             this.lastMatchPlayers.set(room.id, [...room.players]);
-            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name);
+            this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
             
             matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
-            matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+            void this.broadcastPublicRooms();
           }, 3000);
         } catch (err: any) {
           socket.emit('error', err.message);
@@ -451,7 +571,7 @@ export class SocketManager {
         try {
           const room = this.roomService.addBotToCustomRoom(data.roomId, userId);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -463,7 +583,7 @@ export class SocketManager {
         try {
           const room = this.roomService.removeBotFromCustomRoom(data.roomId, userId, data.botId);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -487,7 +607,7 @@ export class SocketManager {
           }
 
           matchmakingNs.to(room.id).emit('roomUpdated', room);
-          matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+          void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -503,7 +623,7 @@ export class SocketManager {
           matchmakingNs.to(room.id).emit('roomUpdated', room);
           matchmakingNs.to(room.id).emit('playerLeftRoom', { userId, username });
         }
-        matchmakingNs.emit('publicRooms', this.roomService.getPublicRooms());
+        void this.broadcastPublicRooms();
       };
       socket.on('leaveCustomRoom', handleLeaveRoom);
       socket.on('leaveRoom', handleLeaveRoom);
@@ -530,7 +650,11 @@ export class SocketManager {
           if (game.state === 'finished') {
             socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
           } else {
-            socket.emit('gameStarted', { currentTurn: game.playersList[game.currentTurnIndex], board: game.board.toDTO(userId) });
+            socket.emit('gameStarted', {
+              currentTurn: game.playersList[game.currentTurnIndex],
+              board: game.board.toDTO(userId),
+              pendingBoostDecision: game.getPendingBoostDecision()
+            });
           }
         } else {
           socket.emit('gameFinished', { winner: null, alreadyFinished: true });
@@ -565,6 +689,13 @@ export class SocketManager {
           game.executeKillerItem(userId, data.targetPlayerId);
         }
       });
+
+      socket.on('useExchangeItem', (data: { roomId: string, targetPlayerId: string }) => {
+        const game = this.gameService.getGame(data.roomId);
+        if (game) {
+          game.executeExchangeItem(userId, data.targetPlayerId);
+        }
+      });
       
       socket.on('surrender', (data: any) => {
         const roomId = typeof data === 'string' ? data : (data?.roomId || data?.matchId);
@@ -575,7 +706,11 @@ export class SocketManager {
               socket.emit('error', 'Los espectadores no pueden rendirse.');
               return;
             }
-            game.surrender(userId);
+            if (data?.abandonBotGame === true && game.hasBots()) {
+              game.abandon();
+            } else {
+              game.surrender(userId);
+            }
           }
         }
       });
@@ -726,18 +861,72 @@ export class SocketManager {
         });
       });
 
-      socket.on('emote', (data: { roomId: string, emoteId: string }) => {
-        gameNs.to(data.roomId).emit('emote', { sender: username, emoteId: data.emoteId });
+      const handleEmote = async (roomId: string, emoteId: string): Promise<void> => {
+        try {
+          const game = this.gameService.getGame(roomId);
+          if (!game || !game.playersList.includes(userId)) throw new Error('Only players in this game can react');
+          const defaults = ['👍', '😂', '😮', '😡'];
+          let displayedEmote = emoteId;
+          if (!defaults.includes(emoteId)) {
+            const item = await this.storeItemService.getOwnedItem(userId, emoteId, StoreItemCategory.EXCLUSIVE_EMOTES);
+            if (!item) throw new Error('You do not own this reaction');
+            displayedEmote = item.icon;
+          }
+          gameNs.to(roomId).emit('emote', { sender: username, emoteId: displayedEmote });
+        } catch (error: any) {
+          if (error.message === 'Only players in this game can react' || error.message === 'You do not own this reaction') {
+            socket.emit('error', error.message);
+            return;
+          }
+          console.error('Failed to validate game reaction:', error);
+          socket.emit('error', 'Could not send reaction');
+        }
+      };
+      socket.on('emote', (data: { roomId: string; emoteId: string }) => {
+        if (typeof data?.roomId === 'string' && typeof data?.emoteId === 'string') {
+          void handleEmote(data.roomId, data.emoteId);
+        }
+      });
+
+      socket.on('selectMatchCosmetic', async (data: { roomId: string; category: string; itemId: string | null }) => {
+        try {
+          if (data.category !== StoreItemCategory.MOVEMENT_TRAIL && data.category !== StoreItemCategory.WALL_EFFECT) {
+            throw new Error('Unsupported in-game cosmetic category');
+          }
+          const game = this.gameService.getGame(data.roomId);
+          if (!game || !game.playersList.includes(userId)) throw new Error('Player not found in game');
+          const item = data.itemId
+            ? await this.storeItemService.getOwnedItem(userId, data.itemId, data.category as StoreItemCategory)
+            : null;
+          if (data.itemId && !item) throw new Error('You do not own this cosmetic');
+          game.setPlayerCosmetic(userId, data.category, data.itemId || null, item?.icon);
+          const player = game.board.players.get(userId)!;
+          gameNs.to(data.roomId).emit('playerCosmeticsUpdated', {
+            playerId: userId,
+            movementTrailId: player.movementTrailId,
+            movementTrailIcon: player.movementTrailIcon,
+            wallEffectId: player.wallEffectId,
+            wallEffectIcon: player.wallEffectIcon
+          });
+        } catch (err: any) {
+          socket.emit('error', err.message);
+        }
       });
 
       socket.on('send_emote', (data: { roomId: string, emoji: string }) => {
-        gameNs.to(data.roomId).emit('emote', { sender: username, emoteId: data.emoji });
+        if (typeof data?.roomId === 'string' && typeof data?.emoji === 'string') {
+          void handleEmote(data.roomId, data.emoji);
+        }
       });
 
       socket.on('disconnect', () => {
         const activeGame = this.gameService.getGameByPlayerId(userId);
         if (activeGame && activeGame.state === 'playing') {
-          activeGame.surrender(userId);
+          if (activeGame.hasBots()) {
+            activeGame.abandon();
+          } else {
+            activeGame.surrender(userId);
+          }
         }
         const roomId = socket.data?.currentRoomId;
         if (roomId && this.rematchRequests.has(roomId)) {

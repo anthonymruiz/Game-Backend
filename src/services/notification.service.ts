@@ -35,7 +35,13 @@ const TRANSLATIONS: ITranslations = {
     FRIEND_ACC_TITLE: 'Request Accepted',
     FRIEND_ACC_MSG: '{{data}} accepted your friend request.',
     FRIEND_REJ_TITLE: 'Request Declined',
-    FRIEND_REJ_MSG: '{{data}} declined your friend request.'
+    FRIEND_REJ_MSG: '{{data}} declined your friend request.',
+    STORE_ITEM_PURCHASED_TITLE: 'Item purchased',
+    STORE_ITEM_PURCHASED_MSG: 'You purchased "{{data}}" from the store.',
+    STORE_ITEM_GIFTED_TITLE: 'You received a gift!',
+    STORE_ITEM_GIFTED_MSG: 'You received "{{data}}" as a gift.',
+    POINTS_GIFTED_TITLE: 'You received points!',
+    POINTS_GIFTED_MSG: 'You received {{data}} points as a gift.'
   },
   es: {
     MATCH_WON_TITLE: '¡Partida Ganada!',
@@ -52,7 +58,13 @@ const TRANSLATIONS: ITranslations = {
     FRIEND_ACC_TITLE: 'Solicitud Aceptada',
     FRIEND_ACC_MSG: '{{data}} ha aceptado tu solicitud de amistad.',
     FRIEND_REJ_TITLE: 'Solicitud Rechazada',
-    FRIEND_REJ_MSG: '{{data}} ha rechazado tu solicitud de amistad.'
+    FRIEND_REJ_MSG: '{{data}} ha rechazado tu solicitud de amistad.',
+    STORE_ITEM_PURCHASED_TITLE: 'Objeto comprado',
+    STORE_ITEM_PURCHASED_MSG: 'Has comprado "{{data}}" en la tienda.',
+    STORE_ITEM_GIFTED_TITLE: '¡Has recibido un regalo!',
+    STORE_ITEM_GIFTED_MSG: 'Te han regalado "{{data}}".',
+    POINTS_GIFTED_TITLE: '¡Has recibido puntos!',
+    POINTS_GIFTED_MSG: 'Te han regalado {{data}} puntos.'
   }
 };
 
@@ -81,19 +93,28 @@ export class NotificationService {
     }
   }
 
-  public async sendNotification(userId: string, type: string, translationKeyTitle: keyof ITranslationKeys, translationKeyMsg: keyof ITranslationKeys, dynamicData?: string): Promise<void> {
+  public async sendNotification(
+    userId: string,
+    type: string,
+    translationKeyTitle: keyof ITranslationKeys,
+    translationKeyMsg: keyof ITranslationKeys,
+    dynamicData?: string | Partial<Record<SupportedLanguage, string>>
+  ): Promise<void> {
     const userRepo = AppDataSource.getRepository(User);
     const user = await userRepo.findOne({ where: { id: userId }, relations: { preferences: true } });
     if (!user) return;
 
     const lang: SupportedLanguage = (user.preferences?.language as SupportedLanguage) || 'en';
     const dict = TRANSLATIONS[lang] || TRANSLATIONS['en'];
+    const localizedData = typeof dynamicData === 'string'
+      ? dynamicData
+      : dynamicData?.[lang] || dynamicData?.en || '';
 
     const title = dict[translationKeyTitle] || translationKeyTitle;
     const rawMsg = dict[translationKeyMsg] || translationKeyMsg;
     const message = rawMsg.includes('{{data}}')
-      ? rawMsg.replace('{{data}}', dynamicData || '')
-      : rawMsg + (dynamicData ? ` ${dynamicData}` : '');
+      ? rawMsg.replace('{{data}}', localizedData)
+      : rawMsg + (localizedData ? ` ${localizedData}` : '');
 
     const repo = AppDataSource.getRepository(Notification);
     const notif = new Notification();

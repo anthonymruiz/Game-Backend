@@ -2,16 +2,44 @@ import { Request, Response } from 'express';
 import { injectable, container } from 'tsyringe';
 import { AdminService } from '../services/admin.service.js';
 import { ReportService } from '../services/report.service.js';
+import { PointPackageService } from '../services/point-package.service.js';
+import { RankTierService } from '../services/rank-tier.service.js';
 
 @injectable()
 export class AdminController {
   private adminService: AdminService;
   private reportService: ReportService;
+  private pointPackageService: PointPackageService;
+  private rankTierService: RankTierService;
 
   constructor() {
     this.adminService = container.resolve(AdminService);
     this.reportService = container.resolve(ReportService);
+    this.pointPackageService = container.resolve(PointPackageService);
+    this.rankTierService = container.resolve(RankTierService);
   }
+
+  public getRankTiers = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const ranks = await this.rankTierService.getRanks();
+      res.status(200).json({ ranks });
+    } catch (error) {
+      console.error('[AdminController] Failed to load rank tiers:', error);
+      res.status(500).json({ message: 'Could not load rank tiers.' });
+    }
+  };
+
+  public replaceRankTiers = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const ranks = await this.rankTierService.replaceRanks(req.body?.ranks);
+      res.status(200).json({ ranks });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not update rank tiers.';
+      const isValidationError = /^(Ranks must|Rank |Rank keys|Rank emojis|Rank ids)/.test(message);
+      if (!isValidationError) console.error('[AdminController] Failed to update rank tiers:', error);
+      res.status(isValidationError ? 400 : 500).json({ message });
+    }
+  };
 
   public getMetrics = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -105,6 +133,35 @@ export class AdminController {
     }
   };
 
+  public getMatchModeDistribution = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const modes = await this.adminService.getMatchModeDistribution();
+      res.status(200).json({ modes });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public getLevelProgressionConfig = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const config = await this.adminService.getLevelProgressionConfig();
+      res.status(200).json({ config });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  };
+
+  public updateLevelProgressionConfig = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const config = await this.adminService.updateLevelProgressionConfig(req.body);
+      res.status(200).json({ message: 'Level progression configuration updated successfully', config });
+    } catch (error: any) {
+      const message = error.message || 'Internal server error';
+      const isValidationError = message.includes('must be');
+      res.status(isValidationError ? 400 : 500).json({ message });
+    }
+  };
+
   public getSettings = async (req: Request, res: Response): Promise<void> => {
     try {
       const settings = await this.adminService.getSystemSettings();
@@ -123,6 +180,27 @@ export class AdminController {
       const isValidationError = msg.includes('must be') || msg.includes('between') || msg.includes('at least') || msg.includes('invalid');
       const status = isValidationError ? 400 : 500;
       res.status(status).json({ message: msg });
+    }
+  };
+
+  public getPointPackages = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const packages = await this.pointPackageService.getPackages(true);
+      res.status(200).json({ packages });
+    } catch (error) {
+      console.error('[AdminController] Failed to load point packages:', error);
+      res.status(500).json({ message: 'Could not load point packages.' });
+    }
+  };
+
+  public updatePointPackages = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const packages = await this.pointPackageService.replacePackages(req.body?.packages);
+      res.status(200).json({ packages });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not update point packages.';
+      const isValidationError = message.startsWith('Package ') || message.startsWith('packages must') || message === 'Package ids must be unique.';
+      res.status(isValidationError ? 400 : 500).json({ message });
     }
   };
 

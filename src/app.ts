@@ -10,6 +10,7 @@ import { userRoutes } from './routes/user.routes.js';
 import reportRouter from './routes/report.routes.js';
 import roomRouter from './routes/room.routes.js';
 import { friendRoutes } from './routes/friend.routes.js';
+import { storeRoutes } from './routes/store.routes.js';
 import { broadcastLog } from './utils/logger.utils.js';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.config.js';
@@ -28,12 +29,14 @@ export class App {
   private initializeMiddlewares(): void {
     this.expressApp.use(cors());
     this.expressApp.use(helmet({ contentSecurityPolicy: false }));
+    this.expressApp.use('/api/store/stripe/webhook', express.raw({ type: 'application/json' }));
     this.expressApp.use(express.json());
   }
 
   private initializeRoutes(): void {
     this.expressApp.use('/api/auth', authRouter);
     this.expressApp.use('/api/users', userRoutes);
+    this.expressApp.use('/api/store', storeRoutes);
     this.expressApp.use('/api/admin', adminRoutes);
     this.expressApp.use('/api/notifications', notificationRoutes);
     this.expressApp.use('/api/reports', reportRouter);

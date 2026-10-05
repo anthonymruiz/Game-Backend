@@ -100,6 +100,18 @@ export class AuthService {
     return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn });
   }
 
+  private syncSocialAvatar(user: User, avatarUrl?: string): boolean {
+    if (!avatarUrl) return false;
+
+    const hasSocialAvatar = user.avatarUrl?.includes('googleusercontent') ||
+      user.avatarUrl?.includes('fbcdn');
+    if (user.avatarUrl && !hasSocialAvatar) return false;
+    if (user.avatarUrl === avatarUrl) return false;
+
+    user.avatarUrl = avatarUrl;
+    return true;
+  }
+
   public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
     let email: string;
     let socialName: string = '';
@@ -137,11 +149,11 @@ export class AuthService {
       user.username = `user${tempSuffix}`;
       user.provider = provider;
       user.hasUsernameSet = false; // Mark that user must set their username
+      user.avatarUrl = avatarUrl;
       user.preferences = new Preferences();
       user.stats = new Stats();
       user = await this.userRepository.save(user);
-    } else if (user.avatarUrl && (user.avatarUrl.includes('googleusercontent') || user.avatarUrl.includes('fbcdn'))) {
-      user.avatarUrl = undefined as any;
+    } else if (this.syncSocialAvatar(user, avatarUrl)) {
       await this.userRepository.save(user);
     }
 
@@ -171,6 +183,7 @@ export class AuthService {
 
     const email = payload.email;
     const socialName = payload.name || '';
+    const avatarUrl = payload.picture;
 
     let isNewUser = false;
     let user = await this.userRepository.findByEmail(email.toLowerCase());
@@ -188,11 +201,11 @@ export class AuthService {
       user.username = existingUser ? `user${tempSuffix}` : cleanUsername;
       user.provider = 'google';
       user.hasUsernameSet = false;
+      user.avatarUrl = avatarUrl;
       user.preferences = new Preferences();
       user.stats = new Stats();
       user = await this.userRepository.save(user);
-    } else if (user.avatarUrl && (user.avatarUrl.includes('googleusercontent') || user.avatarUrl.includes('fbcdn'))) {
-      user.avatarUrl = undefined as any;
+    } else if (this.syncSocialAvatar(user, avatarUrl)) {
       await this.userRepository.save(user);
     }
 

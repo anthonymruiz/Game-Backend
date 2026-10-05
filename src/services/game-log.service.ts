@@ -6,6 +6,12 @@ import { User } from '../models/user.entity.js';
 import { NotificationService } from './notification.service.js';
 import { container } from 'tsyringe';
 import { IRoomPlayer } from './room.service.js';
+import { LevelProgressionConfig } from '../models/level-progression-config.entity.js';
+
+export interface IMatchRewards {
+  points: number;
+  xp: number;
+}
 
 @singleton()
 export class GameLogService {
@@ -14,15 +20,24 @@ export class GameLogService {
     winnerId: string | null, 
     allPlayers: (string | IRoomPlayer)[], 
     mode: string = '1v1',
-    durationSeconds?: number
-  ): Promise<void> {
+    durationSeconds?: number,
+    isRanked: boolean = false
+  ): Promise<Record<string, IMatchRewards>> {
     const queryRunner = AppDataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     const notificationsToSend: Array<{ userId: string; type: string; titleKey: any; msgKey: any }> = [];
+    const rewardsByPlayer: Record<string, IMatchRewards> = {};
 
     try {
+      const progressionConfig = await queryRunner.manager.findOne(LevelProgressionConfig, {
+        where: { singletonKey: 1 }
+      });
+      if (!progressionConfig) {
+        throw new Error('Level progression configuration has not been seeded.');
+      }
+
       const roomPlayers: IRoomPlayer[] = allPlayers.map(p => {
         if (typeof p === 'string') {
           return { id: p, username: p, isGuest: p.startsWith('guest_') || p.startsWith('bot_'), color: '#000000' };
@@ -97,32 +112,35 @@ export class GameLogService {
           isWin = winnerId === playerId;
         }
 
-        let eloChange = 0;
-        if (!hasBot) {
-          if (isWin) {
-            history.result = 'win';
-            stats.wins = (stats.wins || 0) + 1;
-            stats.points = (stats.points || 0) + 10;
-            eloChange = 15;
-            notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_WON_TITLE', msgKey: 'MATCH_WON_MSG' });
-          } else if (isDraw) {
-            history.result = 'draw';
-            stats.draws = (stats.draws || 0) + 1;
-            eloChange = 0;
+        if (isWin) {
+          history.result = 'win';
+          stats.wins = (stats.wins || 0) + 1;
+          if (!hasBot) {
+            const pointsAwarded = isRanked
+              ? progressionConfig.rankedPointsPerMatch
+              : progressionConfig.pointsPerMatch;
+            stats.points = (stats.points || 0) + pointsAwarded;
+            stats.xp = (stats.xp || 0) + progressionConfig.baseXpPerLevel;
+            rewardsByPlayer[user.id] = {
+              points: pointsAwarded,
+              xp: progressionConfig.baseXpPerLevel
+            };
           } else {
-            history.result = 'loss';
-            stats.losses = (stats.losses || 0) + 1;
-            eloChange = -10;
-            notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_LOST_TITLE', msgKey: 'MATCH_LOST_MSG' });
+            rewardsByPlayer[user.id] = { points: 0, xp: 0 };
           }
-
-          stats.elo = Math.max(0, (stats.elo || 1000) + eloChange);
-          await queryRunner.manager.save(stats);
+          notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_WON_TITLE', msgKey: 'MATCH_WON_MSG' });
+        } else if (isDraw) {
+          history.result = 'draw';
+          stats.draws = (stats.draws || 0) + 1;
+          rewardsByPlayer[user.id] = { points: 0, xp: 0 };
         } else {
-          history.result = isWin ? 'win' : (isDraw ? 'draw' : 'loss');
+          history.result = 'loss';
+          stats.losses = (stats.losses || 0) + 1;
+          rewardsByPlayer[user.id] = { points: 0, xp: 0 };
+          notificationsToSend.push({ userId: user.id, type: 'MATCH', titleKey: 'MATCH_LOST_TITLE', msgKey: 'MATCH_LOST_MSG' });
         }
 
-        history.eloChange = eloChange;
+        await queryRunner.manager.save(stats);
         await queryRunner.manager.save(history);
       }
 
@@ -137,9 +155,11 @@ export class GameLogService {
           console.error('Error sending notification post-game:', nErr);
         }
       }
+      return rewardsByPlayer;
     } catch (err) {
       console.error('Error logging game end:', err);
       await queryRunner.rollbackTransaction();
+      throw err;
     } finally {
       await queryRunner.release();
     }

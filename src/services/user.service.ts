@@ -4,7 +4,8 @@ import { User } from '../models/user.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { AppDataSource } from '../config/database.config.js';
 import { isValidUsernameFormat, isValidEmailFormat } from '../utils/regex.util.js';
-import { getRankInfo } from '../utils/rank.util.js';
+import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
+import { RankTierService } from './rank-tier.service.js';
 
 @injectable()
 export class UserService {
@@ -59,14 +60,14 @@ export class UserService {
       throw new Error('User not found.');
     }
 
-    const stats = user.stats || { wins: 0, losses: 0, draws: 0, points: 0, elo: 1000 };
+    const stats = user.stats || { wins: 0, losses: 0, draws: 0, points: 0, xp: 0 };
     const wins = Number(stats.wins) || 0;
     const losses = Number(stats.losses) || 0;
     const draws = Number(stats.draws) || 0;
-    const points = stats.points !== undefined && stats.points !== null ? Number(stats.points) : (wins * 10);
+    const points = Number(stats.points) || 0;
+    const xp = Number(stats.xp) || 0;
     const totalGames = wins + losses + draws;
     const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
-    const elo = Number(stats.elo) || 1000;
 
     let dailyStreak = 0;
     try {
@@ -91,74 +92,106 @@ export class UserService {
       dailyStreak = 0;
     }
 
-    const rankInfo = getRankInfo(wins);
+    const rankInfo = await container.resolve(RankTierService).getRankInfo(xp);
+    const levelProgress = getLevelProgress(xp, await container.resolve(LevelProgressionService).getConfiguration());
 
     return {
       userId: user.id,
       username: user.username,
+      avatarUrl: user.avatarUrl || null,
       totalGames,
       wins,
       losses,
       draws,
       winRate,
-      elo,
       points: points,
-      level: rankInfo.level,
+      level: levelProgress.level,
+      rankInfo,
       rankKey: rankInfo.rankKey,
       nextRankKey: rankInfo.nextRankKey,
-      targetPoints: rankInfo.targetPoints,
-      pointsToNextRank: rankInfo.pointsToNextRank,
+      targetXp: rankInfo.targetXp,
+      xpToNextRank: rankInfo.xpToNextRank,
       progressPercent: rankInfo.progressPercent,
-      isMaxLevel: rankInfo.isMaxLevel,
+      xp,
+      currentLevelXp: levelProgress.currentLevelXp,
+      nextLevelXp: levelProgress.nextLevelXp,
+      xpToNextLevel: levelProgress.xpToNextLevel,
+      levelProgressPercent: levelProgress.levelProgressPercent,
+      isMaxLevel: levelProgress.isMaxLevel,
       dailyStreak
     };
   }
 
-  public async getLeaderboard(limit: number = 100) {
-    const users = await this.userRepository.getTopPlayers(limit);
+  public async getLeaderboard(
+    limit: number = 100,
+    rankKey?: string,
+    period: 'today' | 'history' = 'history'
+  ) {
+    const rankTierService = container.resolve(RankTierService);
+    const ranks = await rankTierService.getRanks();
+    const selectedRankIndex = rankKey ? ranks.findIndex(rank => rank.key === rankKey) : -1;
+    if (rankKey && selectedRankIndex < 0) throw new Error('INVALID_RANK_KEY');
+    if (period !== 'today' && period !== 'history') throw new Error('INVALID_LEADERBOARD_PERIOD');
+    const selectedRank = selectedRankIndex >= 0 ? ranks[selectedRankIndex] : undefined;
+    const nextRank = selectedRankIndex >= 0 ? ranks[selectedRankIndex + 1] : undefined;
+    let playedAfter: Date | undefined;
+    let playedBefore: Date | undefined;
+    if (period === 'today') {
+      const now = new Date();
+      playedAfter = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      playedBefore = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    }
+    const users = await this.userRepository.getTopPlayersByWins(
+      limit,
+      selectedRank?.minXp,
+      nextRank?.minXp,
+      playedAfter,
+      playedBefore
+    );
+    const levelProgressionService = container.resolve(LevelProgressionService);
+    const levelConfiguration = await levelProgressionService.getConfiguration();
     let gameService: any = null;
     try {
       const { GameService } = await import('./game.service.js');
       gameService = container.resolve(GameService);
     } catch (e) {}
 
-    return users.map((user, index) => {
-      const stats = user.stats || { wins: 0, losses: 0, draws: 0, elo: 1000 };
-      const wins = stats.wins || 0;
-      const losses = stats.losses || 0;
-      const draws = stats.draws || 0;
+    return Promise.all(users.map(async (user, index) => {
+      const wins = user.wins;
+      const losses = user.losses;
+      const draws = user.draws;
       const totalGames = wins + losses + draws;
       const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
-
+      const points = user.points;
+      const xp = user.xp;
+      const rankInfo = await rankTierService.getRankInfo(xp, ranks);
       let tier = 'BRONZE';
       if (winRate >= 75 && totalGames >= 5) tier = 'DIAMOND';
       else if (winRate >= 60) tier = 'GOLD';
       else if (winRate >= 40) tier = 'SILVER';
+      const level = getLevelProgress(xp, levelConfiguration).level;
 
-      let level = 'Principiante';
-      if (totalGames >= 50) level = 'Avanzado';
-      else if (totalGames >= 10) level = 'Intermedio';
-
-      const activeGame = gameService ? gameService.getGameByPlayerId(user.id) : null;
+      const activeGame = gameService ? gameService.getGameByPlayerId(user.userId) : null;
 
       return {
         rank: index + 1,
-        id: user.id,
+        id: user.userId,
         username: user.username,
         avatarUrl: user.avatarUrl,
-        provider: user.provider,
         wins,
         losses,
         draws,
         totalGames,
         winRate,
-        elo: stats.elo || 1000,
+        points,
+        xp,
         tier,
+        rankInfo,
         level,
         isPlaying: !!activeGame,
         activeMatchId: activeGame ? activeGame.id : null
       };
-    });
+    }));
   }
 
   public async getUserInfo(userId: string) {
@@ -177,4 +210,3 @@ export class UserService {
     };
   }
 }
-

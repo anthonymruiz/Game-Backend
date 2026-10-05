@@ -6,6 +6,30 @@ import { Stats } from '../models/stats.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { Report } from '../models/report.entity.js';
 import { UserRole } from '../models/user-role.enum.js';
+import { LevelProgressionConfig } from '../models/level-progression-config.entity.js';
+import { DEFAULT_LEVEL_PROGRESSION_CONFIG } from '../services/level-progression.service.js';
+import { RankTier } from '../models/rank-tier.entity.js';
+import { DEFAULT_RANK_TIERS, createDefaultRankTier } from '../seeds/rank-tiers.seed.js';
+
+export async function seedLevelProgressionConfig(): Promise<void> {
+  const repository = AppDataSource.getRepository(LevelProgressionConfig);
+  const existing = await repository.findOne({ where: { singletonKey: 1 } });
+  if (existing) return;
+
+  await repository.save(repository.create({
+    singletonKey: 1,
+    ...DEFAULT_LEVEL_PROGRESSION_CONFIG
+  }));
+  console.log('[SEED] Default level progression configuration created.');
+}
+
+export async function seedRankTiers(): Promise<void> {
+  const repository = AppDataSource.getRepository(RankTier);
+  if (await repository.count() > 0) return;
+
+  await repository.save(DEFAULT_RANK_TIERS.map(createDefaultRankTier));
+  console.log('[SEED] Default rank tiers created.');
+}
 
 export async function seedSuperAdmin(): Promise<void> {
   try {
@@ -51,21 +75,21 @@ export async function seedLeaderboardUsers(): Promise<void> {
       const hashedPassword = await bcrypt.hash('password123', 10);
 
       const mockUsers = [
-        { username: 'VortexMaster', wins: 142, losses: 18, draws: 5, elo: 2450, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Vortex' },
-        { username: 'ShadowStriker', wins: 128, losses: 22, draws: 3, elo: 2310, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Shadow' },
-        { username: 'ApexLegend', wins: 115, losses: 30, draws: 8, elo: 2180, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Apex' },
-        { username: 'CyberKnight', wins: 98, losses: 25, draws: 4, elo: 2050, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Cyber' },
-        { username: 'NeonSpectre', wins: 87, losses: 35, draws: 6, elo: 1940, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Neon' },
-        { username: 'PixelKing', wins: 76, losses: 29, draws: 2, elo: 1860, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Pixel' },
-        { username: 'TitanBrawler', wins: 69, losses: 41, draws: 7, elo: 1750, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Titan' },
-        { username: 'QuantumGhost', wins: 58, losses: 33, draws: 4, elo: 1680, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Quantum' },
-        { username: 'EchoSniper', wins: 50, losses: 40, draws: 1, elo: 1590, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Echo' },
-        { username: 'ZeroAbsolute', wins: 44, losses: 38, draws: 5, elo: 1510, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Zero' },
-        { username: 'NovaBlade', wins: 38, losses: 42, draws: 3, elo: 1420, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Nova' },
-        { username: 'StormRider', wins: 29, losses: 35, draws: 2, elo: 1350, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Storm' },
-        { username: 'AlphaOmega', wins: 22, losses: 28, draws: 4, elo: 1280, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Alpha' },
-        { username: 'BlazeInferno', wins: 15, losses: 20, draws: 1, elo: 1190, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Blaze' },
-        { username: 'RookieChamp', wins: 8, losses: 12, draws: 0, elo: 1080, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Rookie' }
+        { username: 'VortexMaster', wins: 142, losses: 18, draws: 5, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Vortex' },
+        { username: 'ShadowStriker', wins: 128, losses: 22, draws: 3, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Shadow' },
+        { username: 'ApexLegend', wins: 115, losses: 30, draws: 8, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Apex' },
+        { username: 'CyberKnight', wins: 98, losses: 25, draws: 4, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Cyber' },
+        { username: 'NeonSpectre', wins: 87, losses: 35, draws: 6, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Neon' },
+        { username: 'PixelKing', wins: 76, losses: 29, draws: 2, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Pixel' },
+        { username: 'TitanBrawler', wins: 69, losses: 41, draws: 7, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Titan' },
+        { username: 'QuantumGhost', wins: 58, losses: 33, draws: 4, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Quantum' },
+        { username: 'EchoSniper', wins: 50, losses: 40, draws: 1, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Echo' },
+        { username: 'ZeroAbsolute', wins: 44, losses: 38, draws: 5, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Zero' },
+        { username: 'NovaBlade', wins: 38, losses: 42, draws: 3, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Nova' },
+        { username: 'StormRider', wins: 29, losses: 35, draws: 2, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Storm' },
+        { username: 'AlphaOmega', wins: 22, losses: 28, draws: 4, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Alpha' },
+        { username: 'BlazeInferno', wins: 15, losses: 20, draws: 1, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Blaze' },
+        { username: 'RookieChamp', wins: 8, losses: 12, draws: 0, avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Rookie' }
       ];
 
       for (const m of mockUsers) {
@@ -83,7 +107,7 @@ export async function seedLeaderboardUsers(): Promise<void> {
         stats.wins = m.wins;
         stats.losses = m.losses;
         stats.draws = m.draws;
-        stats.elo = m.elo;
+        stats.points = m.wins * 10;
         u.stats = stats;
 
         await userRepo.save(u);
@@ -227,14 +251,14 @@ export async function seedMatchHistory(): Promise<void> {
       const users = await userRepo.find({ take: 10 });
       if (users.length >= 2) {
         const mockMatches = [
-          { mode: '1v1', result: 'win', opp: users[1].username, elo: 15, duration: 185 },
-          { mode: '1v1', result: 'loss', opp: users[0].username, elo: -10, duration: 240 },
-          { mode: '4-FFA', result: 'win', opp: 'Arena Global 4P', elo: 25, duration: 420 },
-          { mode: '2v2', result: 'win', opp: 'Equipo Rojo', elo: 18, duration: 310 },
-          { mode: '1v1', result: 'win', opp: users[2]?.username || 'ShadowStriker', elo: 15, duration: 150 },
-          { mode: 'vs_ai', result: 'win', opp: 'Bot Entrenador', elo: 0, duration: 95 },
-          { mode: '4-FFA', result: 'loss', opp: 'Arena Global 4P', elo: -8, duration: 380 },
-          { mode: '1v1', result: 'draw', opp: users[3]?.username || 'ApexLegend', elo: 0, duration: 300 }
+          { mode: '1v1', result: 'win', opp: users[1].username, duration: 185 },
+          { mode: '1v1', result: 'loss', opp: users[0].username, duration: 240 },
+          { mode: '4-FFA', result: 'win', opp: 'Arena Global 4P', duration: 420 },
+          { mode: '2v2', result: 'win', opp: 'Equipo Rojo', duration: 310 },
+          { mode: '1v1', result: 'win', opp: users[2]?.username || 'ShadowStriker', duration: 150 },
+          { mode: 'vs_ai', result: 'win', opp: 'Bot Entrenador', duration: 95 },
+          { mode: '4-FFA', result: 'loss', opp: 'Arena Global 4P', duration: 380 },
+          { mode: '1v1', result: 'draw', opp: users[3]?.username || 'ApexLegend', duration: 300 }
         ];
 
         let index = 1000;
@@ -247,7 +271,6 @@ export async function seedMatchHistory(): Promise<void> {
           history.mode = m.mode;
           history.result = m.result;
           history.opponentUsername = m.opp;
-          history.eloChange = m.elo;
           history.durationSeconds = m.duration;
           await matchHistoryRepo.save(history);
         }
@@ -258,5 +281,3 @@ export async function seedMatchHistory(): Promise<void> {
     console.error('[SEED] Error seeding match history:', error);
   }
 }
-
-

@@ -14,6 +14,19 @@ export class MatchHistoryRepository {
     return this.ormRepository.count();
   }
 
+  public async getModeDistribution(): Promise<{ mode: string; count: number }[]> {
+    const rows = await this.ormRepository.createQueryBuilder('match')
+      .select('match.mode', 'mode')
+      .addSelect('COUNT(match.id)', 'count')
+      .groupBy('match.mode')
+      .getRawMany<{ mode: string; count: string }>();
+
+    return rows.map(row => ({
+      mode: row.mode,
+      count: Number(row.count)
+    }));
+  }
+
   public async save(entity: MatchHistory): Promise<MatchHistory> {
     return this.ormRepository.save(entity);
   }
@@ -30,7 +43,6 @@ export class MatchHistoryRepository {
         'match.result',
         'match.mode',
         'match.opponentUsername',
-        'match.eloChange',
         'match.durationSeconds',
         'match.createdAt',
         'user.id',

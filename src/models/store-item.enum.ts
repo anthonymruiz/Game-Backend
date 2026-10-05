@@ -1,0 +1,19 @@
+export enum StoreItemCategory {
+  PAWN_COLOR = 'PAWN_COLOR',
+  PAWN_SKIN = 'PAWN_SKIN',
+  WALL_EFFECT = 'WALL_EFFECT',
+  MOVEMENT_TRAIL = 'MOVEMENT_TRAIL',
+  EXCLUSIVE_EMOTES = 'EXCLUSIVE_EMOTES'
+}
+
+export enum StoreItemRarity {
+  COMMON = 'COMMON',
+  RARE = 'RARE',
+  EPIC = 'EPIC',
+  LEGENDARY = 'LEGENDARY'
+}
+
+export enum StoreItemStatus {
+  AVAILABLE = 'AVAILABLE',
+  UNAVAILABLE = 'UNAVAILABLE'
+}

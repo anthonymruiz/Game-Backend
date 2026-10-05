@@ -6,7 +6,7 @@ import { AppDataSource } from './config/database.config.js';
 import { ENV } from './config/env.config.js';
 import { SocketManager } from './socket/socket.manager.js';
 import { RedisService } from './services/redis.service.js';
-import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedReports, seedMatchHistory } from './utils/seed.utils.js';
+import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedReports, seedMatchHistory, seedLevelProgressionConfig, seedRankTiers } from './utils/seed.utils.js';
 
 process.on('uncaughtException', (err) => {
   console.error('CRITICAL: Uncaught Exception:', err);
@@ -23,6 +23,8 @@ async function bootstrap() {
     console.log('Database connection established successfully.');
 
     await seedSuperAdmin();
+    await seedLevelProgressionConfig();
+    await seedRankTiers();
     await seedLeaderboardUsers();
     await seedSystemSettings();
     await seedReports();

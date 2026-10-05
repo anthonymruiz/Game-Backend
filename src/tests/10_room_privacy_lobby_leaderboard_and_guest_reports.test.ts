@@ -1,8 +1,13 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import { In } from 'typeorm';
 import { setupTestEnvironment, teardownTestEnvironment, makeRequest } from './test-helper.js';
 import { container } from 'tsyringe';
 import { RoomService } from '../services/room.service.js';
+import { AppDataSource } from '../config/database.config.js';
+import { MatchHistory } from '../models/match-history.entity.js';
+import { User } from '../models/user.entity.js';
+import { Stats } from '../models/stats.entity.js';
 
 describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Leaderboard', () => {
   let app: any;
@@ -130,13 +135,120 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
     const lbRes = await makeRequest(app, 'GET', '/api/users/leaderboard');
     assert.strictEqual(lbRes.status, 200);
     assert.ok(Array.isArray(lbRes.body.leaderboard));
+    assert.ok(lbRes.body.leaderboard.length <= 100);
+    assert.ok(Array.isArray(lbRes.body.ranks));
+    assert.ok(lbRes.body.ranks.every((rank: { minXp: number; maxXp: number }) =>
+      Number.isInteger(rank.minXp) && Number.isInteger(rank.maxXp)
+    ));
 
     if (lbRes.body.leaderboard.length > 0) {
       const topPlayer = lbRes.body.leaderboard[0];
       assert.ok(topPlayer.rank >= 1);
       assert.ok(topPlayer.username);
       assert.ok(['BRONZE', 'SILVER', 'GOLD', 'DIAMOND'].includes(topPlayer.tier));
-      assert.ok(['Principiante', 'Intermedio', 'Avanzado'].includes(topPlayer.level));
+      assert.ok(Number.isInteger(topPlayer.level) && topPlayer.level >= 1 && topPlayer.level <= 100);
+      assert.ok(topPlayer.rankInfo.rankKey);
+      assert.equal(topPlayer.rankInfo.xp, topPlayer.xp);
+      assert.ok(lbRes.body.leaderboard.every((player: { wins: number }, index: number, players: { wins: number }[]) =>
+        index === 0 || players[index - 1].wins >= player.wins
+      ));
+
+      const filtered = await makeRequest(
+        app,
+        'GET',
+        `/api/users/leaderboard?rankKey=${encodeURIComponent(topPlayer.rankInfo.rankKey)}`
+      );
+      assert.strictEqual(filtered.status, 200);
+      assert.ok(filtered.body.leaderboard.length <= 100);
+      assert.ok(filtered.body.leaderboard.every((player: { rankInfo: { rankKey: string } }) =>
+        player.rankInfo.rankKey === topPlayer.rankInfo.rankKey
+      ));
+    }
+  });
+
+  it('10.6 Leaderboard groups match results by winning player for today and all history', async () => {
+    const repository = AppDataSource.getRepository(MatchHistory);
+    const userRepository = AppDataSource.getRepository(User);
+    const statsRepository = AppDataSource.getRepository(Stats);
+    const prefix = `leaderboard-period-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const secondRegistration = await makeRequest(app, 'POST', '/api/auth/register', {
+      username: `tieUser${Math.floor(Math.random() * 1000000)}`,
+      email: `tie-${Date.now()}-${Math.random().toString(36).slice(2)}@test.com`,
+      password: 'password123'
+    });
+    assert.strictEqual(secondRegistration.status, 201);
+    const secondUserId = secondRegistration.body.user.id as string;
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayWins = Array.from({ length: 200 }, (_, index) => repository.create({
+      userId: normalUserId,
+      matchId: `${prefix}-today-${index}`,
+      mode: '1v1',
+      result: 'win',
+      createdAt: new Date(todayStart.getTime() + 60_000 + index)
+    }));
+    const todayLoss = repository.create({
+      userId: normalUserId,
+      matchId: `${prefix}-today-loss`,
+      mode: '1v1',
+      result: 'loss',
+      createdAt: new Date(todayStart.getTime() + 120_000)
+    });
+    const previousWin = repository.create({
+      userId: normalUserId,
+      matchId: `${prefix}-previous`,
+      mode: '1v1',
+      result: 'win',
+      createdAt: new Date(todayStart.getTime() - 1)
+    });
+    const tiedTodayWins = Array.from({ length: 200 }, (_, index) => repository.create({
+      userId: secondUserId,
+      matchId: `${prefix}-tied-today-${index}`,
+      mode: '1v1',
+      result: 'win',
+      createdAt: new Date(todayStart.getTime() + 60_000 + index)
+    }));
+    const matchIds = [...todayWins, todayLoss, previousWin, ...tiedTodayWins].map(match => match.matchId);
+    const normalUser = await userRepository.findOne({ where: { id: normalUserId }, relations: { stats: true } });
+    const secondUser = await userRepository.findOne({ where: { id: secondUserId }, relations: { stats: true } });
+    assert.ok(normalUser?.stats);
+    assert.ok(secondUser?.stats);
+    const previousNormalWins = normalUser.stats.wins;
+    normalUser.stats.wins = 10;
+    secondUser.stats.wins = 20;
+
+    try {
+      await statsRepository.save([normalUser.stats, secondUser.stats]);
+      await repository.insert([...todayWins, todayLoss, previousWin, ...tiedTodayWins]);
+
+      const today = await makeRequest(app, 'GET', '/api/users/leaderboard?period=today');
+      assert.strictEqual(today.status, 200);
+      const todayPlayer = today.body.leaderboard.find((player: { id: string }) => player.id === normalUserId);
+      assert.ok(todayPlayer);
+      assert.equal(todayPlayer.wins, 200);
+      assert.equal(todayPlayer.losses, 1);
+      assert.equal(todayPlayer.totalGames, 201);
+      const secondTodayPlayer = today.body.leaderboard.find((player: { id: string }) => player.id === secondUserId);
+      assert.ok(secondTodayPlayer);
+      assert.equal(secondTodayPlayer.wins, 200);
+      assert.ok(today.body.leaderboard.findIndex((player: { id: string }) => player.id === secondUserId) <
+        today.body.leaderboard.findIndex((player: { id: string }) => player.id === normalUserId));
+
+      const history = await makeRequest(app, 'GET', '/api/users/leaderboard?period=history');
+      assert.strictEqual(history.status, 200);
+      const historyPlayer = history.body.leaderboard.find((player: { id: string }) => player.id === normalUserId);
+      assert.ok(historyPlayer);
+      assert.equal(historyPlayer.wins, 201);
+      assert.equal(historyPlayer.totalGames, 202);
+
+      const invalidPeriod = await makeRequest(app, 'GET', '/api/users/leaderboard?period=week');
+      assert.strictEqual(invalidPeriod.status, 400);
+    } finally {
+      await repository.delete({ matchId: In(matchIds) });
+      normalUser.stats.wins = previousNormalWins;
+      await statsRepository.save(normalUser.stats);
+      await userRepository.delete(secondUserId);
+      await statsRepository.delete(secondUser.stats.id);
     }
   });
 });

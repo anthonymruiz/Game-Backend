@@ -15,6 +15,8 @@ userRoutes.put('/preferences', requireAuth, (req, res) => getController().update
 userRoutes.get('/leaderboard', (req, res) => getController().getLeaderboard(req, res));
 userRoutes.get('/me/stats', requireAuth, (req, res) => getController().getUserStats(req, res));
 userRoutes.get('/me/info', requireAuth, (req, res) => getController().getUserInfo(req, res));
+userRoutes.get('/me/daily-reward', requireAuth, (req, res) => getController().getDailyRewardStatus(req, res));
+userRoutes.post('/me/daily-reward', requireAuth, (req, res) => getController().claimDailyReward(req, res));
 userRoutes.get('/:userId/stats', (req, res) => getController().getUserStats(req, res));
 userRoutes.get('/me/devices', requireAuth, (req, res) => getController().getDevices(req, res));
 userRoutes.delete('/me/devices/others', requireAuth, (req, res) => getController().revokeOtherDevices(req, res));
@@ -23,4 +25,3 @@ userRoutes.delete('/account', requireAuth, (req, res) => getController().deleteA
 userRoutes.delete('/me', requireAuth, (req, res) => getController().deleteAccount(req, res));
 
 export default userRoutes;
-

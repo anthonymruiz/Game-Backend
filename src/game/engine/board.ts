@@ -116,6 +116,10 @@ export class Board {
         player.hasKillerItem = true;
         this.grid[newY][newX].hasBoost = null;
         this.boosts = this.boosts.filter(b => b.id !== boost.id);
+      } else if (boost.type === 'exchange_item') {
+        player.hasExchangeItem = true;
+        this.grid[newY][newX].hasBoost = null;
+        this.boosts = this.boosts.filter(b => b.id !== boost.id);
       } else if (boost.type === 'portal') {
         if (boost.targetX !== undefined && boost.targetY !== undefined) {
           const destOccupant = this.grid[boost.targetY][boost.targetX].hasPlayer;
@@ -355,9 +359,10 @@ export class Board {
     return true;
   }
 
-  public getBotAction(botId: string): { type: 'move'; x: number; y: number } | { type: 'wall'; x: number; y: number; isHorizontal: boolean } | null {
+  public getBotAction(botId: string, isTeamMode: boolean = false): { type: 'move'; x: number; y: number } | { type: 'wall'; x: number; y: number; isHorizontal: boolean } | null {
     const bot = this.players.get(botId);
     if (!bot) return null;
+    const isDuelMode = !isTeamMode && this.players.size === 2;
 
     // Separate all other players into enemies and teammates based on team
     const enemies: Player[] = [];
@@ -365,7 +370,7 @@ export class Board {
 
     for (const [id, p] of this.players.entries()) {
       if (id === botId) continue;
-      if (bot.team !== undefined && bot.team !== 0 && p.team === bot.team) {
+      if (isTeamMode && bot.team !== undefined && p.team === bot.team) {
         teammates.push(p);
       } else {
         enemies.push(p);
@@ -387,6 +392,14 @@ export class Board {
       const p = this.findShortestPath(t.id);
       teammateDists.set(t.id, p.length > 0 ? p.length - 1 : Infinity);
     });
+
+    if (bot.wallsLeft > 0) {
+      const portalThreats = enemies.flatMap(enemy => this.getBeneficialPortalThreats(enemy));
+      if (portalThreats.length > 0) {
+        const defenseWall = this.getPortalDefenseWall(botId, botDist, teammates, teammateDists, portalThreats);
+        if (defenseWall) return { type: 'wall', ...defenseWall };
+      }
+    }
 
     // Find the leading enemy (the one closest to winning)
     let leadingEnemy: Player | null = null;
@@ -453,6 +466,8 @@ export class Board {
                   if (!harmsTeammate) {
                     // Evaluate impact on enemies
                     let currentMaxIncreaseForWall = 0;
+                    let leadingEnemyIncrease = 0;
+                    let affectedEnemies = 0;
                     let wallScore = -(botIncrease * 40);
 
                     for (const e of enemies) {
@@ -469,16 +484,28 @@ export class Board {
                       }
 
                       if (eIncrease >= 1) {
+                        affectedEnemies++;
                         const isLeading = leadingEnemy && e.id === leadingEnemy.id;
+                        if (isLeading) leadingEnemyIncrease = eIncrease;
                         const weight = isLeading ? 120 : 70;
                         const distToEnemy = Math.abs(wx - e.x) + Math.abs(wy - e.y);
                         wallScore += (eIncrease * weight) - (distToEnemy * 2);
                       }
                     }
 
-                    if (currentMaxIncreaseForWall >= 1 && wallScore > bestScore) {
+                    const hasMultiplayerImpact = leadingEnemyIncrease >= 1
+                      || (enemies.length > 1 && affectedEnemies === enemies.length);
+                    const usefulEnemyIncrease = isDuelMode
+                      ? currentMaxIncreaseForWall
+                      : leadingEnemyIncrease >= 1
+                        ? leadingEnemyIncrease
+                        : hasMultiplayerImpact
+                          ? 1
+                          : 0;
+
+                    if (usefulEnemyIncrease >= 1 && wallScore > bestScore) {
                       bestScore = wallScore;
-                      maxEnemyIncrease = currentMaxIncreaseForWall;
+                      maxEnemyIncrease = usefulEnemyIncrease;
                       bestWall = { x: wx, y: wy, isHorizontal: isHoriz };
                     }
                   }
@@ -494,16 +521,23 @@ export class Board {
       // Decide whether to place wall or move pawn:
       if (bestWall && maxEnemyIncrease >= 1) {
         const isCriticalBlock = maxEnemyIncrease >= 2;
-        const isEnemyClose = minEnemyDist <= 6;
-        const isEnemyAheadOrEqual = minEnemyDist <= botDist;
-        const isStartOfGame = minEnemyDist >= 7 && bot.wallsLeft >= 9;
+        const isEnemyClose = minEnemyDist <= (isDuelMode ? 6 : bot.targetX !== undefined ? 3 : 6);
+        const isEnemyAheadOrEqual = isDuelMode ? minEnemyDist <= botDist : minEnemyDist < botDist;
+        const isStartOfGame = isDuelMode
+          ? minEnemyDist >= 7 && bot.wallsLeft >= 9
+          : isTeamMode
+            ? minEnemyDist >= 7
+            : bot.targetX !== undefined
+              ? minEnemyDist >= Math.floor(this.size / 2)
+              : minEnemyDist >= 7;
 
-        if (isCriticalBlock) {
+        if (isCriticalBlock && (isDuelMode || (!isStartOfGame && (isEnemyClose || isEnemyAheadOrEqual)))) {
           return { type: 'wall', ...bestWall };
         }
 
         if (!isStartOfGame && (isEnemyClose || isEnemyAheadOrEqual)) {
-          if (Math.random() < 0.65) {
+          const wallChance = isDuelMode ? 0.65 : isTeamMode ? 0.35 : 0.25;
+          if (Math.random() < wallChance) {
             return { type: 'wall', ...bestWall };
           }
         }
@@ -577,8 +611,8 @@ export class Board {
     return null;
   }
 
-  public getBestMove(playerId: string): { x: number; y: number } | null {
-    const action = this.getBotAction(playerId);
+  public getBestMove(playerId: string, isTeamMode: boolean = false): { x: number; y: number } | null {
+    const action = this.getBotAction(playerId, isTeamMode);
     if (action && action.type === 'move') {
       return { x: action.x, y: action.y };
     }
@@ -588,6 +622,106 @@ export class Board {
     }
     const validMoves = this.getValidMoves(playerId);
     return validMoves.length > 0 ? { x: validMoves[0].x, y: validMoves[0].y } : null;
+  }
+
+  private getBeneficialPortalThreats(player: Player): { player: Player; portal: Boost; distance: number }[] {
+    if (player.isDead) return [];
+
+    const normalDistance = this.getShortestPathLength(player.x, player.y, player.targetY, player.targetX, player.id);
+    return this.boosts.flatMap(portal => {
+      if (
+        portal.type !== 'portal'
+        || portal.targetX === undefined
+        || portal.targetY === undefined
+        || this.grid[portal.targetY]?.[portal.targetX]?.hasPlayer
+      ) {
+        return [];
+      }
+
+      const pathToPortal = this.findShortestPathToGoal(player.x, player.y, portal.y, portal.x);
+      const distance = pathToPortal.length - 1;
+      if (distance !== 1) return [];
+
+      const distanceAfterPortal = this.getShortestPathLength(
+        portal.targetX,
+        portal.targetY,
+        player.targetY,
+        player.targetX
+      );
+      return distance + distanceAfterPortal < normalDistance
+        ? [{ player, portal, distance }]
+        : [];
+    });
+  }
+
+  private getPortalDefenseWall(
+    botId: string,
+    botDistance: number,
+    teammates: Player[],
+    teammateDistances: Map<string, number>,
+    threats: { player: Player; portal: Boost; distance: number }[]
+  ): { x: number; y: number; isHorizontal: boolean } | null {
+    let bestWall: { x: number; y: number; isHorizontal: boolean } | null = null;
+    let bestScore = -Infinity;
+
+    for (let x = 0; x < this.size - 1; x++) {
+      for (let y = 0; y < this.size - 1; y++) {
+        for (const isHorizontal of [true, false]) {
+          const wall = new Wall('portal-defense', botId, x, y, isHorizontal);
+          if (!this.canPlaceWall(wall)) continue;
+
+          this.walls.push(wall);
+          let score = -Infinity;
+
+          if (this.isValidState()) {
+            const newBotDistance = this.getShortestPathLength(
+              this.players.get(botId)!.x,
+              this.players.get(botId)!.y,
+              this.players.get(botId)!.targetY,
+              this.players.get(botId)!.targetX,
+              botId
+            );
+            const botPathIncrease = newBotDistance - botDistance;
+            const harmsTeammate = teammates.some(teammate => {
+              const newDistance = this.getShortestPathLength(
+                teammate.x,
+                teammate.y,
+                teammate.targetY,
+                teammate.targetX,
+                teammate.id
+              );
+              return newDistance > (teammateDistances.get(teammate.id) ?? Infinity);
+            });
+
+            if (newBotDistance !== Infinity && botPathIncrease <= 1 && !harmsTeammate) {
+              for (const threat of threats) {
+                const newPathToPortal = this.findShortestPathToGoal(
+                  threat.player.x,
+                  threat.player.y,
+                  threat.portal.y,
+                  threat.portal.x
+                );
+                const newDistance = newPathToPortal.length - 1;
+                if (newDistance > threat.distance) {
+                  const increase = newDistance - threat.distance;
+                  const proximity = Math.abs(x - threat.player.x) + Math.abs(y - threat.player.y);
+                  score = Math.max(score, increase * 100 - proximity * 2 - Math.max(0, botPathIncrease) * 40);
+                }
+              }
+            }
+          }
+
+          this.walls.pop();
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestWall = { x, y, isHorizontal };
+          }
+        }
+      }
+    }
+
+    return bestWall;
   }
 
   public spawnSingleRandomBoost() {
@@ -660,6 +794,14 @@ export class Board {
   }
 
   public spawnKillerItem(): boolean {
+    return this.spawnSpecialItem('killer_item');
+  }
+
+  public spawnExchangeItem(): boolean {
+    return this.spawnSpecialItem('exchange_item');
+  }
+
+  private spawnSpecialItem(type: 'killer_item' | 'exchange_item'): boolean {
     const mid = Math.floor(this.size / 2);
     const emptyCells: { x: number; y: number }[] = [];
     for (let y = 0; y < this.size; y++) {
@@ -674,8 +816,8 @@ export class Board {
     if (emptyCells.length === 0) return false;
     const randIdx = Math.floor(Math.random() * emptyCells.length);
     const chosen = emptyCells[randIdx];
-    const boostId = `boost_killer_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const boost = new Boost(boostId, 'killer_item', chosen.x, chosen.y);
+    const boostId = `boost_${type}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const boost = new Boost(boostId, type, chosen.x, chosen.y);
     this.boosts.push(boost);
     this.grid[chosen.y][chosen.x].hasBoost = boostId;
     return true;
@@ -697,7 +839,17 @@ export class Board {
         wallsLeft: p.wallsLeft,
         isDead: p.isDead,
         hasKillerItem: p.hasKillerItem,
+        hasExchangeItem: p.hasExchangeItem,
         color: p.color,
+        pawnColor: p.pawnColor,
+        pawnColorItemId: p.pawnColorItemId,
+        skinItemId: p.skinItemId,
+        skinIcon: p.skinIcon,
+        skinAllowsColor: p.skinAllowsColor,
+        movementTrailId: p.movementTrailId,
+        movementTrailIcon: p.movementTrailIcon,
+        wallEffectId: p.wallEffectId,
+        wallEffectIcon: p.wallEffectIcon,
         team: p.team,
         avatarUrl: p.avatarUrl,
         provider: p.provider

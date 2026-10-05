@@ -49,3 +49,15 @@ export const requireRole = (roles: string[]) => {
 };
 
 export const requireAuth = requireRole(['user', 'admin', 'superadmin']);
+
+export const optionalAuth = (req: Request, _res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      req.user = jwt.verify(authHeader.split(' ')[1], ENV.JWT_SECRET) as any;
+    } catch {
+      req.user = undefined;
+    }
+  }
+  next();
+};

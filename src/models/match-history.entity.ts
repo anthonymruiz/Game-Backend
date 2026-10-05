@@ -23,8 +23,5 @@ export class MatchHistory extends AbstractBaseEntity {
   opponentUsername?: string;
 
   @Column({ type: 'int', nullable: true })
-  eloChange?: number;
-
-  @Column({ type: 'int', nullable: true })
   durationSeconds?: number;
 }

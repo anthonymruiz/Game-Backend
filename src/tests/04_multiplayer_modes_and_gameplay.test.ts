@@ -66,12 +66,36 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
+  it('Should terminate a bot match when its human player abandons it', () => {
+    const players = [
+      { id: 'human', username: 'Human', isGuest: false, color: '#FF3B30' },
+      { id: 'bot_1', username: 'BOT 1', isGuest: true, color: '#007AFF' },
+      { id: 'bot_2', username: 'BOT 2', isGuest: true, color: '#34C759' },
+      { id: 'bot_3', username: 'BOT 3', isGuest: true, color: '#FFCC00' }
+    ];
+    let finishedEvent: { winner: string | null; abandoned: boolean } | null = null;
+    const game = new GameInstance('bot_match_abandon', '4-FFA', players, (event, data) => {
+      if (event === 'gameFinished') finishedEvent = data;
+    });
+
+    game.start();
+    assert.equal(game.hasBots(), true);
+    game.abandon();
+
+    assert.equal(game.state, 'finished');
+    assert.deepEqual(finishedEvent, { winner: null, durationSeconds: 1, abandoned: true });
+    game.destroy();
+  });
+
   it('Should execute valid wall placement and prevent overlapping walls', () => {
     const room = roomService.createRoom('p1', 'Player1', true, 'Wall Room', '1v1');
     roomService.joinRoom(room.id, 'p2', 'Player2', true);
 
     const game = new GameInstance(room.id, room.mode, room.players, () => {});
     game.start();
+
+    assert.equal(game.hasSpawnedExchangeItem, false);
+    assert.equal(game.board.boosts.some(boost => boost.type === 'exchange_item'), false);
 
     // Player 1 places a horizontal wall at (2, 2)
     const wall1Success = game.executeWall('p1', 'wall1', 2, 2, true);
@@ -115,6 +139,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const p2 = game.board.players.get('p2')!;
     p1.hasKillerItem = true;
 
+    assert.equal(game.beginBoostDecision('p1', 'killer_item'), true);
     const killSuccess = game.executeKillerItem('p1', 'p2');
     assert.equal(killSuccess, true);
     assert.equal(p2.isDead, true);
@@ -125,14 +150,98 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(game.executeWall('p2', 'w1', 1, 1, true), false);
 
     // Eliminate p3 and p4
+    game.currentTurnIndex = game.playersList.indexOf('p1');
     p1.hasKillerItem = true;
+    assert.equal(game.beginBoostDecision('p1', 'killer_item'), true);
     game.executeKillerItem('p1', 'p3');
+    game.currentTurnIndex = game.playersList.indexOf('p1');
     p1.hasKillerItem = true;
+    assert.equal(game.beginBoostDecision('p1', 'killer_item'), true);
     game.executeKillerItem('p1', 'p4');
 
     assert.equal(game.state, 'finished');
     assert.equal(game.winner, 'p1');
 
+    game.destroy();
+  });
+
+  it('Should spawn one exchange item in multiplayer modes and freeze the turn until the selected swap resolves', () => {
+    const room = roomService.createRoom('swap1', 'Player1', false, 'Swap 2v2', '2v2');
+    roomService.joinRoom(room.id, 'swap2', 'Player2', false);
+    roomService.joinRoom(room.id, 'swap3', 'Player3', false);
+    roomService.joinRoom(room.id, 'swap4', 'Player4', false);
+
+    const emittedEvents: string[] = [];
+    const game = new GameInstance(room.id, room.mode, room.players, event => emittedEvents.push(event));
+    game.start();
+
+    assert.equal(game.hasSpawnedExchangeItem, true);
+    assert.equal(game.board.boosts.filter(boost => boost.type === 'exchange_item').length, 1);
+    assert.equal(game.board.boosts.filter(boost => boost.type === 'exchange_item')[0]?.x === 5 &&
+      game.board.boosts.filter(boost => boost.type === 'exchange_item')[0]?.y === 5, false);
+
+    const exchanger = game.board.players.get('swap1')!;
+    const target = game.board.players.get('swap3')!;
+    const exchangeBoost = game.board.boosts.find(boost => boost.type === 'exchange_item')!;
+    const exchangeBoostCell = game.board.grid[exchangeBoost.y][exchangeBoost.x];
+    exchangeBoostCell.hasBoost = null;
+    const moveToBoost = game.board.getValidMoves(exchanger.id)[0]!;
+    exchangeBoost.x = moveToBoost.x;
+    exchangeBoost.y = moveToBoost.y;
+    game.board.grid[moveToBoost.y][moveToBoost.x].hasBoost = exchangeBoost.id;
+    const exchangerPosition = { x: moveToBoost.x, y: moveToBoost.y };
+    const targetPosition = { x: target.x, y: target.y };
+
+    assert.equal(game.executeMove('swap1', moveToBoost.x, moveToBoost.y), true);
+    assert.equal(exchanger.hasExchangeItem, true);
+    assert.equal(game.getCurrentPlayer(), 'swap1');
+    assert.equal(game.executeMove('swap2', target.x, target.y + 1), false);
+    assert.equal(game.executeWall('swap2', 'blocked-wall', 1, 1, true), false);
+    assert.equal(game.executeMove('swap1', exchanger.x, exchanger.y + 1), false);
+    assert.equal(game.executeWall('swap1', 'blocked-active-wall', 1, 1, true), false);
+    assert.equal(game.executeExchangeItem('swap1', 'missing-player'), false);
+    assert.equal(exchanger.hasExchangeItem, true);
+
+    assert.equal(game.executeExchangeItem('swap1', 'swap3'), true);
+    assert.deepEqual({ x: exchanger.x, y: exchanger.y }, targetPosition);
+    assert.deepEqual({ x: target.x, y: target.y }, exchangerPosition);
+    assert.equal(game.board.grid[targetPosition.y][targetPosition.x].hasPlayer, exchanger.id);
+    assert.equal(game.board.grid[exchangerPosition.y][exchangerPosition.x].hasPlayer, target.id);
+    assert.equal(exchanger.hasExchangeItem, false);
+    assert.notEqual(game.getCurrentPlayer(), 'swap1');
+    assert.ok(emittedEvents.includes('boostDecisionStarted'));
+    assert.ok(emittedEvents.includes('playersExchanged'));
+    game.destroy();
+  });
+
+  it('Should discard a boost and continue the match when the 10-second selection expires', async () => {
+    const room = roomService.createRoom('timeout1', 'Player1', false, 'Swap timeout', '2v2');
+    roomService.joinRoom(room.id, 'timeout2', 'Player2', false);
+    roomService.joinRoom(room.id, 'timeout3', 'Player3', false);
+    roomService.joinRoom(room.id, 'timeout4', 'Player4', false);
+
+    const expiredTypes: string[] = [];
+    const game = new GameInstance(room.id, room.mode, room.players, (event, data) => {
+      if (event === 'boostDecisionExpired') expiredTypes.push(data.type);
+    });
+    game.start();
+    const player = game.board.players.get('timeout1')!;
+    player.hasExchangeItem = true;
+    assert.equal(game.beginBoostDecision('timeout1', 'exchange_item'), true);
+
+    await new Promise(resolve => setTimeout(resolve, 10_100));
+
+    assert.deepEqual(expiredTypes, ['exchange_item']);
+    assert.equal(player.hasExchangeItem, false);
+    assert.equal(game.getCurrentPlayer(), 'timeout2');
+
+    game.currentTurnIndex = game.playersList.indexOf('timeout1');
+    player.hasKillerItem = true;
+    assert.equal(game.beginBoostDecision('timeout1', 'killer_item'), true);
+    await new Promise(resolve => setTimeout(resolve, 10_100));
+    assert.deepEqual(expiredTypes, ['exchange_item', 'killer_item']);
+    assert.equal(player.hasKillerItem, false);
+    assert.notEqual(game.getCurrentPlayer(), 'timeout1');
     game.destroy();
   });
 });

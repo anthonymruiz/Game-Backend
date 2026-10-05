@@ -18,7 +18,9 @@ export class Wall {
     public ownerId: string,
     public x: number,
     public y: number,
-    public isHorizontal: boolean
+    public isHorizontal: boolean,
+    public wallEffectId?: string,
+    public wallEffectIcon?: string
   ) {}
 }
 
@@ -27,6 +29,7 @@ export class Player {
   public startY: number;
   public isDead: boolean = false;
   public hasKillerItem: boolean = false;
+  public hasExchangeItem: boolean = false;
 
   constructor(
     public id: string,
@@ -43,7 +46,16 @@ export class Player {
     startX?: number,
     startY?: number,
     public avatarUrl?: string,
-    public provider?: string
+    public provider?: string,
+    public pawnColor?: string,
+    public pawnColorItemId?: string,
+    public skinItemId?: string,
+    public skinIcon?: string,
+    public skinAllowsColor?: boolean,
+    public movementTrailId?: string,
+    public movementTrailIcon?: string,
+    public wallEffectId?: string,
+    public wallEffectIcon?: string
   ) {
     this.startX = startX ?? x;
     this.startY = startY ?? y;
@@ -53,7 +65,7 @@ export class Player {
 export class Boost {
   constructor(
     public id: string,
-    public type: 'wall_pickup' | 'portal' | 'extra_wall' | 'killer_item',
+    public type: 'wall_pickup' | 'portal' | 'extra_wall' | 'killer_item' | 'exchange_item',
     public x: number,
     public y: number,
     public targetX?: number,

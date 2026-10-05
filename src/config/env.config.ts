@@ -5,6 +5,9 @@ dotenv.config();
 export const ENV = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:4200',
+  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
+  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',
   DB: {
     HOST: process.env.DB_HOST || 'localhost',
     PORT: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,

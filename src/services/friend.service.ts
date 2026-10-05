@@ -7,6 +7,7 @@ import { PresenceStatus } from '../models/presence.enum.js';
 import { Notification } from '../models/notification.entity.js';
 import { SocketManager } from '../socket/socket.manager.js';
 import { NotificationService } from './notification.service.js';
+import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
 
 @singleton()
 export class FriendService {
@@ -200,6 +201,7 @@ export class FriendService {
   }
 
   public async getFriends(userId: string) {
+    const progressionConfig = await container.resolve(LevelProgressionService).getConfiguration();
     const friendships = await this.repo.find({
       where: [
         { requester: { id: userId }, status: FriendshipStatus.ACCEPTED },
@@ -223,7 +225,9 @@ export class FriendService {
       const totalGames = friend.stats?.totalGames || 0;
       const losses = friend.stats?.losses || Math.max(0, totalGames - wins);
       const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
-      const elo = 1000 + (wins * 15) - (losses * 10);
+      const points = friend.stats?.points || 0;
+      const xp = friend.stats?.xp || 0;
+      const level = getLevelProgress(xp, progressionConfig).level;
 
       const activeGame = gameService ? gameService.getGameByPlayerId(friend.id) : null;
       const isCurrentlyPlaying = !!activeGame && activeGame.state === 'playing';
@@ -242,7 +246,9 @@ export class FriendService {
           wins,
           losses,
           winRate,
-          elo
+          points,
+          xp,
+          level
         }
       };
     });
@@ -341,6 +347,7 @@ export class FriendService {
           avatarUrl: u.avatarUrl,
           isOnline: u.isOnline,
           wins: u.stats?.wins || 0,
+          xp: u.stats?.xp || 0,
           totalGames: u.stats?.totalGames || 0,
           status: friendship.status,
           friendshipId: friendship.friendshipId

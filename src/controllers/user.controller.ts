@@ -4,17 +4,71 @@ import { UserService } from '../services/user.service.js';
 import { AuthService } from '../services/auth.service.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { Preferences } from '../models/preferences.entity.js';
+import { DailyRewardService } from '../services/daily-reward.service.js';
+import { RankTierService } from '../services/rank-tier.service.js';
 
 @injectable()
 export class UserController {
   private userService: UserService;
   private authService: AuthService;
   private userRepository: UserRepository;
+  private dailyRewardService: DailyRewardService;
 
   constructor() {
     this.userService = container.resolve(UserService);
     this.authService = container.resolve(AuthService);
     this.userRepository = container.resolve(UserRepository);
+    this.dailyRewardService = container.resolve(DailyRewardService);
+  }
+
+  public getDailyRewardStatus = async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      res.status(200).json(await this.dailyRewardService.getStatus(userId));
+    } catch (error) {
+      this.respondDailyRewardError(error, res);
+    }
+  };
+
+  public claimDailyReward = async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      res.status(200).json(await this.dailyRewardService.claim(userId));
+    } catch (error) {
+      this.respondDailyRewardError(error, res);
+    }
+  };
+
+  private respondDailyRewardError(error: unknown, res: Response): void {
+    const code = error instanceof Error ? error.message : 'DAILY_REWARD_FAILED';
+    if (code === 'USER_NOT_FOUND') {
+      res.status(404).json({ error: code });
+      return;
+    }
+    if (code === 'DAILY_REWARD_ALREADY_CLAIMED') {
+      res.status(409).json({ error: code });
+      return;
+    }
+    if (code === 'DAILY_REWARD_NOT_ELIGIBLE') {
+      res.status(403).json({ error: code });
+      return;
+    }
+    if (code === 'PROGRESSION_CONFIG_NOT_FOUND') {
+      res.status(503).json({ error: code });
+      return;
+    }
+    console.error('Daily reward request failed:', error);
+    res.status(500).json({ error: 'DAILY_REWARD_FAILED' });
   }
 
   public updateProfile = async (req: Request, res: Response): Promise<void> => {
@@ -92,10 +146,37 @@ export class UserController {
 
   public getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     try {
-      const limit = Number(req.query.limit) || 100;
-      const leaderboard = await this.userService.getLeaderboard(limit);
-      res.status(200).json({ leaderboard });
+      const rankKey = typeof req.query.rankKey === 'string' && req.query.rankKey !== 'all'
+        ? req.query.rankKey
+        : undefined;
+      const period = typeof req.query.period === 'string' ? req.query.period : 'history';
+      if (period !== 'today' && period !== 'history') {
+        res.status(400).json({ error: 'INVALID_LEADERBOARD_PERIOD' });
+        return;
+      }
+      const leaderboard = await this.userService.getLeaderboard(100, rankKey, period);
+      const ranks = await container.resolve(RankTierService).getRanks();
+      res.status(200).json({
+        leaderboard,
+        ranks: ranks.map(({ key, emoji, badgeBg, textColor, configuration, minXp, maxXp }) => ({
+          key,
+          emoji,
+          badgeBg,
+          textColor,
+          configuration,
+          minXp,
+          maxXp
+        }))
+      });
     } catch (error: any) {
+      if (error instanceof Error && error.message === 'INVALID_RANK_KEY') {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      if (error instanceof Error && error.message === 'INVALID_LEADERBOARD_PERIOD') {
+        res.status(400).json({ error: error.message });
+        return;
+      }
       res.status(500).json({ error: error.message });
     }
   };
