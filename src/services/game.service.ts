@@ -58,6 +58,9 @@ export class GameService {
         console.error(`Could not initialize badge tracking for ${event} event from ${playerId}:`, error);
       }
     };
+    game.onPrivateStateChange = (playerId, event, data) => {
+      this.io.of('/game').to(playerId).emit(event, data);
+    };
 
     this.activeGames.set(matchId, game);
     game.start();
@@ -77,7 +80,9 @@ export class GameService {
     this.activeGames.delete(matchId);
     data.isRanked = isRanked;
     const matchIncludesBots = hasBotPlayers(roomPlayers);
-    if (data.abandoned && !matchIncludesBots) {
+    if (mode === 'labyrinth') {
+      data.rewardsByPlayer = {};
+    } else if (data.abandoned && !matchIncludesBots) {
       data.rewardsByPlayer = {};
     } else {
       try {
@@ -106,7 +111,7 @@ export class GameService {
 
       const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
       const humanPlayers = roomPlayers.filter(player => player?.id && !player.id.startsWith('bot_'));
-      const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA';
+      const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' || mode === 'labyrinth';
       const matchmakingNamespace = this.io.of('/matchmaking');
 
       if (!data.abandoned && isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
@@ -118,7 +123,7 @@ export class GameService {
           isPrivate: roomIsPrivate,
           hostId: playerIds[0],
           players: roomPlayers,
-          maxPlayers: mode === '6-FFA' ? 6 : 4,
+          maxPlayers: mode === '6-FFA' || mode === 'labyrinth' ? 6 : 4,
           status: 'WAITING',
           createdAt: new Date()
         };

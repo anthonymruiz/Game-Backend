@@ -48,12 +48,12 @@ export class VsAiRules extends Standard1v1Rules {
   public override mode: GameMode = 'vs_ai';
 }
 
-// 4-Player Free For All (11x11 grid, 5 walls, goal is center cell (5,5))
+// 4-Player Free For All (11x11 grid, 7 walls, goal is center cell (5,5))
 export class FourPlayerFfaRules implements IGameModeRules {
   public mode: GameMode = '4-FFA';
   public boardSize = 11;
   public maxPlayers = 4;
-  public wallsPerPlayer = 5;
+  public wallsPerPlayer = 7;
   public isTeamMode = false;
 
   public getPlayerStartConfig(index: number, totalPlayers: number, size: number): IPlayerStartConfig {
@@ -82,12 +82,12 @@ export class FourPlayerFfaRules implements IGameModeRules {
   }
 }
 
-// 2v2 Team Mode (11x11 grid, 6 walls, corners starting positions, team sync)
+// 2v2 Team Mode (11x11 grid, 7 walls, corners starting positions, team sync)
 export class TwoVsTwoRules implements IGameModeRules {
   public mode: GameMode = '2v2';
   public boardSize = 11;
   public maxPlayers = 4;
-  public wallsPerPlayer = 6;
+  public wallsPerPlayer = 7;
   public isTeamMode = true;
 
   public getPlayerStartConfig(index: number, totalPlayers: number, size: number, team?: number, teamMemberIndex?: number): IPlayerStartConfig {
@@ -110,12 +110,12 @@ export class TwoVsTwoRules implements IGameModeRules {
   }
 }
 
-// 6-Player Free For All (13x13 grid, 5 walls, goal is center cell (6,6), random border spawn)
+// 6-Player Free For All (11x11 grid, 7 walls, goal is center cell (5,5), random border spawn)
 export class SixPlayerFfaRules implements IGameModeRules {
   public mode: GameMode = '6-FFA';
-  public boardSize = 13;
+  public boardSize = 11;
   public maxPlayers = 6;
-  public wallsPerPlayer = 5;
+  public wallsPerPlayer = 7;
   public isTeamMode = false;
 
   public getPlayerStartConfig(index: number, totalPlayers: number, size: number): IPlayerStartConfig {
@@ -154,6 +154,32 @@ export class SixPlayerFfaRules implements IGameModeRules {
   }
 }
 
+export class LabyrinthRules implements IGameModeRules {
+  public mode: GameMode = 'labyrinth';
+  public boardSize = 11;
+  public maxPlayers = 6;
+  public wallsPerPlayer = 0;
+  public isTeamMode = false;
+
+  public getPlayerStartConfig(index: number, totalPlayers: number, size: number): IPlayerStartConfig {
+    const mid = Math.floor(size / 2);
+    const centralSpawnOffsets = [
+      { x: 0, y: 0 },
+      { x: -1, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: -1 },
+      { x: 0, y: 1 },
+      { x: -1, y: -1 }
+    ];
+    const offset = centralSpawnOffsets[index % centralSpawnOffsets.length];
+    return { startX: mid + offset.x, startY: mid + offset.y };
+  }
+
+  public checkWinCondition(): boolean {
+    return false;
+  }
+}
+
 // Registry to dynamically fetch mode rules
 export class GameModeRegistry {
   private static modes: Map<string, IGameModeRules> = new Map([
@@ -161,7 +187,8 @@ export class GameModeRegistry {
     ['vs_ai', new VsAiRules()],
     ['4-FFA', new FourPlayerFfaRules()],
     ['2v2', new TwoVsTwoRules()],
-    ['6-FFA', new SixPlayerFfaRules()]
+    ['6-FFA', new SixPlayerFfaRules()],
+    ['labyrinth', new LabyrinthRules()]
   ]);
 
   public static get(mode: GameMode | string): IGameModeRules {

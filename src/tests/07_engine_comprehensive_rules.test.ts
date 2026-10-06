@@ -1,8 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { Board } from '../game/engine/board.js';
-import { Player, Wall } from '../game/engine/models.js';
-import { GameInstance } from '../game/engine/game-instance.js';
+import { Boost, Player, Wall } from '../game/engine/models.js';
+import { GameInstance, PLAYER_INACTIVITY_LIMIT_MS } from '../game/engine/game-instance.js';
 import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
 describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
@@ -160,7 +160,62 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
     assert.strictEqual(board.walls.length, 1);
   });
 
-  it('7.11 GameInstance Turn & Win Condition Engine', () => {
+  it('7.11 Ghost power crosses walls for three moves and then expires', () => {
+    const player = new Player('ghost_player', 'Ghost', false, 5, 4, 0, undefined, 5);
+    player.ghostTurnsRemaining = 3;
+    board.addPlayer(player);
+    board.walls.push(
+      new Wall('ghost_wall_1', 'other', 5, 4, true),
+      new Wall('ghost_wall_2', 'other', 5, 5, true),
+      new Wall('ghost_wall_3', 'other', 5, 6, true),
+      new Wall('ghost_wall_4', 'other', 5, 7, true)
+    );
+
+    assert.ok(board.getValidMoves(player.id).some(move => move.x === 5 && move.y === 5));
+    assert.strictEqual(board.movePlayer(player.id, 5, 5), true);
+    assert.strictEqual(player.ghostTurnsRemaining, 2);
+    assert.strictEqual(board.movePlayer(player.id, 5, 6), true);
+    assert.strictEqual(player.ghostTurnsRemaining, 1);
+    assert.strictEqual(board.movePlayer(player.id, 5, 7), true);
+    assert.strictEqual(player.ghostTurnsRemaining, 0);
+    assert.strictEqual(board.movePlayer(player.id, 5, 8), false);
+  });
+
+  it('7.12 Ghost boost pickup grants three moves and spawns on a reachable free cell', () => {
+    const player = new Player('ghost_picker', 'Ghost Picker', false, 5, 5, 0, undefined, 5);
+    board.addPlayer(player);
+
+    assert.strictEqual(board.spawnGhostItem(), true);
+    const boost = board.boosts.find(item => item.type === 'ghost')!;
+    assert.ok(!board.grid[boost.y][boost.x].hasPlayer);
+    const pathToBoost = board.findShortestPathToGoal(player.x, player.y, boost.y, boost.x);
+    assert.ok(pathToBoost.length > 0);
+    for (const step of pathToBoost.slice(1)) {
+      assert.strictEqual(board.movePlayer(player.id, step.x, step.y), true);
+    }
+    assert.strictEqual(player.ghostTurnsRemaining, 3);
+    assert.ok(!board.boosts.some(item => item.id === boost.id));
+  });
+
+  it('7.13 Placing a wall does not consume a ghost move', () => {
+    const roomPlayers = [
+      { id: 'ghost_wall_player', username: 'Ghost', isGuest: false, color: '#FF0000' },
+      { id: 'ghost_wall_rival', username: 'Rival', isGuest: false, color: '#00FF00' },
+      { id: 'ghost_wall_rival_2', username: 'Rival 2', isGuest: false, color: '#0000FF' },
+      { id: 'ghost_wall_rival_3', username: 'Rival 3', isGuest: false, color: '#FFFF00' }
+    ];
+    const game = new GameInstance('ghost_wall_turn_test', '4-FFA', roomPlayers, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+    const player = game.board.players.get('ghost_wall_player')!;
+    player.ghostTurnsRemaining = 3;
+
+    assert.strictEqual(game.executeWall(player.id, 'ghost_wall_test', 1, 1, true), true);
+    assert.strictEqual(player.ghostTurnsRemaining, 3);
+    assert.notStrictEqual(game.getCurrentPlayer(), player.id);
+    game.destroy();
+  });
+
+  it('7.14 GameInstance Turn & Win Condition Engine', () => {
     const roomPlayers = [
       { id: 'p1', username: 'Alice', isGuest: false, color: '#FF0000' },
       { id: 'p2', username: 'Bob', isGuest: false, color: '#00FF00' }
@@ -181,6 +236,44 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
     // Turn rotates to P2
     assert.strictEqual(game.getCurrentPlayer(), 'p2');
 
+    game.destroy();
+  });
+
+  it('7.15 Inactivity kicks a player after two minutes and activity resets the deadline', () => {
+    const roomPlayers = [
+      { id: 'inactive_1', username: 'Player 1', isGuest: false, color: '#FF0000' },
+      { id: 'inactive_2', username: 'Player 2', isGuest: false, color: '#00FF00' },
+      { id: 'inactive_3', username: 'Player 3', isGuest: false, color: '#0000FF' },
+      { id: 'inactive_4', username: 'Player 4', isGuest: false, color: '#FFFF00' }
+    ];
+    const emittedEvents: Array<{ event: string; data: any }> = [];
+    const game = new GameInstance('inactivity_test', '4-FFA', roomPlayers, (event, data) => {
+      emittedEvents.push({ event, data });
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+
+    game.recordPlayerActivity('inactive_2');
+    const lastActivityAt = Date.now();
+    game.checkPlayerInactivity('inactive_2', lastActivityAt + PLAYER_INACTIVITY_LIMIT_MS - 1);
+    assert.ok(game.playersList.includes('inactive_2'), 'activity immediately before the deadline keeps the player in game');
+
+    const inactivePlayer = game.board.players.get('inactive_3')!;
+    game.checkPlayerInactivity('inactive_3', Date.now() + PLAYER_INACTIVITY_LIMIT_MS);
+    assert.ok(!game.playersList.includes('inactive_3'), 'an inactive player is removed at the two-minute deadline');
+    assert.ok(!game.board.players.has('inactive_3'));
+    assert.equal(inactivePlayer.strikes, 0, 'the inactivity limit is independent of turn strikes');
+    assert.equal(game.getCurrentPlayer(), 'inactive_1', 'removing an off-turn player preserves the active turn');
+    const kickEvent = emittedEvents.find(({ event, data }) => event === 'playerKicked' && data.playerId === 'inactive_3');
+    assert.equal(kickEvent?.data.reason, 'inactivity');
+    assert.equal(kickEvent?.data.currentTurn, 'inactive_1');
+    assert.ok(!kickEvent?.data.board.players.inactive_3);
+
+    game.recordPlayerActivity('inactive_2');
+    const refreshedActivityAt = Date.now();
+    game.checkPlayerInactivity('inactive_2', refreshedActivityAt + PLAYER_INACTIVITY_LIMIT_MS - 1);
+    assert.ok(game.playersList.includes('inactive_2'), 'new activity restarts the inactivity deadline');
+    game.checkPlayerInactivity('inactive_2', Date.now() + PLAYER_INACTIVITY_LIMIT_MS);
+    assert.ok(!game.playersList.includes('inactive_2'), 'the player is removed after two full minutes without further activity');
     game.destroy();
   });
 });

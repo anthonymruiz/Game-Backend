@@ -6,6 +6,7 @@ import { RoomService, AVAILABLE_COLORS } from '../services/room.service.js';
 import { GameService } from '../services/game.service.js';
 import { GameInstance } from '../game/engine/game-instance.js';
 import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
+import { RoomStatus } from '../models/room-status.enum.js';
 
 describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
   let roomService: RoomService;
@@ -110,6 +111,16 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
 
     assert.notEqual(customRoom.id, quickMatchRoom.id);
     assert.equal(roomService.findRoomByUserId(userId)?.id, quickMatchRoom.id);
+  });
+
+  it('Active room lookup returns an in-progress game so a reconnect can resume it', () => {
+    const userId = 'user_rejoining_active_game';
+    const waitingRoom = roomService.createRoom(userId, 'RejoiningUser', false, 'Waiting room', '1v1');
+    const activeRoom = roomService.createRoom(userId, 'RejoiningUser', false, 'Active room', '2v2');
+    activeRoom.status = RoomStatus.PLAYING;
+
+    assert.notEqual(waitingRoom.id, activeRoom.id);
+    assert.equal(roomService.findRoomByUserId(userId)?.id, activeRoom.id);
   });
 
   it('Should enforce room max capacity for 1v1 mode (reject 3rd player)', () => {

@@ -69,6 +69,7 @@ export class RoomService {
       case '2v2': return 4;
       case '4-FFA': return 4;
       case '6-FFA': return 6;
+      case 'labyrinth': return 6;
       default: return 2;
     }
   }
@@ -135,7 +136,7 @@ export class RoomService {
       return null;
     }
 
-    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA') {
+    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA' && oldRoom.mode !== 'labyrinth') {
       return null;
     }
 
@@ -165,7 +166,7 @@ export class RoomService {
     }
 
     // Re-add bots if any were present in the previous match and mode supports bots
-    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2') {
+    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2' || newRoom.mode === 'labyrinth') {
       for (const _ of botPlayers) {
         if (newRoom.players.length < newRoom.maxPlayers) {
           try {
@@ -230,8 +231,8 @@ export class RoomService {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.hostId !== hostId) throw new Error('Only the room host can add bots.');
-    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2') {
-      throw new Error('Bots are allowed in 2v2, 4-FFA or 6-FFA modes.');
+    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2' && room.mode !== 'labyrinth') {
+      throw new Error('Bots are allowed in 2v2, 4-FFA, 6-FFA or Labyrinth modes.');
     }
     if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
 
@@ -558,11 +559,17 @@ export class RoomService {
 
   public getUserRoom(userId: string): IRoom | null {
     if (!userId) return null;
+    let activeGameRoom: IRoom | null = null;
     let quickMatchRoom: IRoom | null = null;
     let fallbackRoom: IRoom | null = null;
 
     for (const room of this.rooms.values()) {
-      if (room.status === RoomStatus.WAITING && room.players.some(p => p.id === userId)) {
+      if (!room.players.some(p => p.id === userId)) continue;
+      if (room.status === RoomStatus.PLAYING) {
+        if (!activeGameRoom || new Date(room.createdAt).getTime() > new Date(activeGameRoom.createdAt).getTime()) {
+          activeGameRoom = room;
+        }
+      } else if (room.status === RoomStatus.WAITING) {
         if (room.isQuickMatch) {
           quickMatchRoom = room;
         } else {
@@ -571,7 +578,7 @@ export class RoomService {
       }
     }
 
-    return quickMatchRoom || fallbackRoom;
+    return activeGameRoom || quickMatchRoom || fallbackRoom;
   }
 
   public findRoomByUserId(userId: string): IRoom | null {

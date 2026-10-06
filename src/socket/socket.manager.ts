@@ -447,10 +447,12 @@ export class SocketManager {
 
       socket.on('cancelRoom', (data: { roomId: string }) => {
         try {
+          const room = this.roomService.getRoom(data.roomId);
           this.roomService.cancelRoom(data.roomId, userId);
           const cancellation = {
             roomId: data.roomId,
             cancelledBy: userId,
+            isQuickMatch: room?.isQuickMatch === true,
             message: 'La partida fue cancelada por el anfitrión.'
           };
           matchmakingNs.to(data.roomId).emit('roomCancelled', cancellation);
@@ -542,6 +544,9 @@ export class SocketManager {
           }
           if (room.players.some(p => !p.color || p.color.trim() === '' || p.color === 'null')) {
             throw new Error('Todos los jugadores deben seleccionar un color válido antes de iniciar.');
+          }
+          if (room.mode === 'labyrinth' && room.players.filter(p => !p.id.startsWith('bot_')).length < 2) {
+            throw new Error('El modo Laberinto requiere al menos 2 jugadores reales.');
           }
           if (room.mode === '2v2') {
             const redCount = room.players.filter(p => p.color && p.color.toUpperCase() === '#FF3B30').length;
@@ -641,6 +646,7 @@ export class SocketManager {
       if (!user) return;
       const userId = user.sub || user.id;
       const username = user.username || `Guest_${userId.substring(0, 4)}`;
+      socket.join(userId);
 
       socket.on('joinRoom', (roomId: string) => {
         socket.data.currentRoomId = roomId;
@@ -648,6 +654,7 @@ export class SocketManager {
         this.updateUserPresence(userId, true, PresenceStatus.PLAYING);
         const game = this.gameService.getGame(roomId);
         if (game) {
+          if (game.playersList.includes(userId)) game.recordPlayerActivity(userId);
           if (game.state === 'finished') {
             socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
           } else {
@@ -662,16 +669,42 @@ export class SocketManager {
               }
             }
             socket.emit('gameStarted', {
-              currentTurn: game.playersList[game.currentTurnIndex],
+              matchId: roomId,
+              mode: game.mode,
+              currentTurn: game.mode === 'labyrinth' ? '' : game.playersList[game.currentTurnIndex],
               board: game.board.toDTO(userId),
               turnTimeLimitSeconds: game.turnTimeLimitSeconds,
               turnSecondsRemaining: game.getRemainingTurnSeconds(),
-              pendingBoostDecision: game.getPendingBoostDecision()
+              pendingBoostDecision: game.getPendingBoostDecision(),
+              ...(game.mode === 'labyrinth'
+                ? {
+                    gameTimeLimitSeconds: game.getMazeGameTimeLimitSeconds(),
+                    gameSecondsRemaining: game.getMazeRemainingSeconds()
+                  }
+                : {})
             });
+            const privateMazeRole = game.getPrivateMazeRole(userId);
+            if (privateMazeRole) socket.emit('mazeRole', privateMazeRole);
+            if (game.mode === 'labyrinth') {
+              socket.emit('mazeRescueStatus', game.getMazeRescueStatus());
+              const player = game.board.players.get(userId);
+              socket.emit('mazeActionState', {
+                canBreakBlock: privateMazeRole?.canBreakBlock === true,
+                canPlaceWall: privateMazeRole?.canPlaceWall === true,
+                canRescue: privateMazeRole?.canRescue === true,
+                isInPrison: player?.isInPrison === true
+              });
+            }
           }
         } else {
           socket.emit('gameFinished', { winner: null, alreadyFinished: true });
         }
+      });
+
+      socket.on('playerActivity', (data: { roomId: string }) => {
+        if (typeof data?.roomId !== 'string' || data.roomId !== socket.data.currentRoomId) return;
+        const game = this.gameService.getGame(data.roomId);
+        if (game?.playersList.includes(userId)) game.recordPlayerActivity(userId);
       });
 
       socket.on('movePlayer', (data: { roomId: string, x: number, y: number }) => {
@@ -682,6 +715,49 @@ export class SocketManager {
             return;
           }
           game.executeMove(userId, data.x, data.y);
+        }
+      });
+
+      socket.on('placeMazeWall', (data: { roomId: string; x: number; y: number; isHorizontal: boolean }) => {
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'labyrinth' || !game.playersList.includes(userId)) return;
+        const success = game.placeMazeWall(userId, data.x, data.y, data.isHorizontal, `maze_wall_${Math.random().toString(36).slice(2)}`);
+        if (success) {
+          const role = game.getPrivateMazeRole(userId);
+          socket.emit('mazeActionState', {
+            canBreakBlock: role?.canBreakBlock === true,
+            canPlaceWall: role?.canPlaceWall === true,
+            canRescue: role?.canRescue === true,
+            isInPrison: game.board.players.get(userId)?.isInPrison === true
+          });
+        }
+      });
+
+      socket.on('breakMazeBlock', (data: { roomId: string; wallId: string }) => {
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'labyrinth' || !game.playersList.includes(userId)) return;
+        if (game.breakMazeBlock(userId, data.wallId)) {
+          const role = game.getPrivateMazeRole(userId);
+          socket.emit('mazeActionState', {
+            canBreakBlock: role?.canBreakBlock === true,
+            canPlaceWall: role?.canPlaceWall === true,
+            canRescue: role?.canRescue === true,
+            isInPrison: game.board.players.get(userId)?.isInPrison === true
+          });
+        }
+      });
+
+      socket.on('rescueMazePlayer', (data: { roomId: string; targetPlayerId: string }) => {
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'labyrinth' || !game.playersList.includes(userId)) return;
+        if (game.rescueMazePlayer(userId, data.targetPlayerId)) {
+          const role = game.getPrivateMazeRole(userId);
+          socket.emit('mazeActionState', {
+            canBreakBlock: role?.canBreakBlock === true,
+            canPlaceWall: role?.canPlaceWall === true,
+            canRescue: role?.canRescue === true,
+            isInPrison: game.board.players.get(userId)?.isInPrison === true
+          });
         }
       });
 
@@ -934,14 +1010,6 @@ export class SocketManager {
       });
 
       socket.on('disconnect', () => {
-        const activeGame = this.gameService.getGameByPlayerId(userId);
-        if (activeGame && activeGame.state === 'playing') {
-          if (activeGame.hasBots()) {
-            activeGame.abandon();
-          } else {
-            activeGame.surrender(userId);
-          }
-        }
         const roomId = socket.data?.currentRoomId;
         if (roomId && this.rematchRequests.has(roomId)) {
           this.rematchRequests.delete(roomId);

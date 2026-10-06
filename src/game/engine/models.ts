@@ -20,7 +20,8 @@ export class Wall {
     public y: number,
     public isHorizontal: boolean,
     public wallEffectId?: string,
-    public wallEffectIcon?: string
+    public wallEffectIcon?: string,
+    public isPrisonBlock: boolean = false
   ) {}
 }
 
@@ -30,6 +31,8 @@ export class Player {
   public isDead: boolean = false;
   public hasKillerItem: boolean = false;
   public hasExchangeItem: boolean = false;
+  public ghostTurnsRemaining: number = 0;
+  public isInPrison: boolean = false;
 
   constructor(
     public id: string,
@@ -65,7 +68,7 @@ export class Player {
 export class Boost {
   constructor(
     public id: string,
-    public type: 'wall_pickup' | 'portal' | 'extra_wall' | 'killer_item' | 'exchange_item',
+    public type: 'wall_pickup' | 'portal' | 'extra_wall' | 'killer_item' | 'exchange_item' | 'ghost',
     public x: number,
     public y: number,
     public targetX?: number,
