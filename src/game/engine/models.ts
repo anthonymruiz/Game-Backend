@@ -21,7 +21,9 @@ export class Wall {
     public isHorizontal: boolean,
     public wallEffectId?: string,
     public wallEffectIcon?: string,
-    public isPrisonBlock: boolean = false
+    public isPrisonBlock: boolean = false,
+    public isSabotageWall: boolean = false,
+    public isRescueWall: boolean = false
   ) {}
 }
 
@@ -29,10 +31,17 @@ export class Player {
   public startX: number;
   public startY: number;
   public isDead: boolean = false;
+  public hasReachedGoal: boolean = false;
   public hasKillerItem: boolean = false;
   public hasExchangeItem: boolean = false;
   public ghostTurnsRemaining: number = 0;
+  public ghostModeExpiresAt: number = 0;
   public isInPrison: boolean = false;
+  public hasMazeKey: boolean = false;
+  public hasMazeKeyDelivered: boolean = false;
+  public hasMazeEscaped: boolean = false;
+  public mazeFrozenUntil: number = 0;
+  public mazeShieldExpiresAt: number = 0;
 
   constructor(
     public id: string,

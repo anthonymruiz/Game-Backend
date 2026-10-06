@@ -20,19 +20,30 @@ process.on('unhandledRejection', (reason, promise) => {
 
 async function bootstrap() {
   try {
-    await AppDataSource.initialize();
-    await AppDataSource.synchronize();
+    const runStartupStage = async (name: string, action: () => Promise<unknown>): Promise<void> => {
+      const startedAt = Date.now();
+      await action();
+      console.log(`[BOOT] ${name} completed in ${Date.now() - startedAt}ms.`);
+    };
+
+    await runStartupStage('Database initialization and schema synchronization', () => AppDataSource.initialize());
     console.log('Database connection established successfully.');
 
-    await seedSuperAdmin();
-    await seedLevelProgressionConfig();
-    await seedRewardsSettings();
-    await seedRankTiers();
-    await seedLeaderboardUsers();
-    await seedSystemSettings();
-    await seedReports();
-    await seedMatchHistory();
-    await seedBadges();
+    await runStartupStage('User seeds', async () => {
+      await seedSuperAdmin();
+      await seedLeaderboardUsers();
+    });
+    await runStartupStage('Configuration seeds', () => Promise.all([
+      seedLevelProgressionConfig(),
+      seedRewardsSettings(),
+      seedRankTiers(),
+      seedSystemSettings()
+    ]));
+    await runStartupStage('Sample data and badge seeds', () => Promise.all([
+      seedReports(),
+      seedMatchHistory(),
+      seedBadges()
+    ]));
     startWeeklyRewardsScheduler();
 
     const redisService = container.resolve(RedisService);

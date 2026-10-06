@@ -1,5 +1,5 @@
 import { Board } from './board.js';
-import { MazeBoard } from './maze-board.js';
+import { MazeBoard, type IMazeTrap, type MazeTrapType } from './maze-board.js';
 import { Player, Wall, type Boost } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
 import { IRoomPlayer } from '../../services/room.service.js';
@@ -19,6 +19,18 @@ export const BOOST_MIN_DELAY_MS = 60_000;
 export const BOOST_MAX_DELAY_MS = 120_000;
 export const PLAYER_INACTIVITY_LIMIT_MS = 120_000;
 export const LABYRINTH_GAME_DURATION_MS = 5 * 60_000;
+export const LABYRINTH_IDLE_LIMIT_MS = 60_000;
+export const LABYRINTH_RESHUFFLE_INTERVAL_MS = 30_000;
+export const LABYRINTH_MIN_HUMAN_PLAYERS = 2;
+export const LABYRINTH_GHOST_DURATION_MS = 5_000;
+export const LABYRINTH_TRAP_COOLDOWN_MS = 60_000;
+export const LABYRINTH_ICE_TRAP_DURATION_MS = 30_000;
+export const LABYRINTH_SHIELD_DURATION_MS = 60_000;
+const LABYRINTH_SHIELD_PICKUP_COUNT = 3;
+const LABYRINTH_SHIELD_RESPAWN_MS = 30_000;
+const LABYRINTH_PORTAL_JAM_DURATION_MS = 15_000;
+const LABYRINTH_EXIT_SEAL_DURATION_MS = 15_000;
+type MazeEndReason = 'capture' | 'timer' | 'inactivity' | 'escape' | 'surrender';
 
 export function getRandomBoostDelayMs(random: () => number = Math.random): number {
   return BOOST_MIN_DELAY_MS
@@ -53,12 +65,29 @@ export class GameInstance {
   public readonly initialSabotageActions: number;
   public onPrivateStateChange: (playerId: string, event: string, data: unknown) => void = () => {};
   private readonly mazeMoveAt = new Map<string, number>();
+  private readonly mazeActionsUsed = new Map<string, number>();
+  private readonly mazePublicEvents: Array<{
+    id: string;
+    type: string;
+    playerName?: string;
+    targetName?: string;
+    rescuerName?: string;
+    pairNumber?: number;
+    exitNumber?: number;
+  }> = [];
   private readonly mazeWallUsed = new Set<string>();
   private readonly mazeBreakUsed = new Set<string>();
   private readonly mazeRescueUsed = new Set<string>();
+  private readonly mazeExitOpenUsed = new Set<string>();
   private mazeSabotagesUsed = 0;
   private mazeGameTimer: NodeJS.Timeout | null = null;
   private mazeTimerInterval: NodeJS.Timeout | null = null;
+  private mazeInactivityTimer: NodeJS.Timeout | null = null;
+  private mazeLayoutChangedAt = 0;
+  private mazeEndReason: MazeEndReason | null = null;
+  private lastMazeGhostId: string | null = null;
+  private mazeTrapCooldownUntil: Record<MazeTrapType, number> = { ice: 0, teleport: 0 };
+  private mazeShieldRespawnTimers = new Set<NodeJS.Timeout>();
 
   private turnTimer: NodeJS.Timeout | null = null;
   private turnDeadlineAt: number | null = null;
@@ -143,7 +172,6 @@ export class GameInstance {
       );
       this.board.addPlayer(playerObj);
     });
-
     if (mode === 'labyrinth') {
       const humanPlayers = roomPlayers.filter(player => !player.id.startsWith('bot_'));
       if (humanPlayers.length < 2) {
@@ -153,6 +181,8 @@ export class GameInstance {
       this.initialSabotageActions = Math.max(0, humanPlayers.length - 1);
       this.getMazeBoard().generateRandomMazeWalls(undefined, Math.random, roomPlayers.length);
       this.getMazeBoard().spawnKeys(humanPlayers.length);
+      this.getMazeBoard().spawnTeleports();
+      this.getMazeBoard().spawnShieldPickups(LABYRINTH_SHIELD_PICKUP_COUNT);
     } else {
       this.impostorId = null;
       this.initialSabotageActions = 0;
@@ -166,6 +196,7 @@ export class GameInstance {
       if (!playerId.startsWith('bot_')) this.recordPlayerActivity(playerId);
     }
     if (this.mode === 'labyrinth') {
+      this.activateRandomMazeGhost();
       this.startMazeTimer();
     } else if (this.isFfaMode()) {
       this.board.spawnKillerItem();
@@ -182,15 +213,22 @@ export class GameInstance {
     }
     if (this.mode !== 'labyrinth') this.startTurnTimer();
     this.onStateChange('gameStarted', {
-      currentTurn: this.mode === 'labyrinth' ? '' : this.getCurrentPlayer(),
       mode: this.mode,
       board: this.board.toDTO(this.getCurrentPlayer()),
-      turnTimeLimitSeconds: this.turnTimeLimitSeconds,
-      turnSecondsRemaining: this.turnTimeLimitSeconds,
       ...(this.mode === 'labyrinth'
-        ? { gameTimeLimitSeconds: LABYRINTH_GAME_DURATION_MS / 1000, gameSecondsRemaining: LABYRINTH_GAME_DURATION_MS / 1000 }
-        : {})
+        ? {
+            gameTimeLimitSeconds: LABYRINTH_GAME_DURATION_MS / 1000,
+            gameSecondsRemaining: LABYRINTH_GAME_DURATION_MS / 1000,
+            mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
+            serverTime: Date.now()
+          }
+        : {
+            currentTurn: this.getCurrentPlayer(),
+            turnTimeLimitSeconds: this.turnTimeLimitSeconds,
+            turnSecondsRemaining: this.turnTimeLimitSeconds
+          })
     });
+    if (this.mode === 'labyrinth') this.emitPrivateMazeTrapState();
     if (this.mode !== 'labyrinth') this.checkTriggerBotTurn();
   }
 
@@ -296,6 +334,17 @@ export class GameInstance {
     if (!botId || !botId.startsWith('bot_')) return;
 
     const botPlayer = this.board.players.get(botId);
+    if (botPlayer?.hasReachedGoal) {
+      if (botPlayer.wallsLeft > 0) {
+        const action = this.board.getBotAction(botId, this.mode === '2v2');
+        if (action?.type === 'wall') {
+          const wallId = `wall_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          if (this.executeWall(botId, wallId, action.x, action.y, action.isHorizontal)) return;
+        }
+      }
+      this.nextTurn();
+      return;
+    }
     if (botPlayer && botPlayer.hasKillerItem) {
       this.beginBoostDecision(botId, 'killer_item');
       return;
@@ -352,6 +401,8 @@ export class GameInstance {
     this.clearPlayerInactivityTimers();
     this.clearTimedBoostTimers();
     this.clearMazeTimers();
+    for (const timer of this.mazeShieldRespawnTimers) clearTimeout(timer);
+    this.mazeShieldRespawnTimers.clear();
     this.state = 'finished';
   }
 
@@ -364,9 +415,10 @@ export class GameInstance {
 
   private startMazeTimer(): void {
     this.clearMazeTimers();
+    this.scheduleMazeInactivityTimer();
     this.mazeGameTimer = setTimeout(() => {
       this.mazeGameTimer = null;
-      if (this.state === 'playing') this.finishMazeGame(this.impostorId);
+      if (this.state === 'playing') this.finishMazeGame(this.impostorId, 'timer');
     }, LABYRINTH_GAME_DURATION_MS);
     this.mazeGameTimer.unref();
     this.mazeTimerInterval = setInterval(() => {
@@ -375,8 +427,14 @@ export class GameInstance {
         return;
       }
       this.onStateChange('mazeTimerUpdated', {
-        gameSecondsRemaining: this.getMazeRemainingSeconds()
+        gameSecondsRemaining: this.getMazeRemainingSeconds(),
+        mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
+        serverTime: Date.now()
       });
+      const mazeStateExpired = this.expireMazePlayerEffects();
+      if (mazeStateExpired) this.onStateChange('mazeStateChanged', this.getMazeStateData());
+      this.emitPrivateMazeTrapState();
+      this.expireMazeGhostModes();
     }, 1000);
     this.mazeTimerInterval.unref();
   }
@@ -384,8 +442,20 @@ export class GameInstance {
   private clearMazeTimers(): void {
     if (this.mazeGameTimer) clearTimeout(this.mazeGameTimer);
     if (this.mazeTimerInterval) clearInterval(this.mazeTimerInterval);
+    if (this.mazeInactivityTimer) clearTimeout(this.mazeInactivityTimer);
     this.mazeGameTimer = null;
     this.mazeTimerInterval = null;
+    this.mazeInactivityTimer = null;
+  }
+
+  private scheduleMazeInactivityTimer(): void {
+    if (this.mazeInactivityTimer) clearTimeout(this.mazeInactivityTimer);
+    if (this.mode !== 'labyrinth' || this.state !== 'playing') return;
+    this.mazeInactivityTimer = setTimeout(() => {
+      this.mazeInactivityTimer = null;
+      if (this.state === 'playing') this.finishMazeGame(this.impostorId, 'inactivity');
+    }, LABYRINTH_IDLE_LIMIT_MS);
+    this.mazeInactivityTimer.unref();
   }
 
   public getMazeRemainingSeconds(): number {
@@ -395,6 +465,152 @@ export class GameInstance {
 
   public getMazeGameTimeLimitSeconds(): number {
     return LABYRINTH_GAME_DURATION_MS / 1000;
+  }
+
+  public getMazeSecondsUntilChange(now: number = Date.now()): number {
+    if (!this.mazeLayoutChangedAt) return 0;
+    return Math.max(0, Math.ceil(
+      (this.mazeLayoutChangedAt + LABYRINTH_RESHUFFLE_INTERVAL_MS - now) / 1000
+    ));
+  }
+
+  public getPrivateMazeTrapState(playerId: string): {
+    traps: IMazeTrap[];
+    cooldowns: Record<MazeTrapType, number>;
+  } | null {
+    if (this.mode !== 'labyrinth' || playerId !== this.impostorId) return null;
+    return {
+      traps: this.getMazeBoard().traps.map(trap => ({ ...trap })),
+      cooldowns: this.getMazeTrapCooldowns()
+    };
+  }
+
+  private getMazeTrapCooldowns(now: number = Date.now()): Record<MazeTrapType, number> {
+    return {
+      ice: Math.max(0, Math.ceil((this.mazeTrapCooldownUntil.ice - now) / 1000)),
+      teleport: Math.max(0, Math.ceil((this.mazeTrapCooldownUntil.teleport - now) / 1000))
+    };
+  }
+
+  private emitPrivateMazeTrapState(): void {
+    if (!this.impostorId) return;
+    const state = this.getPrivateMazeTrapState(this.impostorId);
+    if (state) this.onPrivateStateChange(this.impostorId, 'mazeTrapState', state);
+  }
+
+  private expireMazePlayerEffects(now: number = Date.now()): boolean {
+    let expired = false;
+    for (const player of this.board.players.values()) {
+      if (player.mazeFrozenUntil > 0 && player.mazeFrozenUntil <= now) {
+        player.mazeFrozenUntil = 0;
+        expired = true;
+      }
+      if (player.mazeShieldExpiresAt > 0 && player.mazeShieldExpiresAt <= now) {
+        player.mazeShieldExpiresAt = 0;
+        expired = true;
+      }
+    }
+    return expired;
+  }
+
+  private scheduleMazeShieldRespawn(): void {
+    const timer = setTimeout(() => {
+      this.mazeShieldRespawnTimers.delete(timer);
+      if (this.state !== 'playing') return;
+      this.getMazeBoard().spawnShieldPickups(LABYRINTH_SHIELD_PICKUP_COUNT);
+      this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    }, LABYRINTH_SHIELD_RESPAWN_MS);
+    timer.unref();
+    this.mazeShieldRespawnTimers.add(timer);
+  }
+
+  public placeMazeTrap(playerId: string, type: MazeTrapType, x: number, y: number): boolean {
+    const player = this.board.players.get(playerId);
+    if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+        playerId !== this.impostorId || !player || player.isDead ||
+        player.isInPrison || player.hasMazeEscaped ||
+        (type !== 'ice' && type !== 'teleport') ||
+        this.mazeTrapCooldownUntil[type] > Date.now() ||
+        !this.getMazeBoard().canPlaceTrap(x, y)) return false;
+
+    const trap: IMazeTrap = {
+      id: `maze_trap_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      x,
+      y
+    };
+    if (!this.getMazeBoard().placeTrap(trap)) return false;
+    this.mazeTrapCooldownUntil[type] = Date.now() + LABYRINTH_TRAP_COOLDOWN_MS;
+    this.recordPlayerActivity(playerId);
+    this.emitPrivateMazeTrapState();
+    return true;
+  }
+
+  private triggerMazeTrap(playerId: string, x: number, y: number): boolean {
+    const player = this.board.players.get(playerId);
+    const mazeBoard = this.getMazeBoard();
+    if (!player || playerId === this.impostorId) return false;
+    const trap = mazeBoard.removeTrapAt(x, y);
+    if (!trap) return false;
+
+    const shielded = player.mazeShieldExpiresAt > Date.now();
+    if (shielded) player.mazeShieldExpiresAt = 0;
+    if (!shielded && trap.type === 'ice') {
+      player.mazeFrozenUntil = Date.now() + LABYRINTH_ICE_TRAP_DURATION_MS;
+    } else if (!shielded && trap.type === 'teleport') {
+      const fromX = player.x;
+      const fromY = player.y;
+      const destination = mazeBoard.teleportPlayerToRandomBorder(playerId);
+      if (destination) {
+        this.mazeMoveAt.set(playerId, Date.now());
+        const newlyCaptured = this.updateMazePrisons();
+        if (newlyCaptured.length) {
+          this.resolveMazeCapture(this.impostorId || '', newlyCaptured);
+        }
+        this.onStateChange('playerMoved', {
+          playerId,
+          fromX,
+          fromY,
+          newX: destination.x,
+          newY: destination.y,
+          movementTrailId: player.movementTrailId,
+          movementTrailIcon: player.movementTrailIcon,
+          teleported: true
+        });
+      }
+    }
+    this.onStateChange('mazeTrapTriggered', {
+      playerId,
+      type: trap.type,
+      shielded
+    });
+    this.emitPrivateMazeTrapState();
+    return true;
+  }
+
+  public changeMazeLayout(playerId: string, random: () => number = Math.random): boolean {
+    const player = this.board.players.get(playerId);
+    if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+        playerId !== this.impostorId || !player || player.isDead ||
+        player.isInPrison || player.hasMazeEscaped ||
+        this.getMazeSecondsUntilChange() > 0) return false;
+    const mazeBoard = this.getMazeBoard();
+    mazeBoard.reshuffleMaze(random, true);
+    this.mazeSabotagesUsed = 0;
+    if (this.impostorId) {
+      this.onPrivateStateChange(this.impostorId, 'mazeRole', this.getPrivateMazeRole(this.impostorId));
+    }
+    this.updateMazePrisons();
+    this.mazeLayoutChangedAt = Date.now();
+    this.recordPlayerActivity(playerId);
+    this.emitMazePublicEvent('maze_changed');
+    this.emitMazePublicEvent('maze_sabotages_recharged');
+    this.activateRandomMazeGhost(random);
+    this.onStateChange('mazeStateChanged', {
+      ...this.getMazeStateData(),
+      mazeSecondsUntilChange: this.getMazeSecondsUntilChange()
+    });
+    return true;
   }
 
   private handleTimeout() {
@@ -426,11 +642,19 @@ export class GameInstance {
       this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
       attempts++;
       const p = this.board.players.get(this.getCurrentPlayer());
-      if (p && !p.isDead) break;
+      if (p && !p.isDead &&
+          (this.mode !== '2v2' || !p.hasReachedGoal || p.wallsLeft > 0)) break;
     } while (attempts < this.playersList.length);
 
     const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
-    if (alive.length <= 1) {
+    const canTakeTurn = alive.some(player =>
+      this.mode !== '2v2' || !player.hasReachedGoal || player.wallsLeft > 0
+    );
+    if (!canTakeTurn && this.mode === '2v2') {
+      this.endGame(true);
+      return;
+    }
+    if (alive.length <= 1 && this.mode !== '2v2') {
       this.winner = alive[0]?.id || null;
       this.endGame();
       return;
@@ -481,13 +705,112 @@ export class GameInstance {
     const goodPlayers = this.playersList
       .filter(id => !id.startsWith('bot_') && id !== this.impostorId)
       .map(id => this.board.players.get(id))
-      .filter((player): player is Player => !!player && !player.isDead);
+      .filter((player): player is Player => !!player && !player.isDead && !player.hasMazeEscaped);
     return {
       capturedPlayers: goodPlayers.filter(player => player.isInPrison).map(player => player.id),
       availableRescuers: goodPlayers.filter(player =>
         !player.isInPrison && !this.mazeRescueUsed.has(player.id)
       ).length
     };
+  }
+
+  public getMazePublicActionCounts(): Record<string, number> {
+    return Object.fromEntries(this.playersList
+      .filter(playerId => !playerId.startsWith('bot_'))
+      .map(playerId => [playerId, this.mazeActionsUsed.get(playerId) || 0]));
+  }
+
+  public getMazePublicEvents(): typeof this.mazePublicEvents {
+    return this.mazePublicEvents.map(event => ({ ...event }));
+  }
+
+  public getMazeAuditSnapshot(): Record<string, unknown> {
+    if (this.mode !== 'labyrinth' || !(this.board instanceof MazeBoard)) {
+      throw new Error('Maze audit snapshots are only available for labyrinth games.');
+    }
+    return {
+      matchId: this.id,
+      mode: this.mode,
+      state: this.state,
+      winner: this.winner,
+      impostorId: this.impostorId,
+      endReason: this.mazeEndReason,
+      startedAt: this.startTime ?? null,
+      capturedAt: Date.now(),
+      players: this.playersList.map(playerId => {
+        const player = this.board.players.get(playerId);
+        if (!player) throw new Error(`Maze audit player ${playerId} is missing from the board.`);
+        return {
+          id: player.id,
+          username: player.username,
+          role: player.id === this.impostorId ? 'impostor' : 'good',
+          x: player.x,
+          y: player.y,
+          color: player.color,
+          pawnColor: player.pawnColor ?? null,
+          skinItemId: player.skinItemId ?? null,
+          skinIcon: player.skinIcon ?? null,
+          isInPrison: player.isInPrison,
+          hasMazeKey: player.hasMazeKey,
+          hasMazeKeyDelivered: player.hasMazeKeyDelivered,
+          hasMazeEscaped: player.hasMazeEscaped,
+          ghostModeExpiresAt: player.ghostModeExpiresAt
+        };
+      }),
+      board: {
+        size: this.board.size,
+        extraction: this.board.extraction,
+        walls: this.board.walls.map(wall => ({
+          id: wall.id,
+          ownerId: wall.ownerId,
+          x: wall.x,
+          y: wall.y,
+          isHorizontal: wall.isHorizontal,
+          isPrisonBlock: wall.isPrisonBlock,
+          isSabotageWall: wall.isSabotageWall,
+          isRescueWall: wall.isRescueWall
+        })),
+        keys: this.board.keys.map(key => ({ ...key })),
+        exits: this.board.exits.map(exit => ({ ...exit })),
+        teleports: this.board.teleports.map(teleport => ({ ...teleport }))
+      },
+      publicEvents: this.getMazePublicEvents(),
+      publicActionCounts: this.getMazePublicActionCounts(),
+      sabotageActionsUsed: this.mazeSabotagesUsed
+    };
+  }
+
+  private recordMazeAction(playerId: string): void {
+    this.mazeActionsUsed.set(playerId, (this.mazeActionsUsed.get(playerId) || 0) + 1);
+  }
+
+  private getMazeStateData(): {
+    board: ReturnType<MazeBoard['toDTO']>;
+    rescueStatus: ReturnType<GameInstance['getMazeRescueStatus']>;
+    publicActionCounts: Record<string, number>;
+    mazeSecondsUntilChange: number;
+    mazeExitOpenUsedBy: string[];
+  } {
+    return {
+      board: this.getMazeBoard().toDTO(),
+      rescueStatus: this.getMazeRescueStatus(),
+      publicActionCounts: this.getMazePublicActionCounts(),
+      mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
+      mazeExitOpenUsedBy: [...this.mazeExitOpenUsed]
+    };
+  }
+
+  private emitMazePublicEvent(
+    type: string,
+    data: Omit<(typeof this.mazePublicEvents)[number], 'id' | 'type'> = {}
+  ): void {
+    const event = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      type,
+      ...data
+    };
+    this.mazePublicEvents.push(event);
+    this.onStateChange('mazePublicEvent', event);
   }
 
   public getRemainingTurnSeconds(): number {
@@ -515,7 +838,15 @@ export class GameInstance {
     this.board.players.delete(playerId);
     if (kickedIndex < this.currentTurnIndex) this.currentTurnIndex--;
 
-    if (this.playersList.length <= 1) {
+    if (this.playersList.length <= 1 && this.mode === '2v2') {
+      this.onStateChange('playerKicked', { playerId, reason });
+      if (this.playersList.length === 0) {
+        this.endGame(true);
+      } else {
+        this.currentTurnIndex = 0;
+        this.nextTurn();
+      }
+    } else if (this.playersList.length <= 1) {
       this.onStateChange('playerKicked', { playerId, reason });
       this.winner = this.playersList[0] || null;
       this.endGame();
@@ -529,18 +860,24 @@ export class GameInstance {
       this.onStateChange('playerKicked', {
         playerId,
         reason,
-        currentTurn,
         board: this.board.toDTO(currentTurn),
-        turnSecondsRemaining: this.getRemainingTurnSeconds()
+        ...(this.mode !== 'labyrinth'
+          ? { currentTurn, turnSecondsRemaining: this.getRemainingTurnSeconds() }
+          : {})
       });
     }
   }
 
   public recordPlayerActivity(playerId: string): void {
     if (this.state !== 'playing' || playerId.startsWith('bot_') ||
-        !this.playersList.includes(playerId) || this.board.players.get(playerId)?.isDead) return;
+        !this.playersList.includes(playerId) ||
+        (this.mode !== 'labyrinth' && this.board.players.get(playerId)?.isDead)) return;
 
     this.playerLastActivityAt.set(playerId, Date.now());
+    if (this.mode === 'labyrinth') {
+      this.scheduleMazeInactivityTimer();
+      return;
+    }
     this.schedulePlayerInactivityCheck(playerId);
   }
 
@@ -591,7 +928,7 @@ export class GameInstance {
     if (this.mode === 'labyrinth') return this.executeMazeMove(playerId, newX, newY);
     const p = this.board.players.get(playerId);
     if (this.state !== 'playing' || this.pendingBoostDecision ||
-        playerId !== this.getCurrentPlayer() || !p || p.isDead) return false;
+        playerId !== this.getCurrentPlayer() || !p || p.isDead || p.hasReachedGoal) return false;
     const hadKillerItem = p.hasKillerItem;
     const hadExchangeItem = p.hasExchangeItem;
     const fromX = p.x;
@@ -675,10 +1012,110 @@ export class GameInstance {
           movementTrailId: player.movementTrailId,
           movementTrailIcon: player.movementTrailIcon
         });
-        this.onStateChange('mazeStateChanged', {
-          board: this.board.toDTO(),
-          rescueStatus: this.getMazeRescueStatus()
+        const key = this.getMazeBoard().collectKey(playerId, newX, newY);
+        if (key) {
+          player.hasMazeKey = true;
+          this.emitMazePublicEvent('key_collected', { playerName: player.username });
+        }
+        if (playerId !== this.impostorId &&
+            player.mazeShieldExpiresAt <= Date.now() &&
+            this.getMazeBoard().collectShieldPickupAt(player.x, player.y)) {
+          player.mazeShieldExpiresAt = Date.now() + LABYRINTH_SHIELD_DURATION_MS;
+          this.scheduleMazeShieldRespawn();
+        }
+        this.triggerMazeTrap(playerId, player.x, player.y);
+        const extraction = this.getMazeBoard().extraction;
+        if (player.x === extraction.x && player.y === extraction.y && player.hasMazeKey &&
+            playerId === this.impostorId && !player.hasMazeKeyDelivered) {
+          player.hasMazeKeyDelivered = true;
+          this.emitMazePublicEvent('player_reached_extraction', { playerName: player.username });
+        } else if (player.x === extraction.x && player.y === extraction.y &&
+            playerId !== this.impostorId && this.getMazeBoard().deliverMazeKey(playerId)) {
+          this.emitMazePublicEvent('player_reached_extraction', { playerName: player.username });
+          const goodPlayers = this.playersList.filter(id =>
+            !id.startsWith('bot_') && id !== this.impostorId
+          );
+          if (goodPlayers.every(id => this.board.players.get(id)?.hasMazeKeyDelivered)) {
+            this.finishMazeGame('good', 'escape');
+          }
+        }
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        return true;
+      }
+
+      public teleportMazePlayer(playerId: string, teleportId: string): boolean {
+        const player = this.board.players.get(playerId);
+        if (this.mode !== 'labyrinth' || this.state !== 'playing' || !player ||
+            playerId.startsWith('bot_')) return false;
+        const fromX = player.x;
+        const fromY = player.y;
+        const destination = this.getMazeBoard().teleportPlayer(playerId, teleportId);
+        if (!destination) return false;
+        this.recordPlayerActivity(playerId);
+        this.mazeMoveAt.set(playerId, Date.now());
+        this.onStateChange('playerMoved', {
+          playerId,
+          fromX,
+          fromY,
+          newX: destination.x,
+          newY: destination.y,
+          movementTrailId: player.movementTrailId,
+          movementTrailIcon: player.movementTrailIcon,
+          teleported: true
         });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        return true;
+      }
+
+      public jamMazeTeleport(playerId: string, teleportId: string): boolean {
+        const player = this.board.players.get(playerId);
+        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+            playerId !== this.impostorId || !player || player.isInPrison ||
+            player.isDead || player.hasMazeEscaped ||
+            playerId.startsWith('bot_') ||
+            this.mazeSabotagesUsed >= this.initialSabotageActions) return false;
+        const pairNumber = this.getMazeBoard().jamTeleportPair(teleportId, LABYRINTH_PORTAL_JAM_DURATION_MS);
+        if (pairNumber === null) return false;
+        this.mazeSabotagesUsed++;
+        this.recordMazeAction(playerId);
+        this.recordPlayerActivity(playerId);
+        this.onPrivateStateChange(playerId, 'mazeRole', this.getPrivateMazeRole(playerId));
+        this.emitMazePublicEvent('impostor_portal_jammed', { pairNumber });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        return true;
+      }
+
+      public sealMazeExit(playerId: string, exitId: string): boolean {
+        const player = this.board.players.get(playerId);
+        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+            playerId !== this.impostorId || !player || player.isInPrison ||
+            playerId.startsWith('bot_') ||
+            this.mazeSabotagesUsed >= this.initialSabotageActions) return false;
+        const exitNumber = this.getMazeBoard().sealMazeExit(exitId, LABYRINTH_EXIT_SEAL_DURATION_MS);
+        if (exitNumber === null) return false;
+        this.mazeSabotagesUsed++;
+        this.recordMazeAction(playerId);
+        this.recordPlayerActivity(playerId);
+        this.onPrivateStateChange(playerId, 'mazeRole', this.getPrivateMazeRole(playerId));
+        this.emitMazePublicEvent('impostor_exit_sealed', { exitNumber });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        return true;
+      }
+
+      public openMazeExit(playerId: string, exitId: string): boolean {
+        const player = this.board.players.get(playerId);
+        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+            !player || playerId === this.impostorId || playerId.startsWith('bot_') ||
+            player.isDead || player.hasMazeEscaped || player.isInPrison ||
+            this.mazeExitOpenUsed.has(playerId)) return false;
+        const mazeBoard = this.getMazeBoard();
+        if (!mazeBoard.canOpenMazeExitFrom(exitId, player.x, player.y)) return false;
+        const exitNumber = mazeBoard.openMazeExit(exitId);
+        if (exitNumber === null) return false;
+        this.mazeExitOpenUsed.add(playerId);
+        this.recordPlayerActivity(playerId);
+        this.emitMazePublicEvent('maze_exit_opened', { exitNumber });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
         return true;
       }
 
@@ -686,7 +1123,8 @@ export class GameInstance {
         const player = this.board.players.get(playerId);
         const isImpostor = playerId === this.impostorId;
         if (this.mode !== 'labyrinth' || this.state !== 'playing' || !player ||
-            playerId.startsWith('bot_') || player.isInPrison) return false;
+            playerId.startsWith('bot_') || player.isDead || player.hasMazeEscaped ||
+            player.isInPrison) return false;
         if (isImpostor) {
           if (this.mazeSabotagesUsed >= this.initialSabotageActions) return false;
         } else if (this.mazeWallUsed.has(playerId)) {
@@ -700,22 +1138,47 @@ export class GameInstance {
           y,
           isHorizontal,
           player.wallEffectId,
-          player.wallEffectIcon
+          player.wallEffectIcon,
+          false,
+          isImpostor
         );
-        if (!this.getMazeBoard().placeMazeWall(wall)) return false;
+        const mazeBoard = this.getMazeBoard();
+        if (mazeBoard.wouldMakeUncollectedKeyUnreachable(wall)) return false;
+        if (!isImpostor) {
+          const activeGoodPlayers = [...this.board.players.values()].filter(candidate =>
+            candidate.id !== this.impostorId &&
+            !candidate.id.startsWith('bot_') &&
+            !candidate.isDead &&
+            !candidate.hasMazeEscaped &&
+            !candidate.isInPrison
+          );
+          if (mazeBoard.wouldSeparatePlayersWithWall(wall, activeGoodPlayers.map(candidate => candidate.id)) ||
+              activeGoodPlayers.some(candidate =>
+                mazeBoard.wouldEnclosePlayerWithWall(wall, candidate.id)
+              )) return false;
+        }
+        if (!mazeBoard.placeMazeWall(wall)) return false;
+        this.recordPlayerActivity(playerId);
         if (isImpostor) {
           this.mazeSabotagesUsed++;
           this.onPrivateStateChange(playerId, 'mazeRole', this.getPrivateMazeRole(playerId));
         } else {
           this.mazeWallUsed.add(playerId);
         }
+        this.recordMazeAction(playerId);
 
         const newlyCaptured = this.updateMazePrisons();
-        this.onStateChange('mazeStateChanged', {
-          board: this.board.toDTO(),
-          rescueStatus: this.getMazeRescueStatus()
-        });
+        if (isImpostor) this.emitMazePublicEvent('impostor_sabotage');
+        else this.emitMazePublicEvent('player_wall_placed', { playerName: player.username });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
         const capturedHumanIds = newlyCaptured.filter(id => !id.startsWith('bot_'));
+        for (const capturedId of capturedHumanIds) {
+          const capturedPlayer = this.board.players.get(capturedId);
+          const eventType = capturedId === this.impostorId
+            ? 'player_captured_impostor'
+            : isImpostor ? 'impostor_captured_player' : 'player_captured_player';
+          this.emitMazePublicEvent(eventType, { playerName: capturedPlayer?.username || capturedId });
+        }
         if (capturedHumanIds.length > 0) this.resolveMazeCapture(playerId, capturedHumanIds);
         return true;
       }
@@ -723,15 +1186,23 @@ export class GameInstance {
       public breakMazeBlock(playerId: string, wallId: string): boolean {
         const player = this.board.players.get(playerId);
         if (this.mode !== 'labyrinth' || this.state !== 'playing' || !player ||
-            playerId.startsWith('bot_') || player.isInPrison || this.mazeBreakUsed.has(playerId)) return false;
-        const removedWall = this.getMazeBoard().removeWallById(wallId);
+            playerId.startsWith('bot_') || player.isDead || player.hasMazeEscaped ||
+            player.isInPrison || this.mazeBreakUsed.has(playerId)) return false;
+        const mazeBoard = this.getMazeBoard();
+        const target = [...this.board.players.values()].find(candidate =>
+          candidate.isInPrison &&
+          Math.abs(candidate.x - player.x) + Math.abs(candidate.y - player.y) <= 1 &&
+          mazeBoard.getMazeReleaseWalls(candidate.id).some(wall => wall.id === wallId && wall.isSabotageWall)
+        );
+        if (!target) return false;
+        const removedWall = mazeBoard.removeWallById(wallId);
         if (!removedWall) return false;
         this.mazeBreakUsed.add(playerId);
+        this.recordMazeAction(playerId);
+        this.recordPlayerActivity(playerId);
         this.updateMazePrisons();
-        this.onStateChange('mazeStateChanged', {
-          board: this.board.toDTO(),
-          rescueStatus: this.getMazeRescueStatus()
-        });
+        this.emitMazePublicEvent('player_broke_prison_wall', { playerName: player.username, targetName: target.username });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
         return true;
       }
 
@@ -740,45 +1211,84 @@ export class GameInstance {
         const target = this.board.players.get(targetId);
         if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
             !rescuer || !target || rescuerId === this.impostorId ||
-            rescuerId.startsWith('bot_') || rescuer.isInPrison ||
-            !target.isInPrison || this.mazeRescueUsed.has(rescuerId)) return false;
+            rescuerId.startsWith('bot_') || rescuer.isDead || rescuer.hasMazeEscaped || rescuer.isInPrison ||
+            !target.isInPrison || this.mazeRescueUsed.has(rescuerId) ||
+            Math.abs(target.x - rescuer.x) + Math.abs(target.y - rescuer.y) > 1) return false;
 
         const mazeBoard = this.getMazeBoard();
-        const cageWalls = mazeBoard.getMazeCageWalls(targetId);
-        let removedWall: Wall | null = null;
-        for (const wall of cageWalls) {
-          const candidate = mazeBoard.removeWallById(wall.id);
-          if (candidate && !mazeBoard.isMazePlayerEnclosed(targetId)) {
-            removedWall = candidate;
-            break;
-          }
-          if (candidate) mazeBoard.walls.push(candidate);
-        }
+        const removedWall = mazeBoard.getMazeReleaseWalls(targetId)
+          .find(wall => wall.isSabotageWall);
+        if (removedWall) mazeBoard.removeWallById(removedWall.id);
         if (!removedWall) return false;
 
         this.mazeRescueUsed.add(rescuerId);
+        this.recordMazeAction(rescuerId);
+        this.recordPlayerActivity(rescuerId);
         this.updateMazePrisons();
-        this.onStateChange('mazeStateChanged', {
-          board: this.board.toDTO(),
-          rescueStatus: this.getMazeRescueStatus()
-        });
+        this.emitMazePublicEvent('player_rescued', { rescuerName: rescuer.username, playerName: target.username });
+        this.onStateChange('mazeStateChanged', this.getMazeStateData());
         return true;
       }
 
-      private updateMazePrisons(): string[] {
+  private activateRandomMazeGhost(random: () => number = Math.random): void {
+    const players = this.playersList
+      .filter(id => !id.startsWith('bot_'))
+      .map(id => this.board.players.get(id))
+      .filter((player): player is Player => !!player && !player.isDead && !player.hasMazeEscaped);
+    if (!players.length) return;
+    for (const player of players) player.ghostModeExpiresAt = 0;
+    this.updateMazePrisons();
+    const eligiblePlayers = players.length > 1
+      ? players.filter(player => player.id !== this.lastMazeGhostId)
+      : players;
+    const ghost = eligiblePlayers[Math.floor(random() * eligiblePlayers.length)];
+    ghost.ghostModeExpiresAt = Date.now() + LABYRINTH_GHOST_DURATION_MS;
+    ghost.isInPrison = false;
+    this.lastMazeGhostId = ghost.id;
+    this.emitMazePublicEvent('maze_ghost_activated', { playerName: ghost.username });
+    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+  }
+
+  private expireMazeGhostModes(now: number = Date.now()): void {
+    const expired = [...this.board.players.values()].filter(player =>
+      player.ghostModeExpiresAt > 0 && player.ghostModeExpiresAt <= now
+    );
+    if (!expired.length) return;
+    for (const player of expired) player.ghostModeExpiresAt = 0;
+    this.updateMazePrisons();
+    for (const player of expired) {
+      this.emitMazePublicEvent('maze_ghost_ended', { playerName: player.username });
+    }
+    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+  }
+
+  private updateMazePrisons(): string[] {
         const previouslyCaptured = new Set(
           [...this.board.players.values()].filter(player => player.isInPrison).map(player => player.id)
         );
         for (const wall of this.board.walls) wall.isPrisonBlock = false;
+        for (const wall of this.board.walls) wall.isRescueWall = false;
         for (const player of this.board.players.values()) {
           if (player.id.startsWith('bot_')) {
             player.isInPrison = false;
             continue;
           }
           const mazeBoard = this.getMazeBoard();
-          player.isInPrison = mazeBoard.isMazePlayerEnclosed(player.id);
+          player.isInPrison = player.hasMazeEscaped || player.ghostModeExpiresAt > Date.now()
+            ? false
+            : mazeBoard.isMazePlayerEnclosed(player.id);
+          if (player.isInPrison !== previouslyCaptured.has(player.id)) {
+            const role = this.getPrivateMazeRole(player.id);
+            this.onPrivateStateChange(player.id, 'mazeActionState', {
+              canBreakBlock: role?.canBreakBlock === true,
+              canPlaceWall: role?.canPlaceWall === true,
+              canRescue: role?.canRescue === true,
+              isInPrison: player.isInPrison
+            });
+          }
           if (player.isInPrison) {
             for (const wall of mazeBoard.getMazeCageWalls(player.id)) wall.isPrisonBlock = true;
+            for (const wall of mazeBoard.getMazeReleaseWalls(player.id)) wall.isRescueWall = true;
           }
         }
         return [...this.board.players.values()]
@@ -790,25 +1300,26 @@ export class GameInstance {
         if (this.state !== 'playing') return;
         const isImpostorPlacer = placerId === this.impostorId;
         if (!isImpostorPlacer) {
-          if (capturedIds.includes(this.impostorId || '')) this.finishMazeGame('good');
-          else this.finishMazeGame(this.impostorId);
+          if (capturedIds.includes(this.impostorId || '')) this.finishMazeGame('good', 'capture');
+          else this.finishMazeGame(this.impostorId, 'capture');
           return;
         }
         const rescueStatus = this.getMazeRescueStatus();
         if (rescueStatus.capturedPlayers.length > rescueStatus.availableRescuers) {
-          this.finishMazeGame(this.impostorId);
+          this.finishMazeGame(this.impostorId, 'capture');
         }
       }
 
-  private finishMazeGame(winner: string | null): void {
+  private finishMazeGame(winner: string | null, reason: MazeEndReason): void {
     this.winner = winner;
+    this.mazeEndReason = reason;
     this.endGame();
   }
 
   public executeWall(playerId: string, wallId: string, x: number, y: number, isHorizontal: boolean): boolean {
     const p = this.board.players.get(playerId);
     if (this.state !== 'playing' || this.pendingBoostDecision ||
-        playerId !== this.getCurrentPlayer() || p?.isDead) return false;
+        playerId !== this.getCurrentPlayer() || !p || p.isDead || (p.wallsLeft ?? 0) <= 0) return false;
     
     const pathLengthsBefore = new Map<string, number>();
     for (const p of this.board.players.values()) {
@@ -851,9 +1362,18 @@ export class GameInstance {
 
   private checkWinCondition(playerId: string): boolean {
     const player = this.board.players.get(playerId);
-    if (!player) return false;
+    if (!player || player.isDead) return false;
 
     if (this.rules.checkWinCondition(player, this.board)) {
+      if (this.mode === '2v2') {
+        player.hasReachedGoal = true;
+        const teammates = Array.from(this.board.players.values())
+          .filter(candidate => candidate.team === player.team);
+        if (teammates.length !== 2 ||
+            !teammates.every(teammate => teammate.hasReachedGoal && !teammate.isDead)) {
+          return false;
+        }
+      }
       this.winner = playerId;
       if (!this.board.walls.some(wall => wall.ownerId === playerId)) {
         this.onBadgeEvent(playerId, 'win_without_walls');
@@ -906,7 +1426,7 @@ export class GameInstance {
     this.finishBoostDecision(killerId, 'killer_item', 'used');
 
     const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
-    if (alive.length <= 1) {
+    if (alive.length <= 1 && this.mode !== '2v2') {
       this.winner = alive[0]?.id || null;
       this.endGame();
     } else {
@@ -1098,18 +1618,31 @@ export class GameInstance {
     this.nextTurn();
   }
 
-  public surrender(surrenderingUserId: string) {
-    if (this.state !== 'playing' || this.pendingBoostDecision) return;
+  public surrender(surrenderingUserId: string): boolean {
+    if (this.state !== 'playing' || this.pendingBoostDecision) return false;
 
     const surrenderingPlayer = this.board.players.get(surrenderingUserId);
-    if (surrenderingPlayer) {
-      surrenderingPlayer.isDead = true;
-      this.stopTrackingPlayerActivity(surrenderingUserId);
-    }
+    if (!surrenderingPlayer || surrenderingPlayer.isDead) return false;
+    surrenderingPlayer.isDead = true;
+    this.stopTrackingPlayerActivity(surrenderingUserId);
 
     const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
 
-    if (alive.length <= 1) {
+    if (this.mode === 'labyrinth') {
+      this.finishMazeGame(
+        surrenderingUserId === this.impostorId ? 'good' : this.impostorId,
+        'surrender'
+      );
+      return true;
+    }
+
+    if ((this.mode === '4-FFA' || this.mode === '6-FFA') &&
+        !alive.some(player => !player.id.startsWith('bot_'))) {
+      this.endGame(true);
+      return true;
+    }
+
+    if (alive.length <= 1 && this.mode !== '2v2') {
       this.winner = alive[0]?.id || null;
       this.endGame();
     } else {
@@ -1120,6 +1653,7 @@ export class GameInstance {
         this.onStateChange('turnChanged', { currentTurn, board: this.board.toDTO(currentTurn) });
       }
     }
+    return true;
   }
 
   public abandon() {
@@ -1140,7 +1674,12 @@ export class GameInstance {
       winner: this.winner,
       durationSeconds,
       abandoned,
-      ...(this.mode === 'labyrinth' ? { mazeRevealedImpostorId: this.impostorId } : {})
+      ...(this.mode === 'labyrinth'
+        ? {
+            mazeRevealedImpostorId: this.impostorId,
+            mazeEndReason: this.mazeEndReason
+          }
+        : {})
     });
     if (!abandoned && this.mode !== 'labyrinth') this.botReactionManager.onGameFinished(this.winner);
   }

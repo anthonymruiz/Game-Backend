@@ -1200,6 +1200,7 @@ export class Board {
         targetY: p.targetY,
         wallsLeft: p.wallsLeft,
         isDead: p.isDead,
+        hasReachedGoal: p.hasReachedGoal,
         hasKillerItem: p.hasKillerItem,
         hasExchangeItem: p.hasExchangeItem,
         ghostTurnsRemaining: p.ghostTurnsRemaining,

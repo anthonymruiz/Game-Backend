@@ -156,7 +156,7 @@ export class SixPlayerFfaRules implements IGameModeRules {
 
 export class LabyrinthRules implements IGameModeRules {
   public mode: GameMode = 'labyrinth';
-  public boardSize = 70;
+  public boardSize = 40;
   public maxPlayers = 6;
   public wallsPerPlayer = 0;
   public isTeamMode = false;

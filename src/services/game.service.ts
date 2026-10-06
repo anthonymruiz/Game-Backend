@@ -1,11 +1,12 @@
 import { singleton, inject, container } from 'tsyringe';
-import { GameInstance } from '../game/engine/game-instance.js';
+import { GameInstance, LABYRINTH_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
 import { BadgeService } from './badge.service.js';
 import { GameMode, GROUP_GAME_MODES } from './matchmaking.service.js';
 import { IRoomPlayer } from './room.service.js';
 import { Server } from 'socket.io';
 import { GameLogService, hasBotPlayers } from './game-log.service.js';
 import { SystemSettingsService } from './system-settings.service.js';
+import { MazeAuditService } from './maze-audit.service.js';
 
 @singleton()
 export class GameService {
@@ -14,7 +15,8 @@ export class GameService {
 
   constructor(
     @inject(GameLogService) private gameLogService: GameLogService,
-    @inject(SystemSettingsService) private systemSettingsService: SystemSettingsService
+    @inject(SystemSettingsService) private systemSettingsService: SystemSettingsService,
+    @inject(MazeAuditService) private mazeAuditService: MazeAuditService
   ) {}
 
   public setSocketServer(io: Server) {
@@ -29,6 +31,10 @@ export class GameService {
     roomName?: string,
     isRanked: boolean = false
   ) {
+    if (mode === 'labyrinth' &&
+        roomPlayers.filter(player => !player.id.startsWith('bot_')).length < LABYRINTH_MIN_HUMAN_PLAYERS) {
+      throw new Error(`Labyrinth requires at least ${LABYRINTH_MIN_HUMAN_PLAYERS} human players.`);
+    }
     const playerIds = roomPlayers.map(p => p.id);
     const settings = await this.systemSettingsService.getSettings();
 
@@ -38,8 +44,13 @@ export class GameService {
       roomPlayers, 
       (event, data) => {
         if (event === 'gameFinished') {
-          void this.handleGameFinished(matchId, mode, roomPlayers, playerIds, isPrivate, roomName, isRanked, game, data);
+          void this.handleGameFinished(matchId, mode, roomPlayers, playerIds, isPrivate, roomName, isRanked, game, data)
+            .catch(error => console.error(`Failed to finish match ${matchId}:`, error));
         } else {
+          if (mode === 'labyrinth' && (event === 'gameStarted' || event === 'mazeStateChanged')) {
+            void this.mazeAuditService.recordState(matchId, event, game.getMazeAuditSnapshot())
+              .catch(error => console.error(`Failed to save Maze audit state for ${matchId}:`, error));
+          }
           this.io.of('/game').to(matchId).emit(event, data);
         }
       },
@@ -63,7 +74,17 @@ export class GameService {
     };
 
     this.activeGames.set(matchId, game);
-    game.start();
+    if (mode === 'labyrinth') {
+      void this.mazeAuditService.recordState(matchId, 'game_created', game.getMazeAuditSnapshot())
+        .catch(error => console.error(`Failed to save initial Maze audit state for ${matchId}:`, error));
+    }
+    try {
+      game.start();
+    } catch (error) {
+      this.activeGames.delete(matchId);
+      if (mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
+      throw error;
+    }
   }
 
   private async handleGameFinished(
@@ -77,6 +98,11 @@ export class GameService {
     game: GameInstance,
     data: any
   ): Promise<void> {
+    if (mode === 'labyrinth') {
+      await this.mazeAuditService.recordState(matchId, 'game_finished', game.getMazeAuditSnapshot())
+        .catch(error => console.error(`Failed to save final Maze audit state for ${matchId}:`, error));
+      await this.mazeAuditService.releaseMatch(matchId);
+    }
     this.activeGames.delete(matchId);
     data.isRanked = isRanked;
     const matchIncludesBots = hasBotPlayers(roomPlayers);
@@ -114,7 +140,7 @@ export class GameService {
       const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' || mode === 'labyrinth';
       const matchmakingNamespace = this.io.of('/matchmaking');
 
-      if (!data.abandoned && isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
+      if ((!data.abandoned || mode === 'labyrinth') && isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
         const previousRoom: any = oldRoom || {
           id: matchId,
           code: '',

@@ -473,6 +473,11 @@ export class RoomService {
         player.pawnColor = itemId ? value : undefined;
         break;
       case 'PAWN_SKIN':
+        if (itemId && room.players.some(otherPlayer =>
+          otherPlayer.id !== userId && otherPlayer.skinItemId === itemId
+        )) {
+          throw new Error('Pawn skin is already taken by another participant');
+        }
         player.skinItemId = itemId || undefined;
         player.skinIcon = itemId ? value : undefined;
         player.skinName = itemId ? name : undefined;
