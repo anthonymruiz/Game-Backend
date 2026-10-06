@@ -1,5 +1,5 @@
 import { injectable } from 'tsyringe';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { In, Repository, SelectQueryBuilder } from 'typeorm';
 import { User } from '../models/user.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { AppDataSource } from '../config/database.config.js';
@@ -72,6 +72,7 @@ export class UserRepository {
     lifetimeWins: number;
     points: number;
     xp: number;
+    periodXp: number;
   }>> {
     const query = AppDataSource.getRepository(MatchHistory).createQueryBuilder('history')
       .innerJoin(User, 'user', 'user.id = history.userId')
@@ -83,6 +84,7 @@ export class UserRepository {
       .addSelect('COUNT(DISTINCT CASE WHEN history.result = :winResult THEN history.matchId END)', 'wins')
       .addSelect('COUNT(DISTINCT CASE WHEN history.result = :lossResult THEN history.matchId END)', 'losses')
       .addSelect('COUNT(DISTINCT CASE WHEN history.result = :drawResult THEN history.matchId END)', 'draws')
+      .addSelect('COALESCE(SUM(history.xpAwarded), 0)', 'periodXp')
       .addSelect('MAX(stats.wins)', 'lifetimeWins')
       .addSelect('MAX(stats.points)', 'points')
       .addSelect('MAX(stats.xp)', 'xp')
@@ -123,18 +125,29 @@ export class UserRepository {
       losses: string | number;
       draws: string | number;
       totalGames: string | number;
+      periodXp: string | number;
       lifetimeWins: string | number | null;
       points: string | number | null;
       xp: string | number | null;
     }>();
+    const avatarsByUserId = new Map(
+      (rows.length
+        ? await this.ormRepository.find({
+            select: { id: true, avatarUrl: true },
+            where: { id: In(rows.map(row => row.userId)) }
+          })
+        : []).map(user => [user.id, user.avatarUrl ?? null])
+    );
+
     return rows.map(row => ({
       userId: row.userId,
       username: row.username,
-      avatarUrl: row.avatarUrl,
+      avatarUrl: avatarsByUserId.get(row.userId) ?? null,
       wins: Number(row.wins) || 0,
       losses: Number(row.losses) || 0,
       draws: Number(row.draws) || 0,
       totalGames: Number(row.totalGames) || 0,
+      periodXp: Number(row.periodXp) || 0,
       lifetimeWins: Number(row.lifetimeWins) || 0,
       points: Number(row.points) || 0,
       xp: Number(row.xp) || 0

@@ -21,6 +21,9 @@ export class MatchHistory extends AbstractBaseEntity {
   @Column({ type: 'varchar', default: '1v1' })
   mode!: string; // '1v1' | '4way' | '2v2'
 
+  @Column({ type: 'int', default: 0 })
+  xpAwarded!: number;
+
   @Column({ type: 'varchar', nullable: true })
   opponentUsername?: string;
 

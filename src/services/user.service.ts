@@ -188,6 +188,7 @@ export class UserService {
         winRate,
         points,
         xp,
+        periodXp: user.periodXp,
         tier,
         rankInfo,
         level,

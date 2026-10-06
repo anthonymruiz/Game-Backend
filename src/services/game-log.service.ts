@@ -187,6 +187,7 @@ export class GameLogService {
         history.userId = user.id;
         history.matchId = matchId;
         history.mode = mode || '1v1';
+        history.xpAwarded = 0;
         history.opponentUsername = opponentUsername;
         if (durationSeconds !== undefined) {
           history.durationSeconds = durationSeconds;
@@ -247,6 +248,7 @@ export class GameLogService {
               : rewardsConfig.pointsPerWin;
             const previousXp = Math.max(0, stats.xp || 0);
             const awardedXp = progressionConfig.baseXpPerLevel;
+            history.xpAwarded = awardedXp;
             const updatedXp = previousXp + awardedXp;
             const progressionReward = calculateProgressionRewardBreakdown(
               previousXp,

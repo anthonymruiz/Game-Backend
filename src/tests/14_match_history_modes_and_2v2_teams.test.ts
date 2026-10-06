@@ -204,6 +204,8 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
       { id: user2Id, username: user2Name, isGuest: false, color: '#007AFF' }
     ], '1v1', 90);
 
+    const matchHistory = await AppDataSource.getRepository(MatchHistory)
+      .findOneByOrFail({ matchId, userId: user1Id });
     const userAfter = await userRepo.findOne({ where: { id: user1Id }, relations: { stats: true } });
     const previousXp = userBefore?.stats?.xp ?? 0;
     const progressionReward = calculateProgressionRewardBreakdown(
@@ -223,6 +225,7 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     });
     assert.strictEqual(userAfter?.stats?.points, (userBefore?.stats?.points ?? 0) + rewards[user1Id].points);
     assert.strictEqual(userAfter?.stats?.xp, (userBefore?.stats?.xp ?? 0) + config.baseXpPerLevel);
+    assert.strictEqual(matchHistory.xpAwarded, config.baseXpPerLevel);
   });
 
   it('14.5 Ranked 1v1 win awards configured ranked points', async () => {

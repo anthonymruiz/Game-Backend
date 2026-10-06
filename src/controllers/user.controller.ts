@@ -208,6 +208,7 @@ export class UserController {
 
   public getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     try {
+      res.set('Cache-Control', 'no-store');
       const rankKey = typeof req.query.rankKey === 'string' && req.query.rankKey !== 'all'
         ? req.query.rankKey
         : undefined;

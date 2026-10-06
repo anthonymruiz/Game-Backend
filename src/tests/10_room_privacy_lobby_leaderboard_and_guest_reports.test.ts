@@ -8,6 +8,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { User } from '../models/user.entity.js';
 import { Stats } from '../models/stats.entity.js';
+import { getUtcWeekRange } from '../utils/utc-week.util.js';
 
 describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Leaderboard', () => {
   let app: any;
@@ -185,6 +186,7 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
       matchId: `${prefix}-today-${index}`,
       mode: '1v1',
       result: 'win',
+      xpAwarded: 7,
       createdAt: new Date(todayStart.getTime() + 60_000 + index)
     }));
     const todayLoss = repository.create({
@@ -206,9 +208,23 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
       matchId: `${prefix}-tied-today-${index}`,
       mode: '1v1',
       result: 'win',
+      xpAwarded: 4,
       createdAt: new Date(todayStart.getTime() + 60_000 + index)
     }));
-    const matchIds = [...todayWins, todayLoss, previousWin, ...tiedTodayWins].map(match => match.matchId);
+    const { start: weekStart, end: weekEnd } = getUtcWeekRange(now);
+    const weeklyOnlyWin = repository.create({
+      userId: secondUserId,
+      matchId: `${prefix}-weekly-only`,
+      mode: '1v1',
+      result: 'win',
+      xpAwarded: 11,
+      createdAt: new Date(weekStart.getTime() + 1)
+    });
+    const weekMatches = [...tiedTodayWins, weeklyOnlyWin].filter(match =>
+      match.createdAt >= weekStart && match.createdAt < weekEnd
+    );
+    const expectedWeeklyXp = weekMatches.reduce((total, match) => total + match.xpAwarded, 0);
+    const matchIds = [...todayWins, todayLoss, previousWin, ...tiedTodayWins, weeklyOnlyWin].map(match => match.matchId);
     const normalUser = await userRepository.findOne({ where: { id: normalUserId }, relations: { stats: true } });
     const secondUser = await userRepository.findOne({ where: { id: secondUserId }, relations: { stats: true } });
     assert.ok(normalUser?.stats);
@@ -216,10 +232,14 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
     const previousNormalWins = normalUser.stats.wins;
     normalUser.stats.wins = 10;
     secondUser.stats.wins = 20;
+    secondUser.avatarUrl = 'https://example.test/leaderboard-avatar.png';
 
     try {
-      await statsRepository.save([normalUser.stats, secondUser.stats]);
-      await repository.insert([...todayWins, todayLoss, previousWin, ...tiedTodayWins]);
+      await Promise.all([
+        statsRepository.save([normalUser.stats, secondUser.stats]),
+        userRepository.save(secondUser)
+      ]);
+      await repository.insert([...todayWins, todayLoss, previousWin, ...tiedTodayWins, weeklyOnlyWin]);
 
       const today = await makeRequest(app, 'GET', '/api/users/leaderboard?period=today');
       assert.strictEqual(today.status, 200);
@@ -231,8 +251,16 @@ describe('Suite 10: Room Privacy, Codes, Lobby Cancellation, Guest Reports & Lea
       const secondTodayPlayer = today.body.leaderboard.find((player: { id: string }) => player.id === secondUserId);
       assert.ok(secondTodayPlayer);
       assert.equal(secondTodayPlayer.wins, 200);
+      assert.equal(secondTodayPlayer.periodXp, 800);
+      assert.equal(secondTodayPlayer.avatarUrl, 'https://example.test/leaderboard-avatar.png');
       assert.ok(today.body.leaderboard.findIndex((player: { id: string }) => player.id === secondUserId) <
         today.body.leaderboard.findIndex((player: { id: string }) => player.id === normalUserId));
+
+      const weekly = await makeRequest(app, 'GET', '/api/users/leaderboard?period=weekly');
+      assert.strictEqual(weekly.status, 200);
+      const secondWeeklyPlayer = weekly.body.leaderboard.find((player: { id: string }) => player.id === secondUserId);
+      assert.ok(secondWeeklyPlayer);
+      assert.equal(secondWeeklyPlayer.periodXp, expectedWeeklyXp);
 
       const history = await makeRequest(app, 'GET', '/api/users/leaderboard?period=history');
       assert.strictEqual(history.status, 200);
