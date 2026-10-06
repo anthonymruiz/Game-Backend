@@ -1,5 +1,5 @@
 import { injectable } from 'tsyringe';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { User } from '../models/user.entity.js';
 import { AppDataSource } from '../config/database.config.js';
@@ -44,6 +44,32 @@ export class MatchHistoryRepository {
     modeFilter?: string,
     options?: IPaginationOptions
   ): Promise<IPaginatedResult<MatchHistory>> {
+    return paginateQueryBuilder(this.createMatchesQuery(modeFilter, options?.search), {
+      page: options?.page,
+      limit: options?.limit,
+      sortBy: options?.sortBy ? `match.${options.sortBy}` : 'match.createdAt',
+      sortOrder: options?.sortOrder || 'DESC'
+    });
+  }
+
+  public async getMatchesWindow(
+    modeFilter: string | undefined,
+    options: IPaginationOptions | undefined,
+    skip: number,
+    take: number
+  ): Promise<{ data: MatchHistory[]; totalItems: number }> {
+    const queryBuilder = this.createMatchesQuery(modeFilter, options?.search)
+      .orderBy('match.createdAt', 'DESC')
+      .skip(skip)
+      .take(take);
+    const [data, totalItems] = await queryBuilder.getManyAndCount();
+    return { data, totalItems };
+  }
+
+  private createMatchesQuery(
+    modeFilter?: string,
+    search?: string
+  ): SelectQueryBuilder<MatchHistory> {
     const queryBuilder = this.ormRepository.createQueryBuilder('match')
       .leftJoinAndSelect('match.user', 'user')
       .leftJoinAndMapOne('match.opponent', User, 'opponent', 'opponent.username = match.opponentUsername')
@@ -75,13 +101,14 @@ export class MatchHistoryRepository {
       }
     }
 
-    return paginateQueryBuilder(queryBuilder, {
-      page: options?.page || 1,
-      limit: options?.limit || 10,
-      search: options?.search,
-      searchFields: ['match.matchId', 'user.username', 'match.opponentUsername'],
-      sortBy: options?.sortBy ? `match.${options.sortBy}` : 'match.createdAt',
-      sortOrder: options?.sortOrder || 'DESC'
-    });
+    if (search) {
+      const searchTerm = `%${search.trim()}%`;
+      queryBuilder.andWhere(
+        '(match.matchId LIKE :search OR user.username LIKE :search OR match.opponentUsername LIKE :search)',
+        { search: searchTerm }
+      );
+    }
+
+    return queryBuilder;
   }
 }

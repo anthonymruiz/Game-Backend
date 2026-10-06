@@ -50,6 +50,33 @@ export class AdminController {
     }
   };
 
+  public getDashboardAnalytics = async (req: Request, res: Response): Promise<void> => {
+    const allowedRanges = new Set(['today', '7d', 'month', 'year']);
+    const allowedModes = new Set(['all', '1v1', '2v2', '4-FFA', '6-FFA', 'vs_ai', 'labyrinth']);
+    if ((req.query.range !== undefined && typeof req.query.range !== 'string') ||
+      (req.query.mode !== undefined && typeof req.query.mode !== 'string')) {
+      res.status(400).json({ message: 'Dashboard filters must be single values.' });
+      return;
+    }
+    const range = typeof req.query.range === 'string' ? req.query.range : '7d';
+    const mode = typeof req.query.mode === 'string' ? req.query.mode : 'all';
+    if (!allowedRanges.has(range)) {
+      res.status(400).json({ message: 'Invalid dashboard range.' });
+      return;
+    }
+    if (!allowedModes.has(mode)) {
+      res.status(400).json({ message: 'Invalid dashboard match mode.' });
+      return;
+    }
+    try {
+      const analytics = await this.adminService.getDashboardAnalytics(range, mode);
+      res.status(200).json(analytics);
+    } catch (error) {
+      console.error('[AdminController] Failed to load dashboard analytics:', error);
+      res.status(500).json({ message: 'Could not load dashboard analytics.' });
+    }
+  };
+
   public getUsers = async (req: Request, res: Response): Promise<void> => {
     try {
       const currentUserRole = req.user!.role;

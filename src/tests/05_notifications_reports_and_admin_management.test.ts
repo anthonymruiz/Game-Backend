@@ -8,6 +8,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { User } from '../models/user.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { Report, ReportCategory, ReportStatus } from '../models/report.entity.js';
+import { MazeMatchAuditState } from '../models/maze-match-audit-state.entity.js';
 
 describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () => {
   let app: Application;
@@ -131,6 +132,73 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
       reporter.avatarUrl = reporterAvatar;
       reportedUser.avatarUrl = reportedAvatar;
       await userRepository.save([reporter, reportedUser]);
+    }
+  });
+
+  it('Admin match pagination includes all normal and Maze matches across combined pages', async () => {
+    const searchToken = `combined-pagination-${Date.now()}`;
+    const matchRepository = AppDataSource.getRepository(MatchHistory);
+    const auditRepository = AppDataSource.getRepository(MazeMatchAuditState);
+    const normalMatches = await matchRepository.save(Array.from({ length: 12 }, (_, index) =>
+      matchRepository.create({
+        userId: user1Id,
+        matchId: `${searchToken}-normal-${index}`,
+        result: 'win',
+        mode: '1v1',
+        opponentUsername: 'PaginationOpponent',
+        durationSeconds: 60,
+        createdAt: new Date(Date.UTC(2020, 0, index + 1))
+      })
+    ));
+    const mazeMatchIds = [`${searchToken}-maze-1`, `${searchToken}-maze-2`];
+    await auditRepository.save(mazeMatchIds.map((matchId, index) =>
+      auditRepository.create({
+        matchId,
+        sequence: 1,
+        event: 'game_finished',
+        snapshot: {
+          state: 'finished',
+          winner: `maze-host-${index}`,
+          startedAt: Date.UTC(2025, 0, index + 1),
+          capturedAt: Date.UTC(2025, 0, index + 1),
+          players: [{ id: `maze-host-${index}`, username: `MazeHost${index}`, role: 'good' }]
+        }
+      })
+    ));
+
+    try {
+      const firstPage = await makeRequest(
+        app,
+        'GET',
+        `/api/admin/matches?search=${searchToken}&page=1&limit=10`,
+        undefined,
+        adminToken
+      );
+      const secondPage = await makeRequest(
+        app,
+        'GET',
+        `/api/admin/matches?search=${searchToken}&page=2&limit=10`,
+        undefined,
+        adminToken
+      );
+
+      assert.equal(firstPage.status, 200);
+      assert.equal(secondPage.status, 200);
+      assert.equal(firstPage.body.meta.totalItems, 14);
+      assert.equal(secondPage.body.meta.totalItems, 14);
+      assert.equal(firstPage.body.data.length, 10);
+      assert.equal(secondPage.body.data.length, 4);
+      const returnedIds = [...firstPage.body.data, ...secondPage.body.data]
+        .map((match: { matchId: string }) => match.matchId);
+      assert.equal(new Set(returnedIds).size, 14);
+      assert.equal(returnedIds.length, 14);
+      assert.deepEqual(
+        new Set(returnedIds),
+        new Set([...normalMatches.map(match => match.matchId), ...mazeMatchIds])
+      );
+    } finally {
+      await matchRepository.delete(normalMatches.map(match => match.id));
+      await auditRepository.delete(mazeMatchIds.map(matchId => ({ matchId })));
     }
   });
 

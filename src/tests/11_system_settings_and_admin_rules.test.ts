@@ -4,6 +4,8 @@ import { setupTestEnvironment, teardownTestEnvironment, makeRequest } from './te
 import { Application } from 'express';
 import { container } from 'tsyringe';
 import { GameService } from '../services/game.service.js';
+import { MazeBoard } from '../game/engine/maze-board.js';
+import { MazeAuditService } from '../services/maze-audit.service.js';
 import { AppDataSource } from '../config/database.config.js';
 import { User } from '../models/user.entity.js';
 import { PointPackagePayment, PointPackagePaymentStatus } from '../models/point-package-payment.entity.js';
@@ -179,6 +181,49 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     assert.ok(kickEvents.includes('playerKicked'));
     assert.equal(game.board.players.has('rules-player-1'), false);
     game.destroy();
+  });
+
+  it('GameService starts a full Labyrinth room without constructor-time state events', async () => {
+    const emittedEvents: string[] = [];
+    const io = {
+      of: () => ({
+        to: () => ({
+          emit: (event: string) => emittedEvents.push(event)
+        })
+      })
+    };
+    const gameService = container.resolve(GameService);
+    gameService.setSocketServer(io as any);
+    const matchId = `maze-start-${randNum}`;
+
+    await gameService.createGame(matchId, 'labyrinth', [
+      { id: 'maze-start-human-1', username: 'Human 1', isGuest: false, color: '#FF3B30' },
+      { id: 'maze-start-human-2', username: 'Human 2', isGuest: false, color: '#007AFF' },
+      { id: 'maze-start-human-3', username: 'Human 3', isGuest: false, color: '#FFCC00' },
+      { id: 'maze-start-human-4', username: 'Human 4', isGuest: false, color: '#34C759' },
+      { id: 'bot_maze_start_1', username: 'Bot 1', isGuest: true, color: '#AF52DE' },
+      { id: 'bot_maze_start_2', username: 'Bot 2', isGuest: true, color: '#FF9500' }
+    ]);
+
+    const game = gameService.getGame(matchId);
+    assert.ok(game);
+    assert.equal(game.state, 'playing');
+    assert.equal((game.board as MazeBoard).keys.length, 4);
+    assert.ok(emittedEvents.includes('mazeStateChanged'));
+    assert.ok(emittedEvents.includes('gameStarted'));
+    game.destroy();
+    await container.resolve(MazeAuditService).releaseMatch(matchId);
+  });
+
+  it('GameService rejects Labyrinth rooms with fewer than two real players', async () => {
+    const gameService = container.resolve(GameService);
+    await assert.rejects(
+      gameService.createGame(`maze-too-small-${randNum}`, 'labyrinth', [
+        { id: 'maze-small-human-1', username: 'Human 1', isGuest: false, color: '#FF3B30' },
+        { id: 'bot_maze_small_1', username: 'Bot 1', isGuest: true, color: '#FFCC00' },
+      ]),
+      /at least 2 human players/
+    );
   });
 
   it('When allowNewRegistrations is false, new user registrations should be blocked', async () => {

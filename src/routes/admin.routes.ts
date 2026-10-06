@@ -17,6 +17,7 @@ const getBadgeController = () => container.resolve(BadgeController);
 adminRoutes.use(requireRole(['admin', 'superadmin']));
 
 adminRoutes.get('/metrics', (req, res) => getController().getMetrics(req, res));
+adminRoutes.get('/dashboard/analytics', (req, res) => getController().getDashboardAnalytics(req, res));
 adminRoutes.get('/users', (req, res) => getController().getUsers(req, res));
 adminRoutes.get('/transactions', (req, res) => getController().getTransactions(req, res));
 adminRoutes.get('/active-users', (req, res) => getController().getActiveUsers(req, res));
