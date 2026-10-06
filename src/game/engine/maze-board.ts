@@ -7,10 +7,24 @@ export interface IMazeKey {
   y: number;
 }
 
+export interface IMazeExit {
+  id: string;
+  x: number;
+  y: number;
+  playerId: string;
+}
+
 export class MazeBoard extends Board {
   public keys: IMazeKey[] = [];
+  public exits: IMazeExit[] = [];
 
-  public generateRandomMazeWalls(targetWallCount: number = 24, random: () => number = Math.random): void {
+  public generateRandomMazeWalls(
+    targetWallCount: number = Math.floor(this.size * this.size * 0.35),
+    random: () => number = Math.random,
+    exitCount: number = this.players.size
+  ): void {
+    this.exits = this.createExits(exitCount);
+    const protectedPassages = this.getProtectedPassages();
     const candidates: Wall[] = [];
     for (let y = 0; y < this.size - 1; y++) {
       for (let x = 0; x < this.size - 1; x++) {
@@ -24,12 +38,21 @@ export class MazeBoard extends Board {
       [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
     }
 
+    const blockedPassages = new Set<number>();
     for (const wall of candidates) {
       if (this.walls.length >= targetWallCount) break;
       if (!this.canPlaceWall(wall)) continue;
+      const passages = this.getWallPassages(wall);
+      if (passages.some(passage =>
+        protectedPassages.has(passage.key) ||
+        this.isPassageInsideCentralRoom(passage)
+      )) continue;
+
       this.walls.push(wall);
-      if (![...this.players.values()].every(player => this.hasPathToAnyEdge(player.x, player.y))) {
+      passages.forEach(passage => blockedPassages.add(passage.key));
+      if (!this.isBoardConnected(blockedPassages)) {
         this.walls.pop();
+        passages.forEach(passage => blockedPassages.delete(passage.key));
       }
     }
   }
@@ -190,7 +213,8 @@ export class MazeBoard extends Board {
     return {
       ...super.toDTO(),
       validMoves: forPlayerId ? this.getMazeValidMoves(forPlayerId) : [],
-      keys: this.keys.map(key => ({ ...key }))
+      keys: this.keys.map(key => ({ ...key })),
+      exits: this.exits.map(exit => ({ ...exit }))
     };
   }
 
@@ -198,13 +222,172 @@ export class MazeBoard extends Board {
     const occupiedPositions = new Set(
       [...this.players.values()].map(player => `${player.x},${player.y}`)
     );
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const cells: Coordinate[] = [];
     for (let y = 1; y < this.size - 1; y++) {
       for (let x = 1; x < this.size - 1; x++) {
-        if (!occupiedPositions.has(`${x},${y}`)) cells.push({ x, y });
+        const inCentralRoom = x >= minX && x <= maxX && y >= minY && y <= maxY;
+        if (!inCentralRoom && !occupiedPositions.has(`${x},${y}`)) cells.push({ x, y });
       }
     }
     return cells;
+  }
+
+  private createExits(exitCount: number): IMazeExit[] {
+    const players = [...this.players.values()];
+    const count = Math.min(Math.max(0, exitCount), players.length, 6);
+    if (!count) return [];
+
+    const middle = Math.floor(this.size / 2);
+    const radius = this.getCentralRoomRadius();
+    const exitRows = [
+      { x: middle, y: middle - radius },
+      { x: middle + radius, y: middle - radius },
+      { x: middle + radius, y: middle + radius },
+      { x: middle, y: middle + radius },
+      { x: middle - radius, y: middle + radius },
+      { x: middle - radius, y: middle - radius }
+    ];
+
+    return Array.from({ length: count }, (_, index) => {
+      const exitIndex = Math.floor(index * exitRows.length / count);
+      return {
+        id: `maze_exit_${index + 1}`,
+        ...exitRows[exitIndex],
+        playerId: players[index].id
+      };
+    });
+  }
+
+  private getProtectedPassages(): Set<number> {
+    const protectedPassages = new Set<number>();
+    const middle = Math.floor(this.size / 2);
+    const radius = this.getCentralRoomRadius();
+    const routes = [
+      this.createRoute({ x: middle, y: middle - radius }, { x: middle, y: 0 }),
+      this.createRoute({ x: middle + radius, y: middle - radius }, { x: this.size - 1, y: middle - radius }),
+      this.createRoute({ x: middle + radius, y: middle + radius }, { x: this.size - 1, y: middle + radius }),
+      this.createRoute({ x: middle, y: middle + radius }, { x: middle, y: this.size - 1 }),
+      this.createRoute({ x: middle - radius, y: middle + radius }, { x: 0, y: middle + radius }),
+      this.createRoute({ x: middle - radius, y: middle - radius }, { x: 0, y: middle - radius })
+    ];
+
+    for (const exit of this.exits) {
+      const routeIndex = Number(exit.id.slice('maze_exit_'.length)) - 1;
+      const route = routes[Math.floor(routeIndex * routes.length / this.exits.length)];
+      for (let index = 1; index < route.length; index++) {
+        protectedPassages.add(this.getPassageKey(route[index - 1], route[index]));
+      }
+    }
+    return protectedPassages;
+  }
+
+  private createRoute(start: Coordinate, end: Coordinate): Coordinate[] {
+    const route: Coordinate[] = [{ ...start }];
+    const current = { ...start };
+    const dx = Math.sign(end.x - start.x);
+    const dy = Math.sign(end.y - start.y);
+    while (current.x !== end.x || current.y !== end.y) {
+      if (current.x !== end.x) current.x += dx;
+      else current.y += dy;
+      route.push({ ...current });
+    }
+    return route;
+  }
+
+  private getWallPassages(wall: Wall): { key: number; x1: number; y1: number; x2: number; y2: number }[] {
+    if (wall.isHorizontal) {
+      return [
+        { x1: wall.x, y1: wall.y, x2: wall.x, y2: wall.y + 1 },
+        { x1: wall.x + 1, y1: wall.y, x2: wall.x + 1, y2: wall.y + 1 }
+      ].map(passage => ({
+        ...passage,
+        key: this.getPassageKey(
+          { x: passage.x1, y: passage.y1 },
+          { x: passage.x2, y: passage.y2 }
+        )
+      }));
+    }
+    return [
+      { x1: wall.x, y1: wall.y, x2: wall.x + 1, y2: wall.y },
+      { x1: wall.x, y1: wall.y + 1, x2: wall.x + 1, y2: wall.y + 1 }
+    ].map(passage => ({
+      ...passage,
+      key: this.getPassageKey(
+        { x: passage.x1, y: passage.y1 },
+        { x: passage.x2, y: passage.y2 }
+      )
+    }));
+  }
+
+  private getPassageKey(
+    start: Coordinate,
+    end: Coordinate
+  ): number {
+    const startIndex = start.y * this.size + start.x;
+    const endIndex = end.y * this.size + end.x;
+    return Math.min(startIndex, endIndex) * this.size * this.size + Math.max(startIndex, endIndex);
+  }
+
+  private isPassageInsideCentralRoom(passage: { x1: number; y1: number; x2: number; y2: number }): boolean {
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    return passage.x1 >= minX && passage.x1 <= maxX &&
+      passage.x2 >= minX && passage.x2 <= maxX &&
+      passage.y1 >= minY && passage.y1 <= maxY &&
+      passage.y2 >= minY && passage.y2 <= maxY;
+  }
+
+  private isBoardConnected(blockedPassages: Set<number>): boolean {
+    const totalCells = this.size * this.size;
+    const visited = new Uint8Array(totalCells);
+    const queue = new Int32Array(totalCells);
+    let readIndex = 0;
+    let writeIndex = 0;
+    queue[writeIndex++] = 0;
+    visited[0] = 1;
+
+    while (readIndex < writeIndex) {
+      const currentIndex = queue[readIndex++];
+      const x = currentIndex % this.size;
+      const y = Math.floor(currentIndex / this.size);
+      if (y > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - this.size, totalCells, blockedPassages, visited, queue, writeIndex);
+      if (y < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + this.size, totalCells, blockedPassages, visited, queue, writeIndex);
+      if (x > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - 1, totalCells, blockedPassages, visited, queue, writeIndex);
+      if (x < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + 1, totalCells, blockedPassages, visited, queue, writeIndex);
+    }
+    return writeIndex === totalCells;
+  }
+
+  private enqueueMazeCell(
+    currentIndex: number,
+    nextIndex: number,
+    totalCells: number,
+    blockedPassages: Set<number>,
+    visited: Uint8Array,
+    queue: Int32Array,
+    writeIndex: number
+  ): number {
+    if (visited[nextIndex]) return writeIndex;
+    const passageKey = Math.min(currentIndex, nextIndex) * totalCells + Math.max(currentIndex, nextIndex);
+    if (blockedPassages.has(passageKey)) return writeIndex;
+    visited[nextIndex] = 1;
+    queue[writeIndex++] = nextIndex;
+    return writeIndex;
+  }
+
+  private getCentralRoomRadius(): number {
+    return Math.min(5, Math.max(1, Math.floor((this.size - 1) / 2)));
+  }
+
+  private getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+    const middle = Math.floor(this.size / 2);
+    const radius = this.getCentralRoomRadius();
+    return {
+      minX: Math.max(0, middle - radius),
+      maxX: Math.min(this.size - 1, middle + radius),
+      minY: Math.max(0, middle - radius),
+      maxY: Math.min(this.size - 1, middle + radius)
+    };
   }
 
   private shuffle<T>(items: T[], random: () => number): T[] {

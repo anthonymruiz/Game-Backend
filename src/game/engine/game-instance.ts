@@ -151,7 +151,7 @@ export class GameInstance {
       }
       this.impostorId = humanPlayers[Math.floor(Math.random() * humanPlayers.length)].id;
       this.initialSabotageActions = Math.max(0, humanPlayers.length - 1);
-      this.getMazeBoard().generateRandomMazeWalls();
+      this.getMazeBoard().generateRandomMazeWalls(undefined, Math.random, roomPlayers.length);
       this.getMazeBoard().spawnKeys(humanPlayers.length);
     } else {
       this.impostorId = null;
@@ -693,7 +693,15 @@ export class GameInstance {
           return false;
         }
 
-        const wall = new Wall(wallId, playerId, x, y, isHorizontal);
+        const wall = new Wall(
+          wallId,
+          playerId,
+          x,
+          y,
+          isHorizontal,
+          player.wallEffectId,
+          player.wallEffectIcon
+        );
         if (!this.getMazeBoard().placeMazeWall(wall)) return false;
         if (isImpostor) {
           this.mazeSabotagesUsed++;

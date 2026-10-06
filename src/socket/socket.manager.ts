@@ -273,7 +273,7 @@ export class SocketManager {
               room.status = RoomStatus.PLAYING;
               this.lastMatchPlayers.set(room.id, [...room.players]);
               this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
-              matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+              matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id, mode: room.mode });
               void this.broadcastPublicRooms();
             }
           } else {
@@ -369,7 +369,7 @@ export class SocketManager {
           socket.join(room.id);
           room.status = RoomStatus.PLAYING;
           await this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
-          socket.emit('gameStarting', { matchId: room.id });
+          socket.emit('gameStarting', { matchId: room.id, mode: room.mode });
         } catch (err: any) {
           socket.emit('error', err.message);
         }
@@ -391,7 +391,7 @@ export class SocketManager {
             room.status = RoomStatus.PLAYING;
             this.lastMatchPlayers.set(room.id, [...room.players]);
             this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
-            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id, mode: room.mode });
             void this.broadcastPublicRooms();
           }
         } catch (err: any) {
@@ -416,7 +416,7 @@ export class SocketManager {
             room.status = RoomStatus.PLAYING;
             this.lastMatchPlayers.set(room.id, [...room.players]);
             this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
-            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id, mode: room.mode });
             void this.broadcastPublicRooms();
           }
         } catch (err: any) {
@@ -565,7 +565,7 @@ export class SocketManager {
             this.lastMatchPlayers.set(room.id, [...room.players]);
             this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
             
-            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id });
+            matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id, mode: room.mode });
             void this.broadcastPublicRooms();
           }, 3000);
         } catch (err: any) {
@@ -847,20 +847,20 @@ export class SocketManager {
                 this.lastMatchPlayers.set(newMatchId, [...players]);
                 this.gameService.createGame(newMatchId, '1v1', players, true, room ? room.name : `Revancha de ${host.username}`);
 
-                gameNs.to(roomId).emit('gameStarting', { matchId: newMatchId });
-                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newMatchId });
+                gameNs.to(roomId).emit('gameStarting', { matchId: newMatchId, mode: targetMode });
+                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newMatchId, mode: targetMode });
 
                 const playerIds = new Set(players.map(p => p.id));
                 for (const s of gameNs.sockets.values()) {
                   const uId = s.data?.user?.sub || s.data?.user?.id;
                   if (uId && playerIds.has(uId)) {
-                    s.emit('gameStarting', { matchId: newMatchId });
+                    s.emit('gameStarting', { matchId: newMatchId, mode: targetMode });
                   }
                 }
                 for (const s of matchmakingNs.sockets.values()) {
                   const uId = s.data?.user?.sub || s.data?.user?.id;
                   if (uId && playerIds.has(uId)) {
-                    s.emit('gameStarting', { matchId: newMatchId });
+                    s.emit('gameStarting', { matchId: newMatchId, mode: targetMode });
                   }
                 }
               } else {
@@ -896,20 +896,20 @@ export class SocketManager {
                 this.lastMatchPlayers.set(newRoom.id, [...newRoom.players]);
                 this.gameService.createGame(newRoom.id, newRoom.mode, newRoom.players, newRoom.isPrivate, newRoom.name);
 
-                gameNs.to(roomId).emit('gameStarting', { matchId: newRoom.id });
-                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newRoom.id });
+                gameNs.to(roomId).emit('gameStarting', { matchId: newRoom.id, mode: targetMode });
+                this.io.of('/matchmaking').to(roomId).emit('gameStarting', { matchId: newRoom.id, mode: targetMode });
 
                 const playerIds = new Set(players.map(p => p.id));
                 for (const s of gameNs.sockets.values()) {
                   const uId = s.data?.user?.sub || s.data?.user?.id;
                   if (uId && playerIds.has(uId)) {
-                    s.emit('gameStarting', { matchId: newRoom.id });
+                    s.emit('gameStarting', { matchId: newRoom.id, mode: targetMode });
                   }
                 }
                 for (const s of matchmakingNs.sockets.values()) {
                   const uId = s.data?.user?.sub || s.data?.user?.id;
                   if (uId && playerIds.has(uId)) {
-                    s.emit('gameStarting', { matchId: newRoom.id });
+                    s.emit('gameStarting', { matchId: newRoom.id, mode: targetMode });
                   }
                 }
               }

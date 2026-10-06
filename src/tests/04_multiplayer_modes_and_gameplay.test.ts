@@ -109,14 +109,21 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
 
     assert.ok(game.board instanceof MazeBoard);
     const mazeBoard = game.board as MazeBoard;
+    assert.equal(game.board.size, 70);
     const positions = [...game.board.players.values()].map(player => `${player.x},${player.y}`);
     assert.equal(new Set(positions).size, 6);
+    const middle = Math.floor(game.board.size / 2);
     for (const player of game.board.players.values()) {
-      assert.ok(Math.abs(player.x - 5) <= 1);
-      assert.ok(Math.abs(player.y - 5) <= 1);
+      assert.ok(Math.abs(player.x - middle) <= 1);
+      assert.ok(Math.abs(player.y - middle) <= 1);
       assert.equal(player.wallsLeft, 0);
     }
-    assert.ok(game.board.walls.length > 0);
+    assert.ok(game.board.walls.length >= game.board.size * game.board.size * 0.3);
+    assert.equal(mazeBoard.exits.length, 6);
+    assert.equal(new Set(mazeBoard.exits.map(exit => exit.playerId)).size, 6);
+    assert.ok(mazeBoard.exits.every(exit =>
+      Math.abs(exit.x - middle) === 5 || Math.abs(exit.y - middle) === 5
+    ));
     assert.equal(game.board.boosts.length, 0);
     assert.equal(mazeBoard.keys.length, 3);
     assert.ok(mazeBoard.isCellCapturable(mazeBoard.keys[0].x, mazeBoard.keys[0].y));
@@ -214,12 +221,14 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     for (const row of game.board.grid) for (const cell of row) cell.hasPlayer = null;
 
     const impostor = game.board.players.get(game.impostorId!)!;
-    impostor.x = 5;
-    impostor.y = 5;
-    game.board.grid[5][5].hasPlayer = impostor.id;
+    const middle = Math.floor(game.board.size / 2);
+    impostor.x = middle;
+    impostor.y = middle;
+    game.board.grid[middle][middle].hasPlayer = impostor.id;
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
-    const safePositions = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }, { x: 10, y: 10 }, { x: 5, y: 0 }];
+    const edge = game.board.size - 1;
+    const safePositions = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }, { x: middle, y: 0 }];
     goodPlayers.forEach((player, index) => {
       player.x = safePositions[index].x;
       player.y = safePositions[index].y;
@@ -227,10 +236,10 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     });
 
     const cageWalls = [
-      { x: 4, y: 4, horizontal: true },
-      { x: 5, y: 5, horizontal: true },
-      { x: 4, y: 5, horizontal: false },
-      { x: 5, y: 4, horizontal: false }
+      { x: middle - 1, y: middle - 1, horizontal: true },
+      { x: middle, y: middle, horizontal: true },
+      { x: middle - 1, y: middle, horizontal: false },
+      { x: middle, y: middle - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
       assert.equal(
@@ -260,27 +269,29 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     for (const row of game.board.grid) for (const cell of row) cell.hasPlayer = null;
 
     const impostor = game.board.players.get(game.impostorId!)!;
+    const middle = Math.floor(game.board.size / 2);
+    const edge = game.board.size - 1;
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const target = goodPlayers[0];
-    target.x = 5;
-    target.y = 5;
-    game.board.grid[5][5].hasPlayer = target.id;
+    target.x = middle;
+    target.y = middle;
+    game.board.grid[middle][middle].hasPlayer = target.id;
     goodPlayers.slice(1).forEach((player, index) => {
-      const position = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }, { x: 10, y: 10 }][index];
+      const position = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }][index];
       player.x = position.x;
       player.y = position.y;
       game.board.grid[player.y][player.x].hasPlayer = player.id;
     });
     impostor.x = 0;
-    impostor.y = 5;
-    game.board.grid[5][0].hasPlayer = impostor.id;
+    impostor.y = middle;
+    game.board.grid[middle][0].hasPlayer = impostor.id;
 
     const cageWalls = [
-      { x: 4, y: 4, horizontal: true },
-      { x: 5, y: 5, horizontal: true },
-      { x: 4, y: 5, horizontal: false },
-      { x: 5, y: 4, horizontal: false }
+      { x: middle - 1, y: middle - 1, horizontal: true },
+      { x: middle, y: middle, horizontal: true },
+      { x: middle - 1, y: middle, horizontal: false },
+      { x: middle, y: middle - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
       assert.equal(
@@ -306,27 +317,29 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     for (const row of game.board.grid) for (const cell of row) cell.hasPlayer = null;
 
     const impostor = game.board.players.get(game.impostorId!)!;
+    const middle = Math.floor(game.board.size / 2);
+    const edge = game.board.size - 1;
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const target = goodPlayers[0];
-    target.x = 5;
-    target.y = 5;
-    game.board.grid[5][5].hasPlayer = target.id;
+    target.x = middle;
+    target.y = middle;
+    game.board.grid[middle][middle].hasPlayer = target.id;
     goodPlayers.slice(1).forEach((player, index) => {
-      const position = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }, { x: 10, y: 10 }][index];
+      const position = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }][index];
       player.x = position.x;
       player.y = position.y;
       game.board.grid[player.y][player.x].hasPlayer = player.id;
     });
-    impostor.x = 5;
+    impostor.x = middle;
     impostor.y = 0;
-    game.board.grid[0][5].hasPlayer = impostor.id;
+    game.board.grid[0][middle].hasPlayer = impostor.id;
 
     const cageWalls = [
-      { x: 4, y: 4, horizontal: true },
-      { x: 5, y: 5, horizontal: true },
-      { x: 4, y: 5, horizontal: false },
-      { x: 5, y: 4, horizontal: false }
+      { x: middle - 1, y: middle - 1, horizontal: true },
+      { x: middle, y: middle, horizontal: true },
+      { x: middle - 1, y: middle, horizontal: false },
+      { x: middle, y: middle - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
       assert.equal(game.placeMazeWall(impostor.id, wall.x, wall.y, wall.horizontal, `impostor_cage_${index}`), true);
