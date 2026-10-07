@@ -10,7 +10,7 @@ export interface ILevelProgressionConfig {
 
 export const DEFAULT_LEVEL_PROGRESSION_CONFIG: ILevelProgressionConfig = {
   baseXpPerLevel: 10,
-  exponentialMultiplier: 1.0493,
+  exponentialMultiplier: 1.049,
   maxLevel: 100
 };
 
@@ -41,8 +41,13 @@ export class LevelProgressionService {
       ? record.exponentialMultiplier
       : Number(input.exponentialMultiplier);
 
-    if (!Number.isFinite(exponentialMultiplier) || exponentialMultiplier <= 1 || exponentialMultiplier > 2) {
-      throw new Error('exponentialMultiplier must be greater than 1 and at most 2.');
+    if (
+      !Number.isFinite(exponentialMultiplier) ||
+      exponentialMultiplier <= 1 ||
+      exponentialMultiplier > 2 ||
+      Math.abs(exponentialMultiplier * 1000 - Math.round(exponentialMultiplier * 1000)) >= 1e-8
+    ) {
+      throw new Error('exponentialMultiplier must be greater than 1, at most 2, and have no more than 3 decimal places.');
     }
 
     record.baseXpPerLevel = baseXpPerLevel;
@@ -67,7 +72,7 @@ export class LevelProgressionService {
   private toConfiguration(record: LevelProgressionConfig): ILevelProgressionConfig {
     return {
       baseXpPerLevel: record.baseXpPerLevel,
-      exponentialMultiplier: Number(record.exponentialMultiplier),
+      exponentialMultiplier: Math.round(Number(record.exponentialMultiplier) * 1000) / 1000,
       maxLevel: record.maxLevel
     };
   }

@@ -19,7 +19,7 @@ export interface IRankTier {
 }
 
 const DEFAULT_MAX_LEVEL_XP = Math.round(
-  10 * (Math.pow(1.0493, 99) - 1) / (1.0493 - 1)
+  10 * (Math.pow(1.049, 99) - 1) / (1.049 - 1)
 );
 
 export const RANK_TIERS: IRankTier[] = Object.values(RankLevel).map((key, index, tiers) => ({
