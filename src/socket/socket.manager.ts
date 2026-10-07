@@ -834,7 +834,8 @@ export class SocketManager {
                 canPlaceWall: privateMazeRole?.canPlaceWall === true,
                 canRescue: privateMazeRole?.canRescue === true,
                 isInPrison: player?.isInPrison === true,
-                wallPlacementCooldownUntil: privateMazeRole?.wallPlacementCooldownUntil ?? 0
+                wallPlacementCooldownUntil: privateMazeRole?.wallPlacementCooldownUntil ?? 0,
+                wallBreakCooldownUntil: privateMazeRole?.wallBreakCooldownUntil ?? 0
               });
               const privateInfectionState = game.getPrivateInfectionState(userId);
               if (privateInfectionState) socket.emit('infectionState', privateInfectionState);
@@ -890,6 +891,28 @@ export class SocketManager {
         game.teleportMazePlayer(userId, data.teleportId);
       });
 
+      socket.on('useInfectionLastSurvivorTeleport', (data: { roomId: string }) => {
+        if (!data || typeof data.roomId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'infection' ||
+            data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        game.useInfectionLastSurvivorTeleport(userId);
+      });
+
+      socket.on('useInfectionLastSurvivorPower', (data: {
+        roomId: string;
+        power: 'ghost' | 'shield' | 'invisible' | 'teleport';
+      }) => {
+        if (!data || typeof data.roomId !== 'string' ||
+            !['ghost', 'shield', 'invisible', 'teleport'].includes(data.power)) return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'infection' ||
+            data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        game.useInfectionLastSurvivorPower(userId, data.power);
+      });
+
       socket.on('sealMazeExit', (data: { roomId: string; exitId: string }) => {
         if (!data || typeof data.roomId !== 'string' || typeof data.exitId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
@@ -932,7 +955,8 @@ export class SocketManager {
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
-            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
+            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
           });
         }
       });
@@ -950,7 +974,8 @@ export class SocketManager {
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
-            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
+            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
           });
         }
       });
@@ -967,7 +992,8 @@ export class SocketManager {
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
-            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
+            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
           });
         }
       });

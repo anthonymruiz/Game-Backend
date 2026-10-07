@@ -15,6 +15,7 @@ export interface IGameInstanceOptions {
 
 type BoostDecisionType = 'killer_item' | 'exchange_item';
 type TimedBoostType = 'ghost' | 'killer_item' | 'exchange_item' | 'portal';
+export type InfectionLastSurvivorPower = 'ghost' | 'shield' | 'invisible' | 'teleport';
 
 export const BOOST_MIN_DELAY_MS = 60_000;
 export const BOOST_MAX_DELAY_MS = 120_000;
@@ -36,10 +37,13 @@ export const INFECTION_SAFE_ZONE_RED_DURATION_MS = INFECTION_SAFE_ZONE_COOLDOWN_
 export const INFECTION_MOVE_INTERVAL_MS = 80;
 export const INFECTION_MIN_PLAYERS = 3;
 export const INFECTION_MAX_PLAYERS = 6;
+export const INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS = 15_000;
+export const INFECTION_LAST_SURVIVOR_HUNT_COUNTDOWN_MS = 5_000;
 export const INFECTION_ICE_TRAP_DURATION_MS = 15_000;
 export const INFECTION_RESHUFFLE_INTERVAL_MS = 60_000;
-export const INFECTION_WALL_LIFETIME_MS = 15_000;
+export const INFECTION_WALL_BREAK_COOLDOWN_MS = 5_000;
 export const INFECTION_GHOST_PICKUP_COUNT = 3;
+export const INFECTION_GHOST_DURATION_MS = 15_000;
 export const INFECTION_INVISIBLE_PICKUP_COUNT = 3;
 export const INFECTION_INVISIBLE_DURATION_MS = 15_000;
 export const INFECTION_SHIELD_PICKUP_COUNT = 3;
@@ -115,8 +119,11 @@ export class GameInstance {
   private readonly infectionSafeZoneEnteredAt = new Map<string, number>();
   private readonly infectionSafeZoneCooldownUntil = new Map<string, number>();
   private readonly infectionSafeZoneTimers = new Map<string, NodeJS.Timeout>();
-  private readonly infectionWallTimers = new Map<string, NodeJS.Timeout>();
+  private readonly infectionWallBreakCooldownUntil = new Map<string, number>();
+  private readonly infectionLastSurvivorPowerCooldownUntil =
+    new Map<string, Record<InfectionLastSurvivorPower, number>>();
   private infectionLastSurvivorAlertSent = false;
+  private infectionLastSurvivorCountdownUntil = 0;
   private infectionHuntStarted = false;
 
   private turnTimer: NodeJS.Timeout | null = null;
@@ -566,8 +573,6 @@ export class GameInstance {
     if (this.mazeGameTimer) clearTimeout(this.mazeGameTimer);
     if (this.mazeTimerInterval) clearInterval(this.mazeTimerInterval);
     if (this.mazeInactivityTimer) clearTimeout(this.mazeInactivityTimer);
-    for (const timer of this.infectionWallTimers.values()) clearTimeout(timer);
-    this.infectionWallTimers.clear();
     this.mazeGameTimer = null;
     this.mazeTimerInterval = null;
     this.mazeInactivityTimer = null;
@@ -654,7 +659,8 @@ export class GameInstance {
         canPlaceWall: role.canPlaceWall,
         canRescue: role.canRescue,
         isInPrison: player.isInPrison,
-        wallPlacementCooldownUntil: role.wallPlacementCooldownUntil
+        wallPlacementCooldownUntil: role.wallPlacementCooldownUntil,
+        wallBreakCooldownUntil: role.wallBreakCooldownUntil
       });
     }
     }
@@ -769,6 +775,11 @@ export class GameInstance {
       );
     }
 
+  private isLastInfectionSurvivor(playerId: string): boolean {
+    const survivors = this.getInfectionSurvivorIds();
+    return survivors.length === 1 && survivors[0] === playerId;
+  }
+
   private getActiveInfectionIds(): string[] {
       return this.playersList.filter(playerId =>
         this.isInfected(playerId) &&
@@ -787,6 +798,11 @@ export class GameInstance {
       huntSecondsRemaining: number;
       infectedCount: number;
       playerCount: number;
+      isLastSurvivor: boolean;
+      lastSurvivorTeleportCooldownUntil: number;
+      lastSurvivorPowerCooldowns: Record<InfectionLastSurvivorPower, number>;
+      lastSurvivorCountdownUntil: number;
+      serverTime: number;
     } | null {
       if (this.mode !== 'infection' || !this.playersList.includes(playerId)) return null;
       const players = [...this.board.players.values()];
@@ -805,7 +821,18 @@ export class GameInstance {
           ? Math.max(0, Math.ceil((this.startTime + INFECTION_HUNT_DELAY_MS - Date.now()) / 1000))
           : 0,
         infectedCount: players.filter(player => player.isInfected && !player.isDead).length,
-        playerCount: players.filter(player => !player.isDead).length
+        playerCount: players.filter(player => !player.isDead).length,
+        isLastSurvivor: this.isLastInfectionSurvivor(playerId),
+        lastSurvivorTeleportCooldownUntil:
+          this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.teleport ?? 0,
+        lastSurvivorPowerCooldowns: {
+          ghost: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.ghost ?? 0,
+          shield: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.shield ?? 0,
+          invisible: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.invisible ?? 0,
+          teleport: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.teleport ?? 0
+        },
+        lastSurvivorCountdownUntil: this.infectionLastSurvivorCountdownUntil,
+        serverTime: Date.now()
       };
     }
 
@@ -961,8 +988,6 @@ export class GameInstance {
     const mazeBoard = this.getMazeBoard();
     mazeBoard.reshuffleMaze(random, true);
     if (this.mode === 'infection') {
-      for (const timer of this.infectionWallTimers.values()) clearTimeout(timer);
-      this.infectionWallTimers.clear();
       this.getInfectionBoard().respawnInfectionPowerups(
         INFECTION_GHOST_PICKUP_COUNT,
         INFECTION_INVISIBLE_PICKUP_COUNT,
@@ -1058,6 +1083,7 @@ export class GameInstance {
     canRescue: boolean;
     exitSealCooldownUntil: number;
     wallPlacementCooldownUntil: number;
+    wallBreakCooldownUntil: number;
   } | null {
     if (!this.isMazeBoardMode() || !this.playersList.includes(playerId) || playerId.startsWith('bot_')) {
       return null;
@@ -1068,13 +1094,17 @@ export class GameInstance {
     const player = this.board.players.get(playerId);
     const canAct = !!player && !player.isDead && !player.hasMazeEscaped && !player.isInPrison;
     const wallPlacementCooldownUntil = this.mazeWallPlacementCooldownUntil.get(playerId) ?? 0;
+    const wallBreakCooldownUntil = isInfected
+      ? this.infectionWallBreakCooldownUntil.get(playerId) ?? 0
+      : 0;
     return {
       role: isInfection ? (isInfected ? 'infected' : 'good') : (isImpostor ? 'impostor' : 'good'),
       canBreakBlock: canAct,
       canPlaceWall: canAct && (!isInfection || !isInfected) && wallPlacementCooldownUntil <= Date.now(),
       canRescue: canAct && !isInfection,
       exitSealCooldownUntil: isImpostor ? this.mazeExitSealCooldownUntil : 0,
-      wallPlacementCooldownUntil
+      wallPlacementCooldownUntil,
+      wallBreakCooldownUntil
     };
   }
 
@@ -1372,7 +1402,8 @@ export class GameInstance {
           player.isDead ||
           (this.mode === 'infection' && playerId === this.impostorId &&
             now < (this.startTime ?? 0) + INFECTION_HUNT_DELAY_MS) ||
-          now - previousMoveAt < (this.mode === 'infection' && this.isInfected(playerId)
+          now - previousMoveAt < (this.mode === 'infection' &&
+            (this.isInfected(playerId) || this.isLastInfectionSurvivor(playerId))
             ? INFECTION_MOVE_INTERVAL_MS
             : 120)
         ) return false;
@@ -1425,7 +1456,8 @@ export class GameInstance {
           this.emitMazePublicEvent('maze_ghost_activated', { playerName: player.username });
         }
         this.triggerMazeTrap(playerId, player.x, player.y);
-        if (this.mode === 'infection' && !this.isInfected(playerId)) {
+        if (this.mode === 'infection' && !this.isInfected(playerId) &&
+            !this.isLastInfectionSurvivor(playerId)) {
           const now = Date.now();
           const hasActivePowerup =
             player.ghostModeExpiresAt > now ||
@@ -1435,7 +1467,7 @@ export class GameInstance {
             player.x, player.y, Math.random, hasActivePowerup
           );
           if (powerup === 'ghost') {
-            player.ghostModeExpiresAt = Date.now() + LABYRINTH_GHOST_DURATION_MS;
+            player.ghostModeExpiresAt = Date.now() + INFECTION_GHOST_DURATION_MS;
             this.updateMazePrisons();
           } else if (powerup === 'invisible') {
             player.invisibleUntil = Date.now() + INFECTION_INVISIBLE_DURATION_MS;
@@ -1523,6 +1555,11 @@ export class GameInstance {
     if (survivors.length !== 1) return;
 
     this.infectionLastSurvivorAlertSent = true;
+    this.infectionLastSurvivorCountdownUntil = Date.now() + INFECTION_LAST_SURVIVOR_HUNT_COUNTDOWN_MS;
+    for (const infectedId of this.getActiveInfectionIds()) {
+      const infected = this.board.players.get(infectedId);
+      if (infected) infected.mazeFrozenUntil = this.infectionLastSurvivorCountdownUntil;
+    }
     const survivorId = survivors[0];
     const survivor = this.board.players.get(survivorId);
     if (!survivor) return;
@@ -1533,6 +1570,8 @@ export class GameInstance {
     if (!survivorId.startsWith('bot_')) {
       this.onPrivateStateChange(survivorId, 'infectionLastSurvivor', { playerId: survivorId });
     }
+    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    this.emitInfectionState();
   }
 
   public getMazeGhostPickupsForPlayer(playerId: string): { id: string; x: number; y: number }[] {
@@ -1632,6 +1671,78 @@ export class GameInstance {
         return true;
       }
 
+  public useInfectionLastSurvivorTeleport(
+    playerId: string,
+    random: () => number = Math.random
+  ): boolean {
+    return this.useInfectionLastSurvivorPower(playerId, 'teleport', random);
+  }
+
+  public useInfectionLastSurvivorPower(
+    playerId: string,
+    power: InfectionLastSurvivorPower,
+    random: () => number = Math.random
+  ): boolean {
+    const player = this.board.players.get(playerId);
+    const now = Date.now();
+    if (this.mode !== 'infection' || this.state !== 'playing' || !player ||
+        playerId.startsWith('bot_') || player.isDead || player.isInPrison ||
+        player.mazeFrozenUntil > now || player.mazeTeleportingUntil > now ||
+        !this.isLastInfectionSurvivor(playerId)) return false;
+    const cooldowns = this.infectionLastSurvivorPowerCooldownUntil.get(playerId) ?? {
+      ghost: 0,
+      shield: 0,
+      invisible: 0,
+      teleport: 0
+    };
+    if (cooldowns[power] > now) return false;
+
+    let teleport: ReturnType<InfectionBoard['teleportPlayerToOppositeEdge']> = null;
+    if (power === 'ghost') {
+      player.ghostModeExpiresAt = now + INFECTION_GHOST_DURATION_MS;
+      this.updateMazePrisons();
+    } else if (power === 'shield') {
+      player.mazeShieldActive = true;
+      player.mazeShieldExpiresAt = now + INFECTION_SHIELD_DURATION_MS;
+    } else if (power === 'invisible') {
+      player.invisibleUntil = now + INFECTION_INVISIBLE_DURATION_MS;
+    } else {
+      teleport = this.getInfectionBoard().teleportPlayerToOppositeEdge(playerId, random);
+      if (!teleport) return false;
+      player.mazeTeleportingUntil = now + LABYRINTH_TELEPORT_ANIMATION_MS;
+      this.mazeMoveAt.set(playerId, now);
+    }
+
+    this.infectionLastSurvivorPowerCooldownUntil.set(playerId, {
+      ...cooldowns,
+      [power]: now + INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS
+    });
+    this.recordPlayerActivity(playerId);
+    if (teleport) {
+      this.onStateChange('playerMoved', {
+        playerId,
+        fromX: teleport.from.x,
+        fromY: teleport.from.y,
+        newX: teleport.destination.x,
+        newY: teleport.destination.y,
+        movementTrailId: player.movementTrailId,
+        movementTrailIcon: player.movementTrailIcon,
+        teleported: true
+      });
+      this.resolveInfectionContact();
+    }
+    for (const infectedId of this.getActiveInfectionIds()) {
+      this.onPrivateStateChange(infectedId, 'infectionLastSurvivorPowerAlert', {
+        id: `${now}_${Math.random().toString(36).slice(2)}`,
+        playerName: player.username,
+        power
+      });
+    }
+    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    this.emitInfectionState();
+    return true;
+  }
+
       public sealMazeExit(playerId: string, exitId: string): boolean {
         const player = this.board.players.get(playerId);
         if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
@@ -1688,7 +1799,6 @@ export class GameInstance {
         if (mazeBoard.wouldMakeUncollectedKeyUnreachable(wall)) return false;
         if (!mazeBoard.placeMazeWall(wall)) return false;
         this.mazeWallPlacementCooldownUntil.set(playerId, Date.now() + LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
-        if (this.mode === 'infection') this.scheduleInfectionWallExpiry(wall.id);
         this.recordPlayerActivity(playerId);
 
         const newlyCaptured = this.updateMazePrisons();
@@ -1698,23 +1808,16 @@ export class GameInstance {
         return true;
       }
 
-      private scheduleInfectionWallExpiry(wallId: string): void {
-        const timer = setTimeout(() => {
-          this.infectionWallTimers.delete(wallId);
-          if (this.state !== 'playing') return;
-          if (!this.getInfectionBoard().removeWallById(wallId)) return;
-          this.updateMazePrisons();
-          this.onStateChange('mazeStateChanged', this.getMazeStateData());
-        }, INFECTION_WALL_LIFETIME_MS);
-        timer.unref();
-        this.infectionWallTimers.set(wallId, timer);
-      }
-
       public breakMazeBlock(playerId: string, wallId: string): boolean {
         const player = this.board.players.get(playerId);
         if (!this.isMazeBoardMode() || this.state !== 'playing' || !player ||
             playerId.startsWith('bot_') || player.isDead || player.hasMazeEscaped ||
-            player.isInPrison) return false;
+            player.isInPrison ||
+            (this.mode === 'infection' && this.isInfected(playerId) &&
+              player.mazeFrozenUntil > Date.now())) return false;
+        const isInfected = this.mode === 'infection' && this.isInfected(playerId);
+        if (isInfected &&
+            (this.infectionWallBreakCooldownUntil.get(playerId) ?? 0) > Date.now()) return false;
         const mazeBoard = this.getMazeBoard();
         const wall = mazeBoard.walls.find(candidate =>
           candidate.id === wallId &&
@@ -1724,10 +1827,11 @@ export class GameInstance {
         if (!wall) return false;
         const removedWall = mazeBoard.removeWallById(wallId);
         if (!removedWall) return false;
-        const wallTimer = this.infectionWallTimers.get(wallId);
-        if (wallTimer) {
-          clearTimeout(wallTimer);
-          this.infectionWallTimers.delete(wallId);
+        if (isInfected) {
+          this.infectionWallBreakCooldownUntil.set(
+            playerId,
+            Date.now() + INFECTION_WALL_BREAK_COOLDOWN_MS
+          );
         }
         this.recordPlayerActivity(playerId);
         this.updateMazePrisons();

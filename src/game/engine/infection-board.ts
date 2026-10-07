@@ -10,6 +10,15 @@ export class InfectionBoard extends MazeBoard {
   private ghostPickupSequence = 0;
   private infectionPickupSequence = 0;
 
+  public override reshuffleMaze(
+    random: () => number = Math.random,
+    prioritizeGateApproaches = false
+  ): void {
+    this.walls = this.walls.filter(wall => wall.ownerId === 'maze');
+    for (const player of this.players.values()) player.isInPrison = false;
+    super.reshuffleMaze(random, prioritizeGateApproaches);
+  }
+
   protected override getProtectedCentralZoneBounds(): {
     minX: number;
     maxX: number;
@@ -53,6 +62,52 @@ export class InfectionBoard extends MazeBoard {
     player.startY = this.size - 1;
     this.grid[player.y][player.x].hasPlayer = playerId;
     return { x, y: this.size - 1 };
+  }
+
+  public teleportPlayerToOppositeEdge(
+    playerId: string,
+    random: () => number = Math.random
+  ): { from: Coordinate; destination: Coordinate } | null {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    const from = { x: player.x, y: player.y };
+    const distancesToEdges = [
+      { edge: 'top', distance: player.y },
+      { edge: 'bottom', distance: this.size - 1 - player.y },
+      { edge: 'left', distance: player.x },
+      { edge: 'right', distance: this.size - 1 - player.x }
+    ] as const;
+    const farthestDistance = Math.max(...distancesToEdges.map(({ distance }) => distance));
+    const farthestEdges = distancesToEdges.filter(({ distance }) => distance === farthestDistance);
+    const edge = farthestEdges[Math.floor(random() * farthestEdges.length)] ?? farthestEdges[0];
+    if (!edge) return null;
+
+    const candidates = Array.from({ length: this.size }, (_, index) => {
+      switch (edge.edge) {
+        case 'top': return { x: index, y: 0 };
+        case 'bottom': return { x: index, y: this.size - 1 };
+        case 'left': return { x: 0, y: index };
+        case 'right': return { x: this.size - 1, y: index };
+      }
+    }).filter(({ x, y }) =>
+      (x !== from.x || y !== from.y) &&
+      !this.grid[y]?.[x]?.hasPlayer &&
+      !this.isSafeZoneCell(x, y) &&
+      !this.traps.some(trap => trap.x === x && trap.y === y) &&
+      !this.teleports.some(teleport => teleport.x === x && teleport.y === y)
+    );
+    if (!candidates.length) return null;
+    const destination = candidates[Math.min(
+      candidates.length - 1,
+      Math.floor(random() * candidates.length)
+    )];
+    if (!destination) return null;
+
+    this.grid[from.y]![from.x]!.hasPlayer = null;
+    player.x = destination.x;
+    player.y = destination.y;
+    this.grid[destination.y]![destination.x]!.hasPlayer = playerId;
+    return { from, destination };
   }
 
   public spawnInvisiblePickups(targetCount: number, random: () => number = Math.random): void {
@@ -155,7 +210,8 @@ export class InfectionBoard extends MazeBoard {
         .filter(([playerId]) => !hiddenPlayerIds.has(playerId))
         .map(([playerId, player]) => [playerId, {
           ...player,
-          isInvisible: (this.players.get(playerId)?.invisibleUntil ?? 0) > Date.now()
+          isInvisible: (this.players.get(playerId)?.invisibleUntil ?? 0) > Date.now(),
+          invisibleUntil: this.players.get(playerId)?.invisibleUntil ?? 0
         }])
     );
 
