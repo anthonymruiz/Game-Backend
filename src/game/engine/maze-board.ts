@@ -57,7 +57,7 @@ export class MazeBoard extends Board {
     prioritizeGateApproaches = false
   ): void {
     this.exits = this.createExits();
-    this.addCentralEntranceWalls();
+    if (this.shouldAddCentralEntranceWalls()) this.addCentralEntranceWalls();
     const protectedPassages = this.getProtectedPassages();
     const candidates: Wall[] = [];
     for (let y = 0; y < this.size - 1; y++) {
@@ -130,9 +130,10 @@ export class MazeBoard extends Board {
 
   public spawnTeleports(
     random: () => number = Math.random,
-    avoidPositions: Coordinate[] = []
+    avoidPositions: Coordinate[] = [],
+    pairCountOverride?: number
   ): void {
-    const pairCount = 2 + Math.floor(random() * 3);
+    const pairCount = pairCountOverride ?? 2 + Math.floor(random() * 3);
     const allCandidates = this.shuffle(this.getAvailableTeleportCells(), random);
     const previousPositionKeys = new Set(avoidPositions.map(({ x, y }) => `${x},${y}`));
     const newLocationCandidates = allCandidates.filter(candidate =>
@@ -308,16 +309,36 @@ export class MazeBoard extends Board {
   public ejectPlayerFromSafeZone(playerId: string, random: () => number = Math.random): Coordinate | null {
     const player = this.players.get(playerId);
     if (!player) return null;
-    const candidates: Coordinate[] = [];
+    const adjacentCells: Coordinate[] = [];
     for (let y = 1; y < this.size - 1; y++) {
       for (let x = 1; x < this.size - 1; x++) {
-        if (!this.isSafeZoneCell(x, y) && !this.grid[y][x].hasPlayer &&
-            !this.keys.some(key => key.x === x && key.y === y) &&
-            !this.teleports.some(teleport => teleport.x === x && teleport.y === y)) {
-          candidates.push({ x, y });
+        const isAdjacentToSafeZone = [
+          { x: x - 1, y },
+          { x: x + 1, y },
+          { x, y: y - 1 },
+          { x, y: y + 1 }
+        ].some(cell =>
+          this.isSafeZoneCell(cell.x, cell.y) &&
+          !this.isWallBlocking(cell.x, cell.y, x, y)
+        );
+        if (isAdjacentToSafeZone && !this.isSafeZoneCell(x, y) && !this.grid[y][x].hasPlayer) {
+          adjacentCells.push({ x, y });
         }
       }
     }
+    const candidates = adjacentCells.filter(({ x, y }) =>
+      !this.keys.some(key => key.x === x && key.y === y) &&
+      !this.teleports.some(teleport => teleport.x === x && teleport.y === y) &&
+      !this.traps.some(trap => trap.x === x && trap.y === y) &&
+      !this.shieldPickups.some(pickup => pickup.x === x && pickup.y === y) &&
+      !this.ghostPickups.some(pickup => pickup.x === x && pickup.y === y)
+    );
+    if (!candidates.length) {
+      candidates.push(...adjacentCells.filter(({ x, y }) =>
+        !this.traps.some(trap => trap.x === x && trap.y === y)
+      ));
+    }
+    if (!candidates.length) candidates.push(...adjacentCells);
     this.shuffle(candidates, random);
     const destination = candidates[0];
     if (!destination) return null;
@@ -331,6 +352,10 @@ export class MazeBoard extends Board {
   public isSafeZoneCell(x: number, y: number): boolean {
     const { minX, maxX, minY, maxY } = this.getProtectedCentralZoneBounds();
     return x >= minX && x <= maxX && y >= minY && y <= maxY;
+  }
+
+  protected shouldAddCentralEntranceWalls(): boolean {
+    return true;
   }
 
   public canPlaceTrap(x: number, y: number): boolean {
@@ -616,6 +641,10 @@ export class MazeBoard extends Board {
     );
   }
 
+  public isSeparatedByWall(x1: number, y1: number, x2: number, y2: number): boolean {
+    return this.isWallBlocking(x1, y1, x2, y2);
+  }
+
   public spawnKeys(count: number, random: () => number = Math.random): void {
     if (!Number.isInteger(count) || count < 1) {
       throw new Error('Labyrinth must spawn at least one key.');
@@ -718,7 +747,8 @@ export class MazeBoard extends Board {
         ghostModeExpiresAt: player.ghostModeExpiresAt,
         mazeFrozenUntil: player.mazeFrozenUntil,
         mazeTeleportingUntil: player.mazeTeleportingUntil,
-        mazeShieldActive: player.mazeShieldActive
+        mazeShieldActive: player.mazeShieldActive,
+        mazeShieldExpiresAt: player.mazeShieldExpiresAt
       };
     }
     return {
@@ -1054,7 +1084,7 @@ export class MazeBoard extends Board {
     return x >= 0 && x < this.size && y >= 0 && y < this.size;
   }
 
-  private getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+  protected getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const middle = Math.floor(this.size / 2);
     const radius = this.getCentralRoomRadius();
     return {
@@ -1065,7 +1095,7 @@ export class MazeBoard extends Board {
     };
   }
 
-  private getProtectedCentralZoneBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+  protected getProtectedCentralZoneBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const margin = 2;
     return {

@@ -43,6 +43,7 @@ export class Player {
   public mazeFrozenUntil: number = 0;
   public mazeTeleportingUntil: number = 0;
   public mazeShieldActive: boolean = false;
+  public mazeShieldExpiresAt: number = 0;
   public isInfected: boolean = false;
   public invisibleUntil: number = 0;
 

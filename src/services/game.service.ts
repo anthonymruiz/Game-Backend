@@ -58,7 +58,7 @@ export class GameService {
             const personalizedData = (playerId: string) => event === 'gameStarted'
               ? { ...data, board: game.board.toDTO(playerId) }
               : game.getMazeStateDataForPlayer(playerId);
-            namespace.to(matchId).emit(event, personalizedData(hiddenViewPlayerId));
+            namespace.to(matchId).except(game.playersList).emit(event, personalizedData(hiddenViewPlayerId));
             for (const playerId of game.playersList) {
               if (playerId.startsWith('bot_')) continue;
               namespace.to(playerId).emit(event, personalizedData(playerId));
