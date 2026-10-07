@@ -37,7 +37,7 @@ export const INFECTION_MAX_PLAYERS = 6;
 export const INFECTION_ICE_TRAP_DURATION_MS = 10_000;
 export const INFECTION_RESHUFFLE_INTERVAL_MS = 60_000;
 export const INFECTION_WALL_LIFETIME_MS = 15_000;
-export const INFECTION_GHOST_PICKUP_COUNT = 12;
+export const INFECTION_GHOST_PICKUP_COUNT = 3;
 export const INFECTION_INVISIBLE_PICKUP_COUNT = 8;
 export const INFECTION_INVISIBLE_DURATION_MS = 5_000;
 const LABYRINTH_SHIELD_PICKUP_COUNT = 3;
@@ -1250,6 +1250,9 @@ export class GameInstance {
 
         const fromX = player.x;
         const fromY = player.y;
+        if (this.mode === 'infection' && this.isInfected(playerId) &&
+            !this.getInfectionBoard().isSafeZoneCell(fromX, fromY) &&
+            this.getInfectionBoard().isSafeZoneCell(newX, newY)) return false;
         if (!this.getMazeBoard().moveMazePlayer(playerId, newX, newY)) return false;
         this.mazeMoveAt.set(playerId, now);
         this.recordPlayerActivity(playerId);
@@ -1448,6 +1451,10 @@ export class GameInstance {
         const fromY = player.y;
         const destination = this.getMazeBoard().teleportPlayer(playerId, teleportId);
         if (!destination) return false;
+        if (this.mode === 'infection') {
+          const previousPositions = this.getMazeBoard().teleports.map(({ x, y }) => ({ x, y }));
+          this.getMazeBoard().spawnTeleports(Math.random, previousPositions);
+        }
         player.mazeTeleportingUntil = Date.now() + LABYRINTH_TELEPORT_ANIMATION_MS;
         this.recordPlayerActivity(playerId);
         this.mazeMoveAt.set(playerId, Date.now());

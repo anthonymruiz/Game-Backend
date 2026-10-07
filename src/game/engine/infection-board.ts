@@ -7,6 +7,7 @@ export interface IInfectionInvisiblePickup extends Coordinate {
 
 export class InfectionBoard extends MazeBoard {
   public invisiblePickups: IInfectionInvisiblePickup[] = [];
+  private ghostPickupSequence = 0;
 
   public spawnInvisiblePickups(targetCount: number, random: () => number = Math.random): void {
     const candidates = this.shuffleCandidates(this.getAvailablePowerupCells(), random);
@@ -16,10 +17,28 @@ export class InfectionBoard extends MazeBoard {
     }));
   }
 
-  public collectInfectionPowerupAt(x: number, y: number): 'ghost' | 'invisible' | null {
+  public collectInfectionPowerupAt(
+    x: number,
+    y: number,
+    random: () => number = Math.random
+  ): 'ghost' | 'invisible' | null {
     const ghostIndex = this.ghostPickups.findIndex(pickup => pickup.x === x && pickup.y === y);
     if (ghostIndex >= 0) {
-      this.ghostPickups.splice(ghostIndex, 1);
+      const [collected] = this.ghostPickups.splice(ghostIndex, 1);
+      if (!collected) return 'ghost';
+      const candidates = this.shuffleCandidates(
+        this.getAvailablePowerupCells().filter(({ x: candidateX, y: candidateY }) =>
+          candidateX !== collected.x || candidateY !== collected.y
+        ),
+        random
+      );
+      const position = candidates[0];
+      if (position) {
+        this.ghostPickups.push({
+          id: `infection_ghost_${++this.ghostPickupSequence}`,
+          ...position
+        });
+      }
       return 'ghost';
     }
     const invisibleIndex = this.invisiblePickups.findIndex(pickup => pickup.x === x && pickup.y === y);
