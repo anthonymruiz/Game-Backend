@@ -1060,7 +1060,10 @@ export class Board {
     this.spawnSingleRandomBoost();
   }
 
-  public spawnFfaBoost(type?: 'wall_pickup' | 'portal' | 'ghost'): boolean {
+  public spawnFfaBoost(
+    type?: 'wall_pickup' | 'portal' | 'ghost',
+    excludedPortalCells: Coordinate[] = []
+  ): boolean {
     const selectedType = type ?? (['wall_pickup', 'portal', 'ghost'] as const)[
       Math.floor(Math.random() * 3)
     ];
@@ -1069,9 +1072,12 @@ export class Board {
     if (emptyCells.length === 0) return false;
 
     if (selectedType === 'portal') {
-      if (emptyCells.length < 2) return false;
-      const firstPosition = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-      const secondPositions = emptyCells.filter(position =>
+      const portalCells = emptyCells.filter(position =>
+        !excludedPortalCells.some(excluded => excluded.x === position.x && excluded.y === position.y)
+      );
+      if (portalCells.length < 2) return false;
+      const firstPosition = portalCells[Math.floor(Math.random() * portalCells.length)];
+      const secondPositions = portalCells.filter(position =>
         position.x !== firstPosition.x || position.y !== firstPosition.y
       );
       const secondPosition = secondPositions[Math.floor(Math.random() * secondPositions.length)];
@@ -1200,6 +1206,8 @@ export class Board {
         targetY: p.targetY,
         wallsLeft: p.wallsLeft,
         isDead: p.isDead,
+        isInfected: p.isInfected,
+        isInvisible: p.invisibleUntil > Date.now(),
         hasReachedGoal: p.hasReachedGoal,
         hasKillerItem: p.hasKillerItem,
         hasExchangeItem: p.hasExchangeItem,

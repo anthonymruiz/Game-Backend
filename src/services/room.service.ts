@@ -70,6 +70,7 @@ export class RoomService {
       case '4-FFA': return 4;
       case '6-FFA': return 6;
       case 'labyrinth': return 6;
+      case 'infection': return 6;
       default: return 2;
     }
   }
@@ -136,7 +137,8 @@ export class RoomService {
       return null;
     }
 
-    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA' && oldRoom.mode !== 'labyrinth') {
+    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA' &&
+        oldRoom.mode !== 'labyrinth' && oldRoom.mode !== 'infection') {
       return null;
     }
 
@@ -166,7 +168,8 @@ export class RoomService {
     }
 
     // Re-add bots if any were present in the previous match and mode supports bots
-    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2' || newRoom.mode === 'labyrinth') {
+    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2' ||
+        newRoom.mode === 'labyrinth' || newRoom.mode === 'infection') {
       for (const _ of botPlayers) {
         if (newRoom.players.length < newRoom.maxPlayers) {
           try {
@@ -209,7 +212,7 @@ export class RoomService {
       hostUsername,
       isGuest,
       `${hostUsername}'s Training Match`,
-      '1v1' as GameMode,
+      'vs_ai',
       true
     );
 
@@ -231,8 +234,9 @@ export class RoomService {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.hostId !== hostId) throw new Error('Only the room host can add bots.');
-    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2' && room.mode !== 'labyrinth') {
-      throw new Error('Bots are allowed in 2v2, 4-FFA, 6-FFA or Labyrinth modes.');
+    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2' &&
+        room.mode !== 'labyrinth' && room.mode !== 'infection') {
+      throw new Error('Bots are allowed in 2v2, 4-FFA, 6-FFA, Labyrinth or Infection modes.');
     }
     if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
 

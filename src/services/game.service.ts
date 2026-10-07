@@ -31,9 +31,12 @@ export class GameService {
     roomName?: string,
     isRanked: boolean = false
   ) {
-    if (mode === 'labyrinth' &&
-        roomPlayers.filter(player => !player.id.startsWith('bot_')).length < LABYRINTH_MIN_HUMAN_PLAYERS) {
+    const humanPlayerCount = roomPlayers.filter(player => !player.id.startsWith('bot_')).length;
+    if (mode === 'labyrinth' && humanPlayerCount < LABYRINTH_MIN_HUMAN_PLAYERS) {
       throw new Error(`Labyrinth requires at least ${LABYRINTH_MIN_HUMAN_PLAYERS} human players.`);
+    }
+    if (mode === 'infection' && roomPlayers.length < 3) {
+      throw new Error('Infection requires at least three participants.');
     }
     const playerIds = roomPlayers.map(p => p.id);
     const settings = await this.systemSettingsService.getSettings();
@@ -47,6 +50,30 @@ export class GameService {
           void this.handleGameFinished(matchId, mode, roomPlayers, playerIds, isPrivate, roomName, isRanked, game, data)
             .catch(error => console.error(`Failed to finish match ${matchId}:`, error));
         } else {
+          if (mode === 'infection' && (event === 'gameStarted' || event === 'mazeStateChanged')) {
+            const namespace = this.io.of('/game');
+            const hiddenViewPlayerId = game.playersList.find(playerId =>
+              game.board.players.get(playerId)?.isInfected
+            ) || '';
+            const personalizedData = (playerId: string) => event === 'gameStarted'
+              ? { ...data, board: game.board.toDTO(playerId) }
+              : game.getMazeStateDataForPlayer(playerId);
+            namespace.to(matchId).emit(event, personalizedData(hiddenViewPlayerId));
+            for (const playerId of game.playersList) {
+              if (playerId.startsWith('bot_')) continue;
+              namespace.to(playerId).emit(event, personalizedData(playerId));
+            }
+            return;
+          }
+          if (mode === 'infection' && event === 'playerMoved' &&
+              game.isInfectionPlayerInvisible(data.playerId)) {
+            for (const viewerId of game.playersList) {
+              if (viewerId.startsWith('bot_') ||
+                  !game.canViewerSeeInfectionPlayer(viewerId, data.playerId)) continue;
+              this.io.of('/game').to(viewerId).emit(event, data);
+            }
+            return;
+          }
           if (mode === 'labyrinth' && (event === 'gameStarted' || event === 'mazeStateChanged')) {
             void this.mazeAuditService.recordState(matchId, event, game.getMazeAuditSnapshot())
               .catch(error => console.error(`Failed to save Maze audit state for ${matchId}:`, error));
@@ -106,7 +133,7 @@ export class GameService {
     this.activeGames.delete(matchId);
     data.isRanked = isRanked;
     const matchIncludesBots = hasBotPlayers(roomPlayers);
-    if (mode === 'labyrinth') {
+    if (mode === 'labyrinth' || mode === 'infection') {
       data.rewardsByPlayer = {};
     } else if (data.abandoned && !matchIncludesBots) {
       data.rewardsByPlayer = {};
@@ -137,10 +164,12 @@ export class GameService {
 
       const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
       const humanPlayers = roomPlayers.filter(player => player?.id && !player.id.startsWith('bot_'));
-      const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' || mode === 'labyrinth';
+      const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' ||
+        mode === 'labyrinth' || mode === 'infection';
       const matchmakingNamespace = this.io.of('/matchmaking');
 
-      if ((!data.abandoned || mode === 'labyrinth') && isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
+      if ((!data.abandoned || mode === 'labyrinth' || mode === 'infection') &&
+          isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
         const previousRoom: any = oldRoom || {
           id: matchId,
           code: '',
@@ -149,7 +178,7 @@ export class GameService {
           isPrivate: roomIsPrivate,
           hostId: playerIds[0],
           players: roomPlayers,
-          maxPlayers: mode === '6-FFA' || mode === 'labyrinth' ? 6 : 4,
+          maxPlayers: mode === '6-FFA' || mode === 'labyrinth' || mode === 'infection' ? 6 : 4,
           status: 'WAITING',
           createdAt: new Date()
         };

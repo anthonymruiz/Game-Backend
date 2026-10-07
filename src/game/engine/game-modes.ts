@@ -180,6 +180,10 @@ export class LabyrinthRules implements IGameModeRules {
   }
 }
 
+export class InfectionRules extends LabyrinthRules {
+  public override mode: GameMode = 'infection';
+}
+
 // Registry to dynamically fetch mode rules
 export class GameModeRegistry {
   private static modes: Map<string, IGameModeRules> = new Map([
@@ -188,7 +192,8 @@ export class GameModeRegistry {
     ['4-FFA', new FourPlayerFfaRules()],
     ['2v2', new TwoVsTwoRules()],
     ['6-FFA', new SixPlayerFfaRules()],
-    ['labyrinth', new LabyrinthRules()]
+    ['labyrinth', new LabyrinthRules()],
+    ['infection', new InfectionRules()]
   ]);
 
   public static get(mode: GameMode | string): IGameModeRules {

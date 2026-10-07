@@ -47,6 +47,15 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.equal(room.status, 'waiting');
   });
 
+  it('Vs AI rooms use the dedicated mode', () => {
+    const room = roomService.createVsAiRoom('guest_ai_test', 'Guest_AI', true);
+
+    assert.equal(room.mode, 'vs_ai');
+    assert.equal(room.maxPlayers, 2);
+    assert.equal(room.players.length, 2);
+    assert.ok(room.players.some(player => player.id.startsWith('bot_')));
+  });
+
   it('Guest 2 should be able to join the 1v1 room and get an unused color automatically', () => {
     const guest1Id = 'guest_1002';
     const guest2Id = 'guest_1003';

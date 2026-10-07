@@ -19,12 +19,26 @@ import { StoreItemCategory } from '../models/store-item.enum.js';
 import { StoreItemService } from '../services/store-item.service.js';
 import { BadgeService } from '../services/badge.service.js';
 import { LABYRINTH_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
+import { UserRepository } from '../repositories/user.repository.js';
+import { PresenceTrackerService, IUserPresenceSnapshot } from '../services/presence-tracker.service.js';
+
+const QUICK_CHAT_MESSAGE_IDS = new Set([
+  'QUICK_CHAT.WELL_PLAYED',
+  'QUICK_CHAT.OOPS',
+  'QUICK_CHAT.NICE_WALL',
+  'QUICK_CHAT.HURRY_UP',
+  'QUICK_CHAT.GOOD_JOB',
+  'QUICK_CHAT.DAMN',
+  'QUICK_CHAT.HELP'
+]);
 
 @singleton()
 export class SocketManager {
   public io!: Server;
   private rematchRequests: Map<string, Set<string>> = new Map();
   private lastMatchPlayers: Map<string, any[]> = new Map();
+  private presenceTracker = container.resolve(PresenceTrackerService);
+  private presencePersistenceQueues = new Map<string, Promise<void>>();
 
   constructor(
     @inject(MatchmakingService) private matchmakingService: MatchmakingService,
@@ -101,6 +115,12 @@ export class SocketManager {
     this.gameService.setSocketServer(this.io);
 
     this.setupMiddlewares();
+    await this.presenceTracker.initialize(
+      (userId, presence) => this.updateUserPresence(userId, presence.online, this.getPresenceStatus(presence)),
+      changes => container.resolve(UserRepository).updatePresenceBatch(changes),
+      () => container.resolve(UserRepository).markAllOnlineOffline()
+    );
+    await this.presenceTracker.resetLegacyPresenceIfFirstNode();
     this.setupNamespaces();
   }
 
@@ -178,15 +198,72 @@ export class SocketManager {
   private async updateUserPresence(userId: string, isOnline: boolean, status: PresenceStatus): Promise<void> {
     try {
       if (!userId || userId.startsWith('guest_')) return; // Guests are transient, no DB update
-      const userRepo = AppDataSource.getRepository(User);
-      await userRepo.update(userId, {
-        isOnline,
-        presenceStatus: status,
-        lastSeen: new Date()
+      const previous = this.presencePersistenceQueues.get(userId) || Promise.resolve();
+      const current = previous.catch(() => {}).then(async () => {
+        const userRepo = AppDataSource.getRepository(User);
+        await userRepo.update(userId, {
+          isOnline,
+          presenceStatus: status,
+          lastSeen: new Date()
+        });
       });
+      this.presencePersistenceQueues.set(userId, current);
+      try {
+        await current;
+      } finally {
+        if (this.presencePersistenceQueues.get(userId) === current) {
+          this.presencePersistenceQueues.delete(userId);
+        }
+      }
     } catch (err) {
       console.error('Error updating presence:', err);
     }
+  }
+
+  private getPresenceStatus(presence: IUserPresenceSnapshot): PresenceStatus {
+    return presence.playing
+      ? PresenceStatus.PLAYING
+      : presence.online
+        ? PresenceStatus.ONLINE
+        : PresenceStatus.OFFLINE;
+  }
+
+  private trackSocketConnection(socket: Socket, userId: string): void {
+    if (!userId || userId.startsWith('guest_')) return;
+    void this.presenceTracker.connect(userId)
+      .then(presence => {
+        if (presence.changed) {
+          return this.updateUserPresence(userId, presence.online, this.getPresenceStatus(presence));
+        }
+      })
+      .catch(error => console.error(`Failed to track connection for user ${userId}:`, error));
+    socket.data.presenceUserId = userId;
+  }
+
+  private trackSocketPlaying(socket: Socket, userId: string, isPlaying: boolean): void {
+    if (!userId || userId.startsWith('guest_') || Boolean(socket.data.presencePlaying) === isPlaying) return;
+    socket.data.presencePlaying = isPlaying;
+    void this.presenceTracker.setPlaying(userId, isPlaying)
+      .then(presence => {
+        if (presence.changed) {
+          return this.updateUserPresence(userId, presence.online, this.getPresenceStatus(presence));
+        }
+      })
+      .catch(error => console.error(`Failed to update playing status for user ${userId}:`, error));
+  }
+
+  private untrackSocketConnection(socket: Socket, userId: string): void {
+    if (!userId || userId.startsWith('guest_') || !socket.data.presenceUserId) return;
+    const wasPlaying = Boolean(socket.data.presencePlaying);
+    socket.data.presenceUserId = undefined;
+    socket.data.presencePlaying = false;
+    void this.presenceTracker.disconnect(userId, wasPlaying)
+      .then(presence => {
+        if (presence.changed) {
+          return this.updateUserPresence(userId, presence.online, this.getPresenceStatus(presence));
+        }
+      })
+      .catch(error => console.error(`Failed to remove connection for user ${userId}:`, error));
   }
 
   private setupNamespaces(): void {
@@ -204,7 +281,7 @@ export class SocketManager {
       const provider = user.provider;
 
       socket.join(userId);
-      this.updateUserPresence(userId, true, PresenceStatus.ONLINE);
+      this.trackSocketConnection(socket, userId);
 
       // Re-join any active room socket channel the user belongs to and send updated room state
       const userRoom = this.roomService.findRoomByUserId(userId);
@@ -542,9 +619,13 @@ export class SocketManager {
           if (room.hostId !== userId) throw new Error('Only the room host can start the game');
           if (room.mode === 'labyrinth' &&
               room.players.filter(p => !p.id.startsWith('bot_')).length < LABYRINTH_MIN_HUMAN_PLAYERS) {
-            throw new Error(`El modo Laberinto requiere al menos ${LABYRINTH_MIN_HUMAN_PLAYERS} jugadores reales.`);
+            throw new Error(`El modo Laberinto requiere al menos ${LABYRINTH_MIN_HUMAN_PLAYERS} jugador real.`);
           }
-          if (room.players.length < room.maxPlayers) {
+          if (room.mode === 'infection' && room.players.length < 3) {
+            throw new Error('El modo Infección requiere al menos 3 participantes.');
+          }
+          if (room.mode !== 'labyrinth' && room.mode !== 'infection' &&
+              room.players.length < room.maxPlayers) {
             throw new Error('Todos los cupos de la sala deben estar llenos para iniciar la partida.');
           }
           if (room.players.some(p => !p.color || p.color.trim() === '' || p.color === 'null')) {
@@ -646,7 +727,7 @@ export class SocketManager {
       socket.on('leaveRoom', handleLeaveRoom);
 
       socket.on('disconnect', async () => {
-        this.updateUserPresence(userId, false, PresenceStatus.OFFLINE);
+        this.untrackSocketConnection(socket, userId);
       });
     });
 
@@ -658,6 +739,7 @@ export class SocketManager {
       const userId = user.sub || user.id;
       const username = user.username || `Guest_${userId.substring(0, 4)}`;
       socket.join(userId);
+      this.trackSocketConnection(socket, userId);
 
       socket.on('joinRoom', (payload: string | { roomId?: string; expectedMode?: string }) => {
         const roomId = typeof payload === 'string' ? payload : payload?.roomId;
@@ -668,7 +750,7 @@ export class SocketManager {
         }
         const game = this.gameService.getGame(roomId);
         if (!game) {
-          if (expectedMode === 'labyrinth') {
+          if (expectedMode === 'labyrinth' || expectedMode === 'infection') {
             socket.emit('gameUnavailable', { reason: 'ended' });
           } else {
             socket.emit('gameFinished', { winner: null, alreadyFinished: true });
@@ -679,22 +761,22 @@ export class SocketManager {
           socket.emit('gameUnavailable', { reason: 'wrong_mode' });
           return;
         }
-        if (game.mode === 'labyrinth' && !game.playersList.includes(userId)) {
+        if ((game.mode === 'labyrinth' || game.mode === 'infection') && !game.playersList.includes(userId)) {
           socket.emit('gameUnavailable', { reason: 'not_participant' });
           return;
         }
-        if (game.mode === 'labyrinth' && game.state !== 'playing') {
+        if ((game.mode === 'labyrinth' || game.mode === 'infection') && game.state !== 'playing') {
           socket.emit('gameUnavailable', { reason: 'ended' });
           return;
         }
 
         socket.data.currentRoomId = roomId;
         socket.join(roomId);
-        this.updateUserPresence(userId, true, PresenceStatus.PLAYING);
+        this.trackSocketPlaying(socket, userId, true);
         {
           if (game.playersList.includes(userId)) game.recordPlayerActivity(userId);
           if (game.state === 'finished') {
-            if (game.mode === 'labyrinth') {
+            if (game.mode === 'labyrinth' || game.mode === 'infection') {
               socket.emit('gameUnavailable', { reason: 'ended' });
             } else {
               socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
@@ -715,7 +797,7 @@ export class SocketManager {
               mode: game.mode,
               board: game.board.toDTO(userId),
               pendingBoostDecision: game.getPendingBoostDecision(),
-              ...(game.mode === 'labyrinth'
+              ...(game.mode === 'labyrinth' || game.mode === 'infection'
                 ? {
                     gameTimeLimitSeconds: game.getMazeGameTimeLimitSeconds(),
                     gameSecondsRemaining: game.getMazeRemainingSeconds(),
@@ -728,9 +810,15 @@ export class SocketManager {
                     turnSecondsRemaining: game.getRemainingTurnSeconds()
                   })
             });
+            if (game.mode === 'labyrinth' || game.mode === 'infection') {
+              socket.emit('mazeGhostPickups', game.getMazeGhostPickupsForPlayer(userId));
+              if (game.mode === 'infection') {
+                socket.emit('infectionInvisiblePickups', game.getInfectionInvisiblePickupsForPlayer(userId));
+              }
+            }
             const privateMazeRole = game.getPrivateMazeRole(userId);
             if (privateMazeRole) socket.emit('mazeRole', privateMazeRole);
-            if (game.mode === 'labyrinth') {
+            if (game.mode === 'labyrinth' || game.mode === 'infection') {
               socket.emit('mazeRescueStatus', game.getMazeRescueStatus());
               socket.emit('mazePublicActions', game.getMazePublicActionCounts());
               socket.emit('mazePublicEvents', game.getMazePublicEvents());
@@ -745,8 +833,11 @@ export class SocketManager {
                 canBreakBlock: privateMazeRole?.canBreakBlock === true,
                 canPlaceWall: privateMazeRole?.canPlaceWall === true,
                 canRescue: privateMazeRole?.canRescue === true,
-                isInPrison: player?.isInPrison === true
+                isInPrison: player?.isInPrison === true,
+                wallPlacementCooldownUntil: privateMazeRole?.wallPlacementCooldownUntil ?? 0
               });
+              const privateInfectionState = game.getPrivateInfectionState(userId);
+              if (privateInfectionState) socket.emit('infectionState', privateInfectionState);
             }
           }
         }
@@ -762,7 +853,8 @@ export class SocketManager {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
         if (game) {
-          if (game.mode === 'labyrinth' && data.roomId !== socket.data.currentRoomId) return;
+          if ((game.mode === 'labyrinth' || game.mode === 'infection') &&
+              data.roomId !== socket.data.currentRoomId) return;
           if (!game.playersList.includes(userId)) {
             socket.emit('error', 'Los espectadores no pueden realizar movimientos.');
             return;
@@ -781,7 +873,8 @@ export class SocketManager {
             (data.type !== 'ice' && data.type !== 'teleport') ||
             !Number.isInteger(data.x) || !Number.isInteger(data.y)) return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+            data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
         if (!game.placeMazeTrap(userId, data.type, data.x, data.y)) {
           socket.emit('mazeTrapPlacementRejected');
@@ -791,19 +884,10 @@ export class SocketManager {
       socket.on('teleportMazePlayer', (data: { roomId: string; teleportId: string }) => {
         if (!data || typeof data.roomId !== 'string' || typeof data.teleportId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+            data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
         game.teleportMazePlayer(userId, data.teleportId);
-      });
-
-      socket.on('jamMazeTeleport', (data: { roomId: string; teleportId: string }) => {
-        if (!data || typeof data.roomId !== 'string' || typeof data.teleportId !== 'string') return;
-        const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
-            !game.playersList.includes(userId)) return;
-        if (game.jamMazeTeleport(userId, data.teleportId)) {
-          socket.emit('mazeRole', game.getPrivateMazeRole(userId));
-        }
       });
 
       socket.on('sealMazeExit', (data: { roomId: string; exitId: string }) => {
@@ -827,7 +911,8 @@ export class SocketManager {
       socket.on('changeMazeLayout', (data: { roomId: string }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+            data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
         game.changeMazeLayout(userId);
       });
@@ -835,7 +920,8 @@ export class SocketManager {
       socket.on('placeMazeWall', (data: { roomId: string; x: number; y: number; isHorizontal: boolean }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+            data.roomId !== socket.data.currentRoomId ||
             !Number.isInteger(data.x) || !Number.isInteger(data.y) ||
             typeof data.isHorizontal !== 'boolean' || !game.playersList.includes(userId)) return;
         const success = game.placeMazeWall(userId, data.x, data.y, data.isHorizontal, `maze_wall_${Math.random().toString(36).slice(2)}`);
@@ -845,7 +931,8 @@ export class SocketManager {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
-            isInPrison: game.board.players.get(userId)?.isInPrison === true
+            isInPrison: game.board.players.get(userId)?.isInPrison === true,
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
           });
         }
       });
@@ -853,7 +940,8 @@ export class SocketManager {
       socket.on('breakMazeBlock', (data: { roomId: string; wallId: string }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+            data.roomId !== socket.data.currentRoomId ||
             typeof data.wallId !== 'string' || !game.playersList.includes(userId)) return;
         if (game.breakMazeBlock(userId, data.wallId)) {
           const role = game.getPrivateMazeRole(userId);
@@ -861,7 +949,8 @@ export class SocketManager {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
-            isInPrison: game.board.players.get(userId)?.isInPrison === true
+            isInPrison: game.board.players.get(userId)?.isInPrison === true,
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
           });
         }
       });
@@ -877,7 +966,8 @@ export class SocketManager {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
-            isInPrison: game.board.players.get(userId)?.isInPrison === true
+            isInPrison: game.board.players.get(userId)?.isInPrison === true,
+            wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0
           });
         }
       });
@@ -1066,8 +1156,15 @@ export class SocketManager {
       });
 
       socket.on('sendQuickChat', (data: { roomId: string, messageId: string }) => {
+        const game = typeof data?.roomId === 'string' ? this.gameService.getGame(data.roomId) : undefined;
+        if (!game || !game.playersList.includes(userId) ||
+            !QUICK_CHAT_MESSAGE_IDS.has(data.messageId)) {
+          socket.emit('error', 'Could not send quick chat');
+          return;
+        }
+        const sender = game.board.players.get(userId)?.username || username;
         gameNs.to(data.roomId).emit('quickChat', {
-          sender: username,
+          sender,
           senderId: userId,
           messageId: data.messageId,
           timestamp: new Date()
@@ -1085,7 +1182,8 @@ export class SocketManager {
             if (!item) throw new Error('You do not own this reaction');
             displayedEmote = item.icon;
           }
-          gameNs.to(roomId).emit('emote', { sender: username, emoteId: displayedEmote });
+          const sender = game.board.players.get(userId)?.username || username;
+          gameNs.to(roomId).emit('emote', { sender, senderId: userId, emoteId: displayedEmote });
           game.onBadgeEvent(userId, 'emote_sent');
         } catch (error: any) {
           if (error.message === 'Only players in this game can react' || error.message === 'You do not own this reaction') {
@@ -1134,6 +1232,7 @@ export class SocketManager {
       });
 
       socket.on('disconnect', () => {
+        this.untrackSocketConnection(socket, userId);
         const roomId = socket.data?.currentRoomId;
         if (roomId && this.rematchRequests.has(roomId)) {
           this.rematchRequests.delete(roomId);

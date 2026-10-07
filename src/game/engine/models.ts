@@ -41,7 +41,10 @@ export class Player {
   public hasMazeKeyDelivered: boolean = false;
   public hasMazeEscaped: boolean = false;
   public mazeFrozenUntil: number = 0;
-  public mazeShieldExpiresAt: number = 0;
+  public mazeTeleportingUntil: number = 0;
+  public mazeShieldActive: boolean = false;
+  public isInfected: boolean = false;
+  public invisibleUntil: number = 0;
 
   constructor(
     public id: string,

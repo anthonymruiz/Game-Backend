@@ -83,6 +83,26 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     assert.strictEqual(userAfter?.stats?.xp, userBefore?.stats?.xp ?? 0);
   });
 
+  it('14.1a Counts legacy bot matches as Vs AI and filters them separately from human 1v1', async () => {
+    const matchId = `TEST_LEGACY_BOT_MODE_${Date.now()}`;
+    const gameLogService = container.resolve(GameLogService);
+    const matchRepository = container.resolve(MatchHistoryRepository);
+
+    await gameLogService.logGameEnd(matchId, user1Id, [
+      { id: user1Id, username: user1Name, isGuest: false, color: '#FF3B30' },
+      { id: 'bot_legacy_mode', username: 'BOT - Legacy', isGuest: true, color: '#007AFF' }
+    ], '1v1', 60);
+
+    const distribution = await matchRepository.getModeDistribution();
+    const botMode = distribution.find(row => row.mode === 'vs_ai');
+    const aiMatches = await matchRepository.getPaginatedMatches('vs_ai', { limit: 100 });
+    const humanMatches = await matchRepository.getPaginatedMatches('1v1', { limit: 100 });
+
+    assert.ok(botMode && botMode.count > 0);
+    assert.ok(aiMatches.data.some(match => match.matchId === matchId));
+    assert.ok(!humanMatches.data.some(match => match.matchId === matchId));
+  });
+
   it('14.2 2v2 Team Win: Both human teammates receive a win in match history against bots', async () => {
     const gameLogService = container.resolve(GameLogService);
     const matchId = `TEST_MATCH_2V2_${Date.now()}`;

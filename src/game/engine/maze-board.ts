@@ -12,7 +12,7 @@ export interface IMazeExit {
   x: number;
   y: number;
   playerId: string;
-  disabledUntil?: number;
+  isSealed?: boolean;
 }
 
 export interface IMazeTeleport {
@@ -20,7 +20,6 @@ export interface IMazeTeleport {
   pairId: string;
   x: number;
   y: number;
-  disabledUntil?: number;
 }
 
 export type MazeTrapType = 'ice' | 'teleport';
@@ -34,12 +33,17 @@ export interface IMazeShieldPickup extends Coordinate {
   id: string;
 }
 
+export interface IMazeGhostPickup extends Coordinate {
+  id: string;
+}
+
 export class MazeBoard extends Board {
   public keys: IMazeKey[] = [];
   public exits: IMazeExit[] = [];
   public teleports: IMazeTeleport[] = [];
   public traps: IMazeTrap[] = [];
   public shieldPickups: IMazeShieldPickup[] = [];
+  public ghostPickups: IMazeGhostPickup[] = [];
 
   public get extraction(): Coordinate {
     const middle = Math.floor(this.size / 2);
@@ -84,11 +88,10 @@ export class MazeBoard extends Board {
     }
     for (const wall of candidates) {
       if (this.walls.length >= targetWallCount) break;
-      if (!this.canPlaceWall(wall)) continue;
+      if (!super.canPlaceWall(wall)) continue;
       const passages = this.getWallPassages(wall);
       if (passages.some(passage =>
-        protectedPassages.has(passage.key) ||
-        this.isPassageInsideCentralRoom(passage)
+        protectedPassages.has(passage.key) || this.isPassageInsideCentralRoom(passage)
       )) continue;
 
       this.walls.push(wall);
@@ -105,6 +108,7 @@ export class MazeBoard extends Board {
 
   public reshuffleMaze(random: () => number = Math.random, prioritizeGateApproaches = false): void {
     const previousTeleportPositions = this.teleports.map(({ x, y }) => ({ x, y }));
+    const previousExitSealStates = new Map(this.exits.map(exit => [exit.id, exit.isSealed === true]));
     const capturedIds = [...this.players.values()]
       .filter(player => player.isInPrison)
       .map(player => player.id);
@@ -115,6 +119,11 @@ export class MazeBoard extends Board {
 
     this.walls = [...preservedCageWalls];
     this.generateRandomMazeWalls(undefined, random, this.players.size, prioritizeGateApproaches);
+    this.exits = this.exits.map(exit => ({
+      ...exit,
+      isSealed: previousExitSealStates.get(exit.id) ?? false
+    }));
+    this.teleports = [];
     this.relocateUncollectedKeys(random);
     this.spawnTeleports(random, previousTeleportPositions);
   }
@@ -178,14 +187,13 @@ export class MazeBoard extends Board {
   public teleportPlayer(playerId: string, teleportId: string): Coordinate | null {
     const player = this.players.get(playerId);
     const source = this.teleports.find(teleport => teleport.id === teleportId);
-    if (!player || player.isDead || player.isInPrison || player.hasMazeEscaped || !source ||
-        (source.disabledUntil ?? 0) > Date.now() ||
+    if (!player || player.isDead || player.isInPrison || player.hasMazeEscaped ||
+        player.mazeFrozenUntil > Date.now() || player.mazeTeleportingUntil > Date.now() || !source ||
         source.x !== player.x || source.y !== player.y) return null;
     const destination = this.teleports.find(teleport =>
       teleport.pairId === source.pairId && teleport.id !== source.id
     );
-    if (!destination || (destination.disabledUntil ?? 0) > Date.now() ||
-        this.grid[destination.y][destination.x].hasPlayer) return null;
+    if (!destination || this.grid[destination.y][destination.x].hasPlayer) return null;
     this.grid[player.y][player.x].hasPlayer = null;
     player.x = destination.x;
     player.y = destination.y;
@@ -193,33 +201,23 @@ export class MazeBoard extends Board {
     return { x: player.x, y: player.y };
   }
 
-  public jamTeleportPair(teleportId: string, durationMs: number): number | null {
-    const portal = this.teleports.find(candidate => candidate.id === teleportId);
-    if (!portal) return null;
-    const disabledUntil = Date.now() + durationMs;
-    for (const pairedPortal of this.teleports) {
-      if (pairedPortal.pairId === portal.pairId) pairedPortal.disabledUntil = disabledUntil;
-    }
-    return Number(portal.pairId.split('_').at(-1)) || 1;
-  }
-
-  public sealMazeExit(exitId: string, durationMs: number): number | null {
+  public sealMazeExit(exitId: string): number | null {
     const exit = this.exits.find(candidate => candidate.id === exitId);
-    if (!exit || (exit.disabledUntil ?? 0) > Date.now()) return null;
-    exit.disabledUntil = Date.now() + durationMs;
+    if (!exit || exit.isSealed) return null;
+    exit.isSealed = true;
     return this.exits.indexOf(exit) + 1;
   }
 
   public openMazeExit(exitId: string): number | null {
     const exit = this.exits.find(candidate => candidate.id === exitId);
-    if (!exit || (exit.disabledUntil ?? 0) <= Date.now()) return null;
-    exit.disabledUntil = 0;
+    if (!exit?.isSealed) return null;
+    exit.isSealed = false;
     return this.exits.indexOf(exit) + 1;
   }
 
   public canOpenMazeExitFrom(exitId: string, playerX: number, playerY: number): boolean {
     const exit = this.exits.find(candidate => candidate.id === exitId);
-    if (!exit || (exit.disabledUntil ?? 0) <= Date.now()) return false;
+    if (!exit?.isSealed) return false;
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const isInsideRoom = playerX >= minX && playerX <= maxX && playerY >= minY && playerY <= maxY;
     return isInsideRoom && Math.abs(exit.x - playerX) + Math.abs(exit.y - playerY) === 1;
@@ -228,7 +226,8 @@ export class MazeBoard extends Board {
   public getMazeValidMoves(playerId: string): Coordinate[] {
     const player = this.players.get(playerId);
     const isGhost = !!player && player.ghostModeExpiresAt > Date.now();
-    if (!player || player.isDead || player.hasMazeEscaped || player.mazeFrozenUntil > Date.now() ||
+    if (!player || player.isDead || player.hasMazeEscaped ||
+        player.mazeFrozenUntil > Date.now() || player.mazeTeleportingUntil > Date.now() ||
         (player.isInPrison && !isGhost)) return [];
     const validMoves: Coordinate[] = [];
     const directions = [
@@ -306,8 +305,31 @@ export class MazeBoard extends Board {
     return true;
   }
 
+  public ejectPlayerFromSafeZone(playerId: string, random: () => number = Math.random): Coordinate | null {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    const candidates: Coordinate[] = [];
+    for (let y = 1; y < this.size - 1; y++) {
+      for (let x = 1; x < this.size - 1; x++) {
+        if (!this.isSafeZoneCell(x, y) && !this.grid[y][x].hasPlayer &&
+            !this.keys.some(key => key.x === x && key.y === y) &&
+            !this.teleports.some(teleport => teleport.x === x && teleport.y === y)) {
+          candidates.push({ x, y });
+        }
+      }
+    }
+    this.shuffle(candidates, random);
+    const destination = candidates[0];
+    if (!destination) return null;
+    this.grid[player.y][player.x].hasPlayer = null;
+    player.x = destination.x;
+    player.y = destination.y;
+    this.grid[player.y][player.x].hasPlayer = playerId;
+    return destination;
+  }
+
   public isSafeZoneCell(x: number, y: number): boolean {
-    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const { minX, maxX, minY, maxY } = this.getProtectedCentralZoneBounds();
     return x >= minX && x <= maxX && y >= minY && y <= maxY;
   }
 
@@ -364,6 +386,37 @@ export class MazeBoard extends Board {
     return index < 0 ? null : this.shieldPickups.splice(index, 1)[0];
   }
 
+  public spawnGhostPickups(targetCount: number, random: () => number = Math.random): void {
+    const candidates: Coordinate[] = [];
+    for (let y = 1; y < this.size - 1; y++) {
+      for (let x = 1; x < this.size - 1; x++) {
+        if (!this.isSafeZoneCell(x, y) &&
+            !this.grid[y][x].hasPlayer &&
+            !this.keys.some(key => key.x === x && key.y === y) &&
+            !this.exits.some(exit => exit.x === x && exit.y === y) &&
+            !this.teleports.some(teleport => teleport.x === x && teleport.y === y) &&
+            !this.shieldPickups.some(pickup => pickup.x === x && pickup.y === y) &&
+            !this.ghostPickups.some(pickup => pickup.x === x && pickup.y === y) &&
+            !this.traps.some(trap => trap.x === x && trap.y === y)) {
+          candidates.push({ x, y });
+        }
+      }
+    }
+    this.shuffle(candidates, random);
+    while (this.ghostPickups.length < targetCount && candidates.length > 0) {
+      const position = candidates.pop()!;
+      this.ghostPickups.push({
+        id: `maze_ghost_${Date.now()}_${this.ghostPickups.length}`,
+        ...position
+      });
+    }
+  }
+
+  public collectGhostPickupAt(x: number, y: number): IMazeGhostPickup | null {
+    const index = this.ghostPickups.findIndex(pickup => pickup.x === x && pickup.y === y);
+    return index < 0 ? null : this.ghostPickups.splice(index, 1)[0];
+  }
+
   public teleportPlayerToRandomBorder(playerId: string, random: () => number = Math.random): Coordinate | null {
     const player = this.players.get(playerId);
     if (!player) return null;
@@ -389,6 +442,13 @@ export class MazeBoard extends Board {
     if (!this.canPlaceWall(wall)) return false;
     this.walls.push(wall);
     return true;
+  }
+
+  public override canPlaceWall(wall: Wall): boolean {
+    if (!super.canPlaceWall(wall)) return false;
+    return !this.getWallPassages(wall).some(passage =>
+      this.isPassageInsideProtectedCentralZone(passage)
+    );
   }
 
   public wouldEnclosePlayerWithWall(wall: Wall, playerId: string): boolean {
@@ -487,6 +547,10 @@ export class MazeBoard extends Board {
     return this.walls.splice(wallIndex, 1)[0];
   }
 
+  public isPlayerPlacedMazeWall(wall: Wall): boolean {
+    return wall.ownerId !== 'maze';
+  }
+
   public isMazePlayerEnclosed(playerId: string): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
@@ -533,6 +597,7 @@ export class MazeBoard extends Board {
 
   public getMazeReleaseWalls(playerId: string): Wall[] {
     return this.getMazeCageWalls(playerId).filter(wall => {
+      if (!this.isPlayerPlacedMazeWall(wall)) return false;
       const wallIndex = this.walls.indexOf(wall);
       if (wallIndex < 0) return false;
       const [removed] = this.walls.splice(wallIndex, 1);
@@ -540,6 +605,15 @@ export class MazeBoard extends Board {
       this.walls.splice(wallIndex, 0, removed);
       return releasesPlayer;
     });
+  }
+
+  public isPlayerAdjacentToWall(playerId: string, wall: Wall): boolean {
+    const player = this.players.get(playerId);
+    if (!player) return false;
+    return this.getWallPassages(wall).some(passage =>
+      (player.x === passage.x1 && player.y === passage.y1) ||
+      (player.x === passage.x2 && player.y === passage.y2)
+    );
   }
 
   public spawnKeys(count: number, random: () => number = Math.random): void {
@@ -566,7 +640,7 @@ export class MazeBoard extends Board {
 
   public collectKey(playerId: string, x: number, y: number): IMazeKey | null {
     const player = this.players.get(playerId);
-    if (!player || player.hasMazeKey || player.hasMazeKeyDelivered) return null;
+    if (!player || player.hasMazeKey || player.hasMazeEscaped) return null;
     const keyIndex = this.keys.findIndex(key =>
       key.x === x && key.y === y
     );
@@ -578,9 +652,10 @@ export class MazeBoard extends Board {
   public deliverMazeKey(playerId: string): boolean {
     const player = this.players.get(playerId);
     const extraction = this.extraction;
-    if (!player || !player.hasMazeKey || player.hasMazeKeyDelivered || player.hasMazeEscaped ||
+    if (!player || !player.hasMazeKey || player.hasMazeEscaped ||
         player.x !== extraction.x || player.y !== extraction.y) return false;
     player.hasMazeKeyDelivered = true;
+    player.hasMazeKey = false;
     return true;
   }
 
@@ -642,7 +717,8 @@ export class MazeBoard extends Board {
         hasMazeEscaped: player.hasMazeEscaped,
         ghostModeExpiresAt: player.ghostModeExpiresAt,
         mazeFrozenUntil: player.mazeFrozenUntil,
-        mazeShieldExpiresAt: player.mazeShieldExpiresAt
+        mazeTeleportingUntil: player.mazeTeleportingUntil,
+        mazeShieldActive: player.mazeShieldActive
       };
     }
     return {
@@ -651,14 +727,13 @@ export class MazeBoard extends Board {
       walls: this.walls.map(wall => ({
         id: wall.id,
         ownerId: 'maze',
+        isPlayerPlaced: wall.ownerId !== 'maze',
         x: wall.x,
         y: wall.y,
         isHorizontal: wall.isHorizontal,
         isPrisonBlock: wall.isPrisonBlock,
         isSabotageWall: wall.isSabotageWall,
-        isRescueWall: wall.isRescueWall,
-        wallEffectId: wall.wallEffectId,
-        wallEffectIcon: wall.wallEffectIcon
+        isRescueWall: wall.isRescueWall
       })),
       validMoves: forPlayerId ? this.getMazeValidMoves(forPlayerId) : [],
       extraction: this.extraction,
@@ -844,12 +919,22 @@ export class MazeBoard extends Board {
     return Math.min(startIndex, endIndex) * this.size * this.size + Math.max(startIndex, endIndex);
   }
 
-  private isPassageInsideCentralRoom(passage: { x1: number; y1: number; x2: number; y2: number }): boolean {
+  private isPassageInsideProtectedCentralZone(
+    passage: { x1: number; y1: number; x2: number; y2: number }
+  ): boolean {
+    const { minX, maxX, minY, maxY } = this.getProtectedCentralZoneBounds();
+    const isInsideZone = (x: number, y: number): boolean =>
+      x >= minX && x <= maxX && y >= minY && y <= maxY;
+    return isInsideZone(passage.x1, passage.y1) && isInsideZone(passage.x2, passage.y2);
+  }
+
+  private isPassageInsideCentralRoom(
+    passage: { x1: number; y1: number; x2: number; y2: number }
+  ): boolean {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    return passage.x1 >= minX && passage.x1 <= maxX &&
-      passage.x2 >= minX && passage.x2 <= maxX &&
-      passage.y1 >= minY && passage.y1 <= maxY &&
-      passage.y2 >= minY && passage.y2 <= maxY;
+    const isInsideRoom = (x: number, y: number): boolean =>
+      x >= minX && x <= maxX && y >= minY && y <= maxY;
+    return isInsideRoom(passage.x1, passage.y1) && isInsideRoom(passage.x2, passage.y2);
   }
 
   private isBoardConnected(blockedPassages: Set<number>): boolean {
@@ -920,13 +1005,13 @@ export class MazeBoard extends Board {
         Math.abs(passage.x1 - exit.x) + Math.abs(passage.y1 - exit.y)
       ));
       if (gateDistance > 2) continue;
-      const farthestMinimumPlayerDistance = Math.max(...nearbyPlayers.map(player =>
+      const nearestPlayerDistance = Math.min(...nearbyPlayers.map(player =>
         Math.min(...passages.map(passage =>
           Math.abs(passage.x1 - player.x) + Math.abs(passage.y1 - player.y)
         ))
       ));
-      if (farthestMinimumPlayerDistance < 2) continue;
-      priority = Math.min(priority, gateDistance * 10 + 4 - Math.min(4, farthestMinimumPlayerDistance));
+      if (nearestPlayerDistance < 2) continue;
+      priority = Math.min(priority, gateDistance * 10 + Math.min(4, nearestPlayerDistance));
     }
     return priority;
   }
@@ -943,7 +1028,7 @@ export class MazeBoard extends Board {
     const gateStart = middle - 1;
     const gateEnd = middle;
     const crossesGate = (exit: IMazeExit): boolean => {
-      if ((exit.disabledUntil ?? 0) <= Date.now()) return false;
+      if (!exit.isSealed) return false;
       if (exit.x === middle && exit.y === minY) {
         return fromY !== toY && Math.min(fromY, toY) === minY - 1 &&
           (fromX === toX) && fromX >= gateStart && fromX <= gateEnd;
@@ -977,6 +1062,17 @@ export class MazeBoard extends Board {
       maxX: Math.min(this.size - 1, middle + radius),
       minY: Math.max(0, middle - radius),
       maxY: Math.min(this.size - 1, middle + radius)
+    };
+  }
+
+  private getProtectedCentralZoneBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const margin = 2;
+    return {
+      minX: Math.max(0, minX - margin),
+      maxX: Math.min(this.size - 1, maxX + margin),
+      minY: Math.max(0, minY - margin),
+      maxY: Math.min(this.size - 1, maxY + margin)
     };
   }
 

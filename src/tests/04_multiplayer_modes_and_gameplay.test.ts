@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { setupTestEnvironment, teardownTestEnvironment } from './test-helper.js';
 import { container } from 'tsyringe';
 import { RoomService } from '../services/room.service.js';
-import { GameInstance, LABYRINTH_GHOST_DURATION_MS } from '../game/engine/game-instance.js';
+import {
+  GameInstance,
+  LABYRINTH_GHOST_DURATION_MS,
+  LABYRINTH_TELEPORT_ANIMATION_MS,
+  LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS
+} from '../game/engine/game-instance.js';
 import { MazeBoard } from '../game/engine/maze-board.js';
 import { Player, Wall } from '../game/engine/models.js';
 import { MazeAuditService } from '../services/maze-audit.service.js';
@@ -69,7 +74,77 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
-  it('Should allow any player to collect any free Maze key, but only one key per player', () => {
+  it('Should mark player-placed walls in public state without revealing their owners', () => {
+    const board = new MazeBoard(10);
+    board.walls.push(
+      new Wall('generated_wall', 'maze', 1, 1, true),
+      new Wall('good_player_wall', 'good_player', 3, 3, true),
+      new Wall('impostor_player_wall', 'impostor', 5, 5, false)
+    );
+
+    const publicWalls = board.toDTO().walls;
+    assert.deepEqual(publicWalls.map(wall => ({
+      ownerId: wall.ownerId,
+      isPlayerPlaced: wall.isPlayerPlaced
+    })), [
+      { ownerId: 'maze', isPlayerPlaced: false },
+      { ownerId: 'maze', isPlayerPlaced: true },
+      { ownerId: 'maze', isPlayerPlaced: true }
+    ]);
+  });
+
+  it('Should protect the central room from generated walls while allowing generated walls in its safe margin', () => {
+    const board = new MazeBoard(40);
+    const middle = Math.floor(board.size / 2);
+    const protectedMin = middle - 5;
+    const protectedMax = middle + 5;
+    const protectedWall = new Wall('protected_good_wall', 'good_player', middle - 6, middle, true);
+    const protectedImpostorWall = new Wall('protected_impostor_wall', 'impostor', middle, middle - 6, false);
+    const outsideWall = new Wall('outside_protected_zone', 'good_player', 2, 2, true);
+    const boundaryWall = new Wall('protected_zone_boundary_wall', 'good_player', protectedMin, protectedMin - 1, true);
+    const insideWall = new Wall('inside_protected_zone_wall', 'good_player', protectedMin, protectedMin, true);
+
+    assert.equal(board.canPlaceWall(protectedWall), false);
+    assert.equal(board.canPlaceWall(protectedImpostorWall), false);
+    assert.equal(board.placeMazeWall(protectedWall), false);
+    assert.equal(board.canPlaceWall(outsideWall), true);
+    assert.equal(board.canPlaceWall(boundaryWall), true);
+    assert.equal(board.canPlaceWall(insideWall), false);
+
+    const assertRandomWallsStayOutOfCentralRoom = (): void => {
+      const randomWalls = board.walls.filter(candidate => !candidate.id.startsWith('maze_center_'));
+      let hasWallInSafeMargin = false;
+      for (const wall of randomWalls) {
+        const passages = wall.isHorizontal
+          ? [
+              [{ x: wall.x, y: wall.y }, { x: wall.x, y: wall.y + 1 }],
+              [{ x: wall.x + 1, y: wall.y }, { x: wall.x + 1, y: wall.y + 1 }]
+            ]
+          : [
+              [{ x: wall.x, y: wall.y }, { x: wall.x + 1, y: wall.y }],
+              [{ x: wall.x, y: wall.y + 1 }, { x: wall.x + 1, y: wall.y + 1 }]
+            ];
+        for (const passage of passages) {
+          const bothInCentralRoom = passage.every(({ x, y }) =>
+            Math.abs(x - middle) <= 3 && Math.abs(y - middle) <= 3
+          );
+          assert.equal(bothInCentralRoom, false, `wall ${wall.id} blocks a central-room passage`);
+          const bothInSafeZone = passage.every(({ x, y }) =>
+            x >= protectedMin && x <= protectedMax && y >= protectedMin && y <= protectedMax
+          );
+          if (bothInSafeZone) hasWallInSafeMargin = true;
+        }
+      }
+      assert.ok(hasWallInSafeMargin, 'random walls should also occupy the outer safe-zone margin');
+    };
+
+    board.generateRandomMazeWalls(560, () => 0.5);
+    assertRandomWallsStayOutOfCentralRoom();
+    board.reshuffleMaze(() => 0.5);
+    assertRandomWallsStayOutOfCentralRoom();
+  });
+
+  it('Should allow any player to deliver keys repeatedly while carrying only one at a time', () => {
     const board = new MazeBoard(10);
     const owner = new Player('maze_key_owner', 'KeyOwner', false, 1, 1);
     const other = new Player('maze_key_other', 'Other', false, 2, 1);
@@ -77,7 +152,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     board.addPlayer(other);
     board.keys = [
       { id: 'maze_key_one', x: 3, y: 3 },
-      { id: 'maze_key_two', x: 4, y: 4 }
+      { id: 'maze_key_two', x: 4, y: 4 },
+      { id: 'maze_key_three', x: 6, y: 6 }
     ];
 
     assert.equal(board.collectKey(other.id, 3, 3)?.id, 'maze_key_one',
@@ -87,25 +163,29 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       'a player carrying a key cannot collect a second one');
     assert.equal(board.collectKey(owner.id, 4, 4)?.id, 'maze_key_two');
     owner.hasMazeKey = true;
-    owner.hasMazeKeyDelivered = true;
-    assert.equal(board.collectKey(owner.id, 3, 3), null,
-      'a player who delivered their key still cannot collect another one');
+    owner.x = board.extraction.x;
+    owner.y = board.extraction.y;
+    assert.equal(board.deliverMazeKey(owner.id), true);
+    assert.equal(owner.hasMazeKey, false, 'delivery releases the carried key');
+    assert.equal(owner.hasMazeKeyDelivered, true);
+    assert.equal(board.collectKey(owner.id, 6, 6)?.id, 'maze_key_three',
+      'a player may collect a new key after delivering the previous one');
     assert.equal(board.keys.length, 0);
   });
 
   it('Should prevent walls from making an uncollected key unreachable', () => {
-    const board = new MazeBoard(6);
-    const owner = new Player('maze_key_access_owner', 'KeyOwner', false, 0, 3);
+    const board = new MazeBoard(20);
+    const owner = new Player('maze_key_access_owner', 'KeyOwner', false, 0, 9);
     board.addPlayer(owner);
-    board.keys = [{ id: 'maze_key_access', x: 3, y: 3 }];
+    board.keys = [{ id: 'maze_key_access', x: 3, y: 9 }];
     board.walls.push(
-      new Wall('key_north', 'maze', 2, 2, true),
-      new Wall('key_south', 'maze', 3, 3, true),
-      new Wall('key_east', 'maze', 3, 2, false)
+      new Wall('key_north', 'maze', 2, 8, true),
+      new Wall('key_south', 'maze', 3, 9, true),
+      new Wall('key_east', 'maze', 3, 8, false)
     );
-    const closingWall = new Wall('key_west', 'maze', 2, 3, false);
+    const closingWall = new Wall('key_west', 'maze', 2, 9, false);
 
-    assert.equal(board.isMazeCellReachable(owner.x, owner.y, 3, 3), true);
+    assert.equal(board.isMazeCellReachable(owner.x, owner.y, 3, 9), true);
     assert.equal(board.wouldMakeUncollectedKeyUnreachable(closingWall), true);
     assert.equal(board.walls.length, 3, 'validation must not leave the preview wall on the board');
 
@@ -113,24 +193,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(board.wouldMakeUncollectedKeyUnreachable(closingWall), false);
   });
 
-  it('Should prevent good walls from disconnecting teammates', () => {
-    const board = new MazeBoard(6);
-    const goodA = new Player('maze_connection_a', 'GoodA', false, 0, 3);
-    const goodB = new Player('maze_connection_b', 'GoodB', false, 5, 3);
-    board.addPlayer(goodA);
-    board.addPlayer(goodB);
-    board.walls.push(
-      new Wall('maze_barrier_upper', 'maze', 2, 0, false),
-      new Wall('maze_barrier_lower', 'maze', 2, 4, false)
-    );
-    const closingWall = new Wall('maze_barrier_middle', 'maze', 2, 2, false);
-
-    assert.equal(board.isMazeCellReachable(goodA.x, goodA.y, goodB.x, goodB.y), true);
-    assert.equal(board.wouldSeparatePlayersWithWall(closingWall, [goodA.id, goodB.id]), true);
-    assert.equal(board.walls.length, 2, 'validation must not leave the preview wall on the board');
-  });
-
-  it('Should reject a good wall that disconnects teammates during a Maze game', () => {
+  it('Should allow any player to place a wall without disconnect restrictions', () => {
     const players = [
       { id: 'maze_cut_good_a', username: 'GoodA', isGuest: false, color: '#FF3B30' },
       { id: 'maze_cut_good_b', username: 'GoodB', isGuest: false, color: '#007AFF' },
@@ -162,8 +225,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       if (y !== 2) board.walls.push(new Wall(`maze_cut_barrier_${y}`, 'maze', 19, y, false));
     }
 
-    assert.equal(game.placeMazeWall(goodPlayers[0].id, 19, 2, false, 'maze_cut_teammates'), false);
-    assert.equal(board.walls.length, 19);
+    assert.equal(game.placeMazeWall(goodPlayers[0].id, 19, 2, false, 'maze_cut_teammates'), true);
+    assert.equal(board.walls.length, 20);
     game.destroy();
   });
 
@@ -430,7 +493,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.ok(board.getMazeValidMoves(movingPlayer.id).some(move =>
       move.x === insideCell.x && move.y === insideCell.y
     ));
-    board.sealMazeExit(northExit.id, 10_000);
+    board.sealMazeExit(northExit.id);
     assert.ok(!board.getMazeValidMoves(movingPlayer.id).some(move =>
       move.x === insideCell.x && move.y === insideCell.y
     ));
@@ -453,7 +516,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     ));
   });
 
-  it('Should only let a nearby good player reopen a sealed Labyrinth exit', () => {
+  it('Should let any nearby player reopen a sealed Labyrinth exit once per match', () => {
     const emittedEvents: Array<{ event: string; data: any }> = [];
     const game = new GameInstance('maze_open_gate_test', 'labyrinth', [
       { id: 'maze_open_good_1', username: 'Good 1', isGuest: false, color: '#FF3B30' },
@@ -470,21 +533,36 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     player.x = farCell.x;
     player.y = farCell.y;
     board.grid[player.y][player.x].hasPlayer = goodPlayerId;
-    board.sealMazeExit(exit.id, 10_000);
+    board.sealMazeExit(exit.id);
 
-    assert.equal(game.openMazeExit(impostorId, exit.id), false);
+    const impostor = board.players.get(impostorId)!;
+    const previousImpostorPosition = { x: impostor.x, y: impostor.y };
+    board.grid[impostor.y][impostor.x].hasPlayer = null;
+    impostor.x = exit.x;
+    impostor.y = exit.y < game.board.size / 2 ? exit.y + 1 : exit.y - 1;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostorId;
+    assert.equal(game.openMazeExit(impostorId, exit.id), true);
+    assert.equal(exit.isSealed, false);
+    assert.ok(emittedEvents.some(({ event, data }) =>
+      event === 'mazeStateChanged' && data.mazeExitOpenUsedBy.includes(impostorId)
+    ));
+    board.sealMazeExit(exit.id);
+    board.grid[impostor.y][impostor.x].hasPlayer = null;
+    impostor.x = previousImpostorPosition.x;
+    impostor.y = previousImpostorPosition.y;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostorId;
     assert.equal(game.openMazeExit(goodPlayerId, exit.id), false);
     player.y = exit.y < game.board.size / 2 ? exit.y + 1 : exit.y - 1;
     board.grid[farCell.y][farCell.x].hasPlayer = null;
     board.grid[player.y][player.x].hasPlayer = goodPlayerId;
     assert.equal(game.openMazeExit(goodPlayerId, exit.id), true);
-    assert.equal(exit.disabledUntil, 0);
+    assert.equal(exit.isSealed, false);
     assert.ok(emittedEvents.some(({ event, data }) =>
       event === 'mazeStateChanged' && data.mazeExitOpenUsedBy.includes(goodPlayerId)
     ));
 
     const nextExit = board.exits[1];
-    board.sealMazeExit(nextExit.id, 10_000);
+    board.sealMazeExit(nextExit.id);
     board.grid[player.y][player.x].hasPlayer = null;
     player.x = nextExit.x < game.board.size / 2 ? nextExit.x + 1 : nextExit.x - 1;
     player.y = nextExit.y;
@@ -493,10 +571,39 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
+  it('Should let the impostor seal another exit after the 60-second sealing cooldown', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
+    const game = new GameInstance('maze_exit_seal_cooldown_test', 'labyrinth', [
+      { id: 'maze_exit_cooldown_good', username: 'Good', isGuest: false, color: '#FF3B30' },
+      { id: 'maze_exit_cooldown_impostor', username: 'Impostor', isGuest: false, color: '#007AFF' }
+    ], () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    try {
+      game.start();
+      const impostorId = game.impostorId!;
+      const board = game.board as MazeBoard;
+      assert.equal(game.sealMazeExit(impostorId, board.exits[0].id), true);
+      assert.equal(game.getPrivateMazeRole(impostorId)?.exitSealCooldownUntil, 61_000);
+      assert.equal(game.sealMazeExit(impostorId, board.exits[1].id), false);
+
+      mock.timers.tick(59_000);
+      game.recordPlayerActivity(impostorId);
+      assert.equal(game.sealMazeExit(impostorId, board.exits[1].id), false);
+      mock.timers.tick(1_000);
+
+      assert.equal(game.sealMazeExit(impostorId, board.exits[1].id), true);
+      assert.equal(board.exits[0].isSealed, true);
+      assert.equal(board.exits[1].isSealed, true);
+    } finally {
+      game.destroy();
+      mock.timers.reset();
+    }
+  });
+
   it('Should only teleport after an explicit request from a paired portal', () => {
     const players = [
       { id: 'maze_teleport_player', username: 'Traveler', isGuest: false, color: '#FF3B30' },
-      { id: 'maze_teleport_other', username: 'Other', isGuest: false, color: '#007AFF' }
+      { id: 'maze_teleport_other', username: 'Other', isGuest: false, color: '#007AFF' },
+      { id: 'maze_teleport_bystander', username: 'Bystander', isGuest: false, color: '#FFCC00' }
     ];
     const game = new GameInstance('maze_teleport_test', 'labyrinth', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
@@ -504,72 +611,103 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const mazeBoard = game.board as MazeBoard;
     const source = mazeBoard.teleports[0];
     const destination = mazeBoard.teleports.find(portal => portal.pairId === source.pairId && portal.id !== source.id)!;
-    const traveler = game.board.players.get(players[0].id)!;
-    const other = game.board.players.get(players[1].id)!;
+    const traveler = game.board.players.get(players.find(player => player.id !== game.impostorId)!.id)!;
+    const otherPlayers = players
+      .filter(player => player.id !== traveler.id)
+      .map(player => game.board.players.get(player.id)!);
     for (const row of game.board.grid) for (const cell of row) cell.hasPlayer = null;
     game.board.walls.splice(0);
+    for (const player of game.board.players.values()) {
+      player.isInPrison = false;
+      player.hasMazeEscaped = false;
+    }
     traveler.x = source.x - 1;
     traveler.y = source.y;
     game.board.grid[traveler.y][traveler.x].hasPlayer = traveler.id;
-    other.x = 0;
-    other.y = 0;
-    game.board.grid[0][0].hasPlayer = other.id;
+    otherPlayers.forEach((player, index) => {
+      player.x = index === 0 ? 0 : 39;
+      player.y = index === 0 ? 0 : 39;
+      game.board.grid[player.y][player.x].hasPlayer = player.id;
+    });
 
     assert.equal(game.teleportMazePlayer(traveler.id, source.id), false, 'the player must stand on the portal');
     assert.equal(game.executeMove(traveler.id, source.x, source.y), true);
     assert.deepEqual({ x: traveler.x, y: traveler.y }, { x: source.x, y: source.y });
+    mazeBoard.walls.push(
+      new Wall('teleport_cage_n', 'maze_impostor', destination.x, destination.y - 1, true, undefined, undefined, false, true),
+      new Wall('teleport_cage_s', 'maze_impostor', destination.x, destination.y, true, undefined, undefined, false, true),
+      new Wall('teleport_cage_w', 'maze_impostor', destination.x - 1, destination.y, false, undefined, undefined, false, true),
+      new Wall('teleport_cage_e', 'maze_impostor', destination.x, destination.y, false, undefined, undefined, false, true)
+    );
     assert.equal(game.teleportMazePlayer(traveler.id, source.id), true);
     assert.deepEqual({ x: traveler.x, y: traveler.y }, { x: destination.x, y: destination.y });
+    assert.equal(traveler.isInPrison, true, 'a portal arrival in a cage is immediately marked as imprisoned');
     assert.equal(game.teleportMazePlayer(traveler.id, source.id), false, 'the player must be at the selected portal');
     const impostor = game.board.players.get(game.impostorId!)!;
+    game.board.grid[impostor.y][impostor.x].hasPlayer = null;
+    impostor.x = 39;
+    impostor.y = 0;
+    impostor.isInPrison = false;
+    game.board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
     const nonImpostor = game.board.players.get(players.find(player => player.id !== impostor.id)!.id)!;
     assert.equal(game.changeMazeLayout(nonImpostor.id), false, 'only the impostor can change the maze');
     assert.equal(game.changeMazeLayout(impostor.id, () => 0.37), true);
-    assert.equal(game.getMazeSecondsUntilChange(), 30);
-    assert.equal(game.changeMazeLayout(impostor.id, () => 0.37), false, 'the ability has a 30-second cooldown');
-    assert.equal(game.getMazeSecondsUntilChange(Date.now() + 30_000), 0);
+    assert.equal(game.getMazeSecondsUntilChange(), 10);
+    assert.equal(game.changeMazeLayout(impostor.id, () => 0.37), false, 'the ability has a 10-second cooldown');
+    assert.equal(game.getMazeSecondsUntilChange(Date.now() + 10_000), 0);
     game.destroy();
   });
 
-  it('Should allow only the impostor to place a wall and refresh shared sabotage charges each maze cycle', () => {
+  it('Should enforce a two-second wall placement cooldown for both teams and preserve sealed exits', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
     const players = [
       { id: 'maze_sabotage_good_1', username: 'Good1', isGuest: false, color: '#FF3B30' },
       { id: 'maze_sabotage_good_2', username: 'Good2', isGuest: false, color: '#007AFF' },
       { id: 'maze_sabotage_impostor', username: 'Impostor', isGuest: false, color: '#FFCC00' },
       { id: 'maze_sabotage_good_3', username: 'Good3', isGuest: false, color: '#34C759' }
     ];
-    const game = new GameInstance('maze_sabotage_options_test', 'labyrinth', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
-    game.start();
-    game.board.walls.splice(0);
-    const good = game.board.players.get(players.find(player => player.id !== game.impostorId)!.id)!;
-    const impostor = game.board.players.get(game.impostorId!)!;
-    const portal = (game.board as MazeBoard).teleports[0];
+    const publicEvents: any[] = [];
+    const game = new GameInstance('maze_sabotage_options_test', 'labyrinth', players, (event, data) => {
+      if (event === 'mazePublicEvent') publicEvents.push(data);
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    try {
+      game.start();
+      game.board.walls.splice(0);
+      (game.board as MazeBoard).keys = [];
+      const good = game.board.players.get(players.find(player => player.id !== game.impostorId)!.id)!;
+      const impostor = game.board.players.get(game.impostorId!)!;
 
-    assert.equal(game.placeMazeWall(good.id, 1, 1, true, 'good_wall_1'), true);
-    assert.equal(game.placeMazeWall(good.id, 3, 3, false, 'good_wall_2'), false);
-    assert.equal(game.getPrivateMazeRole(good.id)?.canPlaceWall, false);
-    assert.equal(game.placeMazeWall(impostor.id, 3, 3, false, 'impostor_wall'), true);
-    assert.equal(game.getPrivateMazeRole(impostor.id)?.sabotageActionsRemaining, 2);
-    assert.equal(game.jamMazeTeleport(impostor.id, portal.id), true);
-    assert.equal(game.getPrivateMazeRole(impostor.id)?.sabotageActionsRemaining, 1);
-    const pair = (game.board as MazeBoard).teleports.filter(item => item.pairId === portal.pairId);
-    assert.equal(pair.length, 2);
-    assert.ok(pair.every(item => (item.disabledUntil ?? 0) > Date.now()));
-    const exit = (game.board as MazeBoard).exits[0];
-    assert.equal(game.sealMazeExit(impostor.id, exit.id), true);
-    assert.ok((exit.disabledUntil ?? 0) > Date.now());
-    assert.equal(game.getPrivateMazeRole(impostor.id)?.sabotageActionsRemaining, 0);
-    assert.equal(game.jamMazeTeleport(impostor.id, portal.id), false);
+      assert.equal(game.getPrivateMazeRole(good.id)?.canPlaceWall, true);
+      assert.equal(game.placeMazeWall(good.id, 1, 1, true, 'good_wall_1'), true);
+      assert.equal(game.getPrivateMazeRole(good.id)?.canPlaceWall, false);
+      assert.equal(game.getPrivateMazeRole(good.id)?.wallPlacementCooldownUntil, Date.now() + LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+      assert.equal(game.placeMazeWall(good.id, 3, 3, false, 'good_wall_2'), false);
+      mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+      assert.equal(game.getPrivateMazeRole(good.id)?.canPlaceWall, true);
+      assert.equal(game.placeMazeWall(good.id, 3, 3, false, 'good_wall_2'), true);
 
-    assert.equal(game.changeMazeLayout(impostor.id, () => 0.4), true);
-    assert.equal(
-      game.getPrivateMazeRole(impostor.id)?.sabotageActionsRemaining,
-      game.initialSabotageActions
-    );
-    assert.equal([...game.board.players.values()].filter(player =>
-      player.ghostModeExpiresAt > Date.now()
-    ).length, 1);
-    game.destroy();
+      assert.equal(game.placeMazeWall(impostor.id, 5, 5, false, 'impostor_wall'), true);
+      assert.equal(game.getPrivateMazeRole(impostor.id)?.canPlaceWall, false);
+      assert.equal(game.placeMazeWall(impostor.id, 7, 7, false, 'impostor_wall_2'), false);
+      mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+      assert.equal(game.getPrivateMazeRole(impostor.id)?.canPlaceWall, true);
+
+      const exit = (game.board as MazeBoard).exits[0];
+      assert.equal(game.sealMazeExit(impostor.id, exit.id), true);
+      assert.equal(exit.isSealed, true);
+      assert.ok(publicEvents.some(event => event.type === 'impostor_exit_sealed' && event.exitNumber === 1));
+      assert.ok(game.getPrivateMazeRole(impostor.id)!.exitSealCooldownUntil > Date.now());
+
+      assert.equal(game.changeMazeLayout(impostor.id, () => 0.4), true);
+      assert.equal([...game.board.players.values()].filter(player =>
+        player.ghostModeExpiresAt > Date.now()
+      ).length, 0);
+      assert.equal((game.board as MazeBoard).ghostPickups.length, 3);
+      assert.equal((game.board as MazeBoard).exits[0].isSealed, true);
+    } finally {
+      game.destroy();
+      mock.timers.reset();
+    }
   });
 
   it('Should let the random ghost walk through walls and end wall phasing when its timer expires', () => {
@@ -592,7 +730,46 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.ok(!board.getMazeValidMoves(ghost.id).some(move => move.x === 4 && move.y === 2));
   });
 
-  it('Should finish only after every good player reaches the central extraction with their key', async () => {
+  it('Should imprison and announce a ghost when its timer expires inside a cage', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
+    const events: string[] = [];
+    const players = [
+      { id: 'maze_expiring_ghost_good', username: 'Ghost', isGuest: false, color: '#FF3B30' },
+      { id: 'maze_expiring_ghost_other', username: 'Other', isGuest: false, color: '#007AFF' }
+    ];
+    const game = new GameInstance('maze_expiring_ghost_cage_test', 'labyrinth', players, event => {
+      events.push(event);
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    try {
+      game.start();
+      const board = game.board as MazeBoard;
+      const ghost = board.players.get(players.find(player => player.id !== game.impostorId)!.id)!;
+      board.walls = [];
+      board.keys = [];
+      ghost.x = 20;
+      ghost.y = 20;
+      board.grid[ghost.y][ghost.x].hasPlayer = ghost.id;
+      ghost.ghostModeExpiresAt = Date.now() + 1_000;
+      board.walls.push(
+        new Wall('expiring_ghost_n', game.impostorId!, 20, 19, true, undefined, undefined, false, true),
+        new Wall('expiring_ghost_s', game.impostorId!, 20, 20, true, undefined, undefined, false, true),
+        new Wall('expiring_ghost_w', game.impostorId!, 19, 20, false, undefined, undefined, false, true),
+        new Wall('expiring_ghost_e', game.impostorId!, 20, 20, false, undefined, undefined, false, true)
+      );
+
+      assert.equal(ghost.isInPrison, false);
+      mock.timers.tick(1_000);
+
+      assert.equal(ghost.isInPrison, true);
+      assert.ok(board.toDTO().players[ghost.id].isInPrison);
+      assert.ok(events.includes('mazePublicEvent'));
+    } finally {
+      game.destroy();
+      mock.timers.reset();
+    }
+  });
+
+  it('Should finish only after enough good keys reach the central extraction', async () => {
     const players = [
       { id: 'maze_escape_good_a', username: 'EscapeeA', isGuest: false, color: '#FF3B30' },
       { id: 'maze_escape_good_b', username: 'EscapeeB', isGuest: false, color: '#007AFF' },
@@ -651,6 +828,61 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(goodPlayers[1].hasMazeKeyDelivered, true);
     assert.equal(goodPlayers[1].hasMazeEscaped, false);
     assert.equal(finishedWinner, 'good');
+    game.destroy();
+  });
+
+  it('Should allow one good player to deliver multiple keys in separate trips', async () => {
+    const players = [
+      { id: 'maze_multi_delivery_good_1', username: 'Good1', isGuest: false, color: '#FF3B30' },
+      { id: 'maze_multi_delivery_good_2', username: 'Good2', isGuest: false, color: '#007AFF' },
+      { id: 'maze_multi_delivery_other', username: 'Other', isGuest: false, color: '#FFCC00' }
+    ];
+    let finishedWinner: string | null = null;
+    let deliveredKeys = 0;
+    const game = new GameInstance('maze_multi_delivery_test', 'labyrinth', players, (event, data) => {
+      if (event === 'gameFinished') finishedWinner = data.winner;
+      if (event === 'mazeStateChanged') deliveredKeys = data.mazeKeysDelivered;
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+    const board = game.board as MazeBoard;
+    const extraction = board.extraction;
+    const goodPlayers = [...board.players.values()].filter(player => player.id !== game.impostorId);
+    const [firstGood, secondGood] = goodPlayers;
+    const impostor = board.players.get(game.impostorId!)!;
+    board.walls.splice(0);
+    board.keys = [
+      { id: 'maze_multi_delivery_key_1', x: extraction.x, y: extraction.y - 1 },
+      { id: 'maze_multi_delivery_key_2', x: extraction.x, y: extraction.y + 1 }
+    ];
+    for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+    firstGood.x = extraction.x;
+    firstGood.y = extraction.y;
+    secondGood.x = 0;
+    secondGood.y = 0;
+    impostor.x = board.size - 1;
+    impostor.y = board.size - 1;
+    board.grid[firstGood.y][firstGood.x].hasPlayer = firstGood.id;
+    board.grid[secondGood.y][secondGood.x].hasPlayer = secondGood.id;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
+
+    const move = async (x: number, y: number): Promise<void> => {
+      await new Promise(resolve => setTimeout(resolve, 130));
+      assert.equal(game.executeMove(firstGood.id, x, y), true);
+    };
+    await move(extraction.x, extraction.y - 1);
+    assert.equal(firstGood.hasMazeKey, true);
+    await move(extraction.x, extraction.y);
+    assert.equal(firstGood.hasMazeKey, false, 'delivering frees the carried-key slot');
+    assert.equal(firstGood.hasMazeKeyDelivered, true);
+    assert.equal(deliveredKeys, 1);
+    assert.equal(finishedWinner, null, 'one delivery is not enough for two good players');
+    await move(extraction.x, extraction.y + 1);
+    assert.equal(firstGood.hasMazeKey, true, 'the same player can collect another key');
+    await move(extraction.x, extraction.y);
+    assert.equal(firstGood.hasMazeKey, false);
+    assert.equal(deliveredKeys, 2);
+    assert.equal(finishedWinner, 'good', 'deliveries are counted by key, not unique players');
+    assert.equal(secondGood.hasMazeKeyDelivered, false);
     game.destroy();
   });
 
@@ -729,10 +961,16 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       new Wall('preserved_west', 'maze_shift_impostor', 9, 9, false, undefined, undefined, true, true),
       new Wall('preserved_east', 'maze_shift_impostor', 10, 9, false, undefined, undefined, true, true)
     ];
-    mazeBoard.keys = [{ id: 'key_1', x: 1, y: 1 }];
+    mazeBoard.keys = [
+      { id: 'key_1', x: 1, y: 1 },
+      { id: 'key_2', x: 2, y: 1 }
+    ];
     mazeBoard.spawnTeleports(() => 0.41);
     const previousTeleports = JSON.stringify(mazeBoard.teleports);
-    const previousKeyPosition = { x: mazeBoard.keys[0].x, y: mazeBoard.keys[0].y };
+    const previousKeyPositions = new Map(mazeBoard.keys.map(key => [
+      key.id,
+      { x: key.x, y: key.y }
+    ]));
     const previousCaptivePosition = { x: captive.x, y: captive.y };
     mazeBoard.reshuffleMaze(() => 0.73);
 
@@ -744,16 +982,21 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       .filter(player => !player.isInPrison)
       .every(player => !mazeBoard.isMazePlayerEnclosed(player.id)));
     assert.notEqual(JSON.stringify(mazeBoard.teleports), previousTeleports);
-    assert.notDeepEqual(
-      { x: mazeBoard.keys[0].x, y: mazeBoard.keys[0].y },
-      previousKeyPosition
+    assert.ok(mazeBoard.keys.every(key => {
+      const previousPosition = previousKeyPositions.get(key.id)!;
+      return key.x !== previousPosition.x || key.y !== previousPosition.y;
+    }));
+    assert.equal(
+      new Set(mazeBoard.keys.map(key => `${key.x},${key.y}`)).size,
+      mazeBoard.keys.length,
+      'reshuffled keys occupy different cells'
     );
     assert.ok(mazeBoard.teleports.every(portal =>
       mazeBoard.grid[portal.y][portal.x].hasPlayer === null
     ));
   });
 
-  it('Should favor safe barriers near gates when a player is close to an entrance', () => {
+  it('Should keep safe routes to central gates when reshuffling near an entrance', () => {
     class InspectableMazeBoard extends MazeBoard {
       public isPassageBlocked(fromX: number, fromY: number, toX: number, toY: number): boolean {
         return this.isWallBlocking(fromX, fromY, toX, toY);
@@ -778,10 +1021,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.ok([...board.players.values()].every(player =>
       !board.isMazePlayerEnclosed(player.id)
     ), 'barriers must not enclose a player who is near a gate');
-    assert.ok(board.walls.some(wall =>
-      !wall.id.startsWith('maze_center_') &&
-      Math.abs(wall.x - northExit.x) + Math.abs(wall.y - northExit.y) <= 3
-    ), 'the new layout should try to add barriers around the nearby gate approach');
+    assert.ok(board.walls.some(wall => !wall.id.startsWith('maze_center_')),
+      'the new layout should still add random barriers outside the protected zone');
   });
 
   it('Should collect any unassigned Labyrinth key and broadcast the carrier state', () => {
@@ -862,21 +1103,27 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     }));
     assert.ok(mazeBoard.isCellCapturable(mazeBoard.keys[0].x, mazeBoard.keys[0].y));
     assert.equal(mazeBoard.keys.length, 3, 'spawn one unassigned key per human player, including the impostor');
-    assert.equal(game.initialSabotageActions, 2);
-    assert.equal(game.getMazeGameTimeLimitSeconds(), 300);
+    assert.equal(game.getMazeGameTimeLimitSeconds(), 600);
 
     const humanRoles = players
       .filter(player => !player.id.startsWith('bot_'))
       .map(player => game.getPrivateMazeRole(player.id));
     assert.equal(humanRoles.filter(role => role?.role === 'impostor').length, 1);
     assert.equal(humanRoles.filter(role => role?.role === 'good').length, 2);
-    const ghost = [...game.board.players.values()].find(player => player.ghostModeExpiresAt > 0);
-    assert.ok(ghost);
-    assert.ok(ghost.ghostModeExpiresAt - Date.now() <= LABYRINTH_GHOST_DURATION_MS);
-    assert.ok(ghost.ghostModeExpiresAt - Date.now() > LABYRINTH_GHOST_DURATION_MS - 500);
-    assert.ok(humanRoles.every(role =>
-      role !== null && role.sabotageActionsRemaining === (role.role === 'impostor' ? 2 : 0)
-    ));
+    assert.equal([...game.board.players.values()].filter(player =>
+      player.ghostModeExpiresAt > Date.now()
+    ).length, 0);
+    assert.equal(mazeBoard.ghostPickups.length, 2);
+    const impostorId = players.find(player =>
+      game.getPrivateMazeRole(player.id)?.role === 'impostor'
+    )?.id;
+    assert.ok(impostorId);
+    assert.deepEqual(game.getMazeGhostPickupsForPlayer(impostorId), []);
+    const goodPlayerId = players.find(player =>
+      game.getPrivateMazeRole(player.id)?.role === 'good'
+    )!.id;
+    assert.equal(game.getMazeGhostPickupsForPlayer(goodPlayerId).length, 2);
+    assert.ok(humanRoles.every(role => role !== null && role.canPlaceWall && role.canBreakBlock));
     assert.equal(game.getPrivateMazeRole('bot_maze_1'), null);
     assert.equal(JSON.stringify(game.board.toDTO('maze_human_1')).includes('impostor'), false);
     assert.equal(Object.keys(game.getMazePublicActionCounts()).length, 3);
@@ -887,6 +1134,71 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       botPosition
     );
     assert.equal(game.getCurrentPlayer(), '', 'Labyrinth has no active turn owner');
+    game.destroy();
+  });
+
+  it('Should reveal randomized ghost pickups only to good players and activate one on collection', () => {
+    const players = [
+      { id: 'maze_ghost_good_a', username: 'GoodA', isGuest: false, color: '#FF3B30' },
+      { id: 'maze_ghost_good_b', username: 'GoodB', isGuest: false, color: '#007AFF' },
+      { id: 'maze_ghost_impostor', username: 'Impostor', isGuest: false, color: '#FFCC00' }
+    ];
+    const game = new GameInstance('maze_ghost_pickup_test', 'labyrinth', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    const privateEvents: Array<{ playerId: string; event: string; data: unknown }> = [];
+    game.onPrivateStateChange = (playerId, event, data) => privateEvents.push({ playerId, event, data });
+    game.start();
+
+    const board = game.board as MazeBoard;
+    const impostorId = game.impostorId!;
+    const goodId = players.find(player => player.id !== impostorId)!.id;
+    const pickup = board.ghostPickups[0];
+    const adjacent = [
+      { x: pickup.x - 1, y: pickup.y },
+      { x: pickup.x + 1, y: pickup.y },
+      { x: pickup.x, y: pickup.y - 1 },
+      { x: pickup.x, y: pickup.y + 1 }
+    ].filter(position => position.x > 0 && position.y > 0 &&
+      position.x < board.size - 1 && position.y < board.size - 1);
+    assert.ok(adjacent.length >= 3);
+
+    board.walls = [];
+    board.keys = [];
+    board.exits = [];
+    board.teleports = [];
+    board.shieldPickups = [];
+    board.traps = [];
+    for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+    const impostor = board.players.get(impostorId)!;
+    const good = board.players.get(goodId)!;
+    impostor.x = adjacent[0].x;
+    impostor.y = adjacent[0].y;
+    good.x = adjacent[1].x;
+    good.y = adjacent[1].y;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostorId;
+    board.grid[good.y][good.x].hasPlayer = goodId;
+    const other = [...board.players.values()].find(player =>
+      player.id !== impostorId && player.id !== goodId
+    )!;
+    other.x = 0;
+    other.y = 0;
+    board.grid[0][0].hasPlayer = other.id;
+
+    assert.equal(game.getMazeGhostPickupsForPlayer(impostorId).length, 0);
+    assert.equal(game.executeMove(impostorId, pickup.x, pickup.y), true);
+    assert.equal(board.ghostPickups.length, 2);
+    assert.equal(impostor.ghostModeExpiresAt, 0);
+
+    board.grid[pickup.y][pickup.x].hasPlayer = null;
+    impostor.x = adjacent[2].x;
+    impostor.y = adjacent[2].y;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostorId;
+    assert.equal(game.executeMove(goodId, pickup.x, pickup.y), true);
+    assert.equal(board.ghostPickups.length, 1);
+    assert.ok(good.ghostModeExpiresAt - Date.now() <= LABYRINTH_GHOST_DURATION_MS);
+    assert.ok(good.ghostModeExpiresAt - Date.now() > 0);
+    assert.ok(!privateEvents.some(event =>
+      event.playerId === impostorId && event.event === 'mazeGhostPickups'
+    ));
     game.destroy();
   });
 
@@ -912,7 +1224,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal('currentTurn' in startEvent, false);
     assert.equal('turnTimeLimitSeconds' in startEvent, false);
     assert.equal('turnSecondsRemaining' in startEvent, false);
-    assert.equal(startEvent.gameTimeLimitSeconds, 300);
+    assert.equal(startEvent.gameTimeLimitSeconds, 600);
     const mazeBoard = game.board as MazeBoard;
     const firstMove = mazeBoard.getMazeValidMoves('maze_realtime_1')[0];
     assert.ok(firstMove);
@@ -925,11 +1237,11 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(movementEvents[0].movementTrailId, 'trail_test');
     assert.equal(movementEvents[0].movementTrailIcon, '✨');
     assert.equal(
-      mazeStateUpdates[2].board.players.maze_realtime_1.x,
+      mazeStateUpdates[1].board.players.maze_realtime_1.x,
       mazeBoard.players.get('maze_realtime_1')?.x
     );
     assert.equal(
-      mazeStateUpdates[2].board.players.maze_realtime_2.x,
+      mazeStateUpdates[1].board.players.maze_realtime_2.x,
       mazeBoard.players.get('maze_realtime_2')?.x
     );
     assert.equal(emittedEvents.includes('turnChanged'), false);
@@ -955,9 +1267,12 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const trapCell = mazeBoard.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })))
       .find(({ x, y }) => !mazeBoard.isSafeZoneCell(x, y) && mazeBoard.canPlaceTrap(x, y))!;
     const safeCell = mazeBoard.extraction;
+    const safeZoneMarginCell = { x: mazeBoard.extraction.x + 5, y: mazeBoard.extraction.y };
 
     assert.equal(game.placeMazeTrap(goodId, 'ice', trapCell.x, trapCell.y), false);
     assert.equal(game.placeMazeTrap(impostorId, 'ice', safeCell.x, safeCell.y), false);
+    assert.equal(mazeBoard.isSafeZoneCell(safeZoneMarginCell.x, safeZoneMarginCell.y), true);
+    assert.equal(game.placeMazeTrap(impostorId, 'ice', safeZoneMarginCell.x, safeZoneMarginCell.y), false);
     assert.equal(game.placeMazeTrap(impostorId, 'ice', trapCell.x, trapCell.y), true);
     const teleportCell = mazeBoard.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })))
       .find(({ x, y }) => !mazeBoard.isSafeZoneCell(x, y) &&
@@ -1015,7 +1330,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
-  it('Should consume a shield to block a trap and teleport unshielded victims to a board edge', async () => {
+  it('Should consume an active shield when it blocks a trap and teleport unshielded victims to a board edge', async () => {
     const players = [
       { id: 'maze_tele_a', username: 'TeleA', isGuest: false, color: '#FF3B30' },
       { id: 'maze_tele_b', username: 'TeleB', isGuest: false, color: '#007AFF' },
@@ -1040,16 +1355,18 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const victim = mazeBoard.players.get(victimId)!;
     victim.x = trapCell.x - 1;
     victim.y = trapCell.y;
-    victim.mazeShieldExpiresAt = Date.now() + 60_000;
+    victim.mazeShieldActive = true;
     for (const player of mazeBoard.players.values()) {
       mazeBoard.grid[player.y][player.x].hasPlayer = player.id;
     }
     assert.equal(game.executeMove(victimId, trapCell.x, trapCell.y), true);
-    assert.equal(victim.mazeShieldExpiresAt, 0);
+    assert.equal(victim.mazeShieldActive, false);
+    assert.equal(mazeBoard.toDTO().players[victimId].mazeShieldActive, false);
     assert.deepEqual({ x: victim.x, y: victim.y }, trapCell);
     assert.equal(events.find(item => item.event === 'mazeTrapTriggered')?.data.shielded, true);
 
     await new Promise(resolve => setTimeout(resolve, 130));
+    victim.mazeShieldActive = false;
     const nextTrapCell = mazeBoard.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })))
       .find(({ x, y }) => x >= 2 && !mazeBoard.isSafeZoneCell(x, y) &&
         mazeBoard.canPlaceTrap(x, y))!;
@@ -1063,6 +1380,56 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.ok(victim.x === 0 || victim.y === 0 ||
       victim.x === mazeBoard.size - 1 || victim.y === mazeBoard.size - 1);
     assert.equal(events.filter(item => item.event === 'playerMoved' && item.data.teleported).length, 1);
+    assert.ok(victim.mazeTeleportingUntil >= Date.now() + LABYRINTH_TELEPORT_ANIMATION_MS - 100);
+    assert.equal(mazeBoard.getMazeValidMoves(victimId).length, 0);
+    assert.equal(game.teleportMazePlayer(victimId, mazeBoard.teleports[0].id), false);
+    game.destroy();
+  });
+
+  it('Should not trigger the impostor own teleport trap', () => {
+    const players = [
+      { id: 'maze_own_trap_a', username: 'TrapA', isGuest: false, color: '#FF3B30' },
+      { id: 'maze_own_trap_b', username: 'TrapB', isGuest: false, color: '#007AFF' },
+      { id: 'maze_own_trap_c', username: 'TrapC', isGuest: false, color: '#34C759' },
+      { id: 'maze_own_trap_d', username: 'TrapD', isGuest: false, color: '#FFCC00' }
+    ];
+    const events: Array<{ event: string; data: any }> = [];
+    const game = new GameInstance('maze_own_teleport_trap_test', 'labyrinth', players, (event, data) => {
+      events.push({ event, data });
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+    const mazeBoard = game.board as MazeBoard;
+    mazeBoard.walls.splice(0);
+    const impostorId = game.impostorId!;
+    const trap = mazeBoard.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })))
+      .find(({ x, y }) => x >= 2 && x < mazeBoard.size - 1 &&
+        !mazeBoard.isSafeZoneCell(x, y) && mazeBoard.canPlaceTrap(x, y))!;
+    assert.equal(game.placeMazeTrap(impostorId, 'teleport', trap.x, trap.y), true);
+
+    for (const row of mazeBoard.grid) for (const cell of row) cell.hasPlayer = null;
+    const impostor = mazeBoard.players.get(impostorId)!;
+    impostor.x = trap.x - 1;
+    impostor.y = trap.y;
+    const otherPlayers = [...mazeBoard.players.values()].filter(player => player.id !== impostorId);
+    const fallbackCells = [
+      { x: 0, y: 0 },
+      { x: mazeBoard.size - 1, y: 0 },
+      { x: 0, y: mazeBoard.size - 1 },
+      { x: mazeBoard.size - 1, y: mazeBoard.size - 1 }
+    ].filter(cell => cell.x !== impostor.x || cell.y !== impostor.y);
+    otherPlayers.forEach((player, index) => {
+      const cell = fallbackCells[index];
+      player.x = cell.x;
+      player.y = cell.y;
+    });
+    for (const player of mazeBoard.players.values()) {
+      mazeBoard.grid[player.y][player.x].hasPlayer = player.id;
+    }
+
+    assert.equal(game.executeMove(impostorId, trap.x, trap.y), true);
+    assert.deepEqual({ x: impostor.x, y: impostor.y }, trap);
+    assert.equal(mazeBoard.traps.some(candidate => candidate.x === trap.x && candidate.y === trap.y), true);
+    assert.equal(events.some(item => item.event === 'mazeTrapTriggered'), false);
     game.destroy();
   });
 
@@ -1091,7 +1458,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       mazeBoard.grid[player.y][player.x].hasPlayer = player.id;
     }
     assert.equal(game.executeMove(victimId, pickup.x, pickup.y), true);
-    assert.ok(victim.mazeShieldExpiresAt > Date.now());
+    assert.equal(victim.mazeShieldActive, true);
     assert.equal(mazeBoard.shieldPickups.length, 2);
     game.destroy();
   });
@@ -1120,7 +1487,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
-  it('Should give the impostor the win when the five-minute Labyrinth timer expires', () => {
+  it('Should give the impostor the win when the ten-minute Labyrinth timer expires', () => {
     mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
     let finishedWinner: string | null = null;
     const game = new GameInstance('maze_timer_test', 'labyrinth', [
@@ -1131,12 +1498,12 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     }, GAME_INSTANCE_TEST_OPTIONS);
     try {
       game.start();
-      for (let minute = 0; minute < 5; minute++) {
+      for (let minute = 0; minute < 10; minute++) {
         mock.timers.tick(59_000);
         game.recordPlayerActivity('maze_timer_1');
         game.recordPlayerActivity('maze_timer_2');
       }
-      mock.timers.tick(4_999);
+      mock.timers.tick(9_999);
       assert.equal(game.state, 'playing');
       mock.timers.tick(1);
       assert.equal(game.state, 'finished');
@@ -1241,9 +1608,9 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
 
     const impostor = game.board.players.get(game.impostorId!)!;
     const middle = Math.floor(game.board.size / 2);
-    impostor.x = middle;
-    impostor.y = middle;
-    game.board.grid[middle][middle].hasPlayer = impostor.id;
+    impostor.x = 4;
+    impostor.y = 4;
+    game.board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const edge = game.board.size - 1;
@@ -1255,10 +1622,10 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     });
 
     const cageWalls = [
-      { x: middle - 1, y: middle - 1, horizontal: true },
-      { x: middle, y: middle, horizontal: true },
-      { x: middle - 1, y: middle, horizontal: false },
-      { x: middle, y: middle - 1, horizontal: false }
+      { x: impostor.x - 1, y: impostor.y - 1, horizontal: true },
+      { x: impostor.x, y: impostor.y, horizontal: true },
+      { x: impostor.x - 1, y: impostor.y, horizontal: false },
+      { x: impostor.x, y: impostor.y - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
       assert.equal(
@@ -1291,9 +1658,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       .filter(player => player.id !== game.impostorId);
     const [target, friend] = goodPlayers;
     const impostor = game.board.players.get(game.impostorId!)!;
-    const middle = Math.floor(game.board.size / 2);
-    target.x = middle;
-    target.y = middle;
+    target.x = 4;
+    target.y = 4;
     target.hasMazeKey = true;
     friend.x = 0;
     friend.y = 0;
@@ -1303,22 +1669,22 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       game.board.grid[player.y][player.x].hasPlayer = player.id;
     }
     board.walls.push(
-      new Wall('carrier_cage_north', impostor.id, middle - 1, middle - 1, true),
-      new Wall('carrier_cage_south', impostor.id, middle, middle, true),
-      new Wall('carrier_cage_west', impostor.id, middle - 1, middle, false)
+      new Wall('carrier_cage_north', impostor.id, target.x - 1, target.y - 1, true),
+      new Wall('carrier_cage_south', impostor.id, target.x, target.y, true),
+      new Wall('carrier_cage_west', impostor.id, target.x - 1, target.y, false)
     );
 
     assert.equal(game.state, 'playing');
     assert.equal(impostor.isInPrison, false);
     assert.equal(game.getPrivateMazeRole(impostor.id)?.canPlaceWall, true);
-    assert.equal(board.canPlaceWall(new Wall('carrier_cage_east', impostor.id, middle, middle - 1, false)), true);
-    assert.equal(game.placeMazeWall(impostor.id, middle, middle - 1, false, 'carrier_cage_east'), true);
+    assert.equal(board.canPlaceWall(new Wall('carrier_cage_east', impostor.id, target.x, target.y - 1, false)), true);
+    assert.equal(game.placeMazeWall(impostor.id, target.x, target.y - 1, false, 'carrier_cage_east'), true);
     assert.equal(target.isInPrison, true);
     assert.equal(target.hasMazeKey, true);
     game.destroy();
   });
 
-  it('Should prevent a good player from caging another good player', () => {
+  it('Should allow a good player to cage another good player without ending the match', () => {
     const players = Array.from({ length: 6 }, (_, index) => ({
       id: `maze_wrong_cage_${index}`,
       username: `Wrong${index}`,
@@ -1341,9 +1707,9 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const target = goodPlayers[0];
-    target.x = middle;
-    target.y = middle;
-    game.board.grid[middle][middle].hasPlayer = target.id;
+    target.x = 4;
+    target.y = 4;
+    game.board.grid[target.y][target.x].hasPlayer = target.id;
     goodPlayers.slice(1).forEach((player, index) => {
       const position = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }][index];
       player.x = position.x;
@@ -1355,10 +1721,10 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.board.grid[middle][0].hasPlayer = impostor.id;
 
     const cageWalls = [
-      { x: middle - 1, y: middle - 1, horizontal: true },
-      { x: middle, y: middle, horizontal: true },
-      { x: middle - 1, y: middle, horizontal: false },
-      { x: middle, y: middle - 1, horizontal: false }
+      { x: target.x - 1, y: target.y - 1, horizontal: true },
+      { x: target.x, y: target.y, horizontal: true },
+      { x: target.x - 1, y: target.y, horizontal: false },
+      { x: target.x, y: target.y - 1, horizontal: false }
     ];
     cageWalls.slice(0, -1).forEach((wall, index) => {
       assert.equal(
@@ -1375,14 +1741,15 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
         finalWall.horizontal,
         'wrong_cage_final'
       ),
-      false
+      true
     );
-    assert.equal(target.isInPrison, false);
+    assert.equal(target.isInPrison, true);
     assert.equal(finishedWinner, null);
     game.destroy();
   });
 
-  it('Should let a nearby good player rescue one captive once', () => {
+  it('Should let any nearby player rescue captives without using a rescue action', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
     const players = Array.from({ length: 6 }, (_, index) => ({
       id: `maze_rescue_${index}`,
       username: `Rescue${index}`,
@@ -1405,26 +1772,28 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const target = goodPlayers[0];
-    target.x = middle;
-    target.y = middle;
-    game.board.grid[middle][middle].hasPlayer = target.id;
+    target.x = 4;
+    target.y = 4;
+    game.board.grid[target.y][target.x].hasPlayer = target.id;
     goodPlayers.slice(1).forEach((player, index) => {
       const position = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }][index];
       player.x = position.x;
       player.y = position.y;
       game.board.grid[player.y][player.x].hasPlayer = player.id;
     });
+
     impostor.x = middle;
     impostor.y = 0;
     game.board.grid[0][middle].hasPlayer = impostor.id;
 
     const cageWalls = [
-      { x: middle - 1, y: middle - 1, horizontal: true },
-      { x: middle, y: middle, horizontal: true },
-      { x: middle - 1, y: middle, horizontal: false },
-      { x: middle, y: middle - 1, horizontal: false }
+      { x: target.x - 1, y: target.y - 1, horizontal: true },
+      { x: target.x, y: target.y, horizontal: true },
+      { x: target.x - 1, y: target.y, horizontal: false },
+      { x: target.x, y: target.y - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
+      if (index > 0) mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
       assert.equal(game.placeMazeWall(impostor.id, wall.x, wall.y, wall.horizontal, `impostor_cage_${index}`), true);
     });
     assert.equal(target.isInPrison, true);
@@ -1432,21 +1801,98 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const rescuer = goodPlayers[1];
     const previousPosition = { x: rescuer.x, y: rescuer.y };
     game.board.grid[previousPosition.y][previousPosition.x].hasPlayer = null;
-    rescuer.x = middle + 1;
-    rescuer.y = middle;
+    rescuer.x = target.x + 1;
+    rescuer.y = target.y;
     game.board.grid[rescuer.y][rescuer.x].hasPlayer = rescuer.id;
     assert.equal(game.rescueMazePlayer(rescuer.id, target.id), true);
     assert.equal(target.isInPrison, false);
-    assert.equal(game.rescueMazePlayer(rescuer.id, target.id), false, 'a rescuer can rescue only once');
-    assert.equal(game.getMazePublicActionCounts()[rescuer.id], 1);
+    assert.equal(game.getPrivateMazeRole(rescuer.id)?.canRescue, true);
+    assert.equal(game.rescueMazePlayer(rescuer.id, target.id), false, 'the target is no longer imprisoned');
+    assert.equal(game.getMazePublicActionCounts()[rescuer.id], 0);
     assert.ok(game.board.walls.some(wall => wall.isSabotageWall));
     assert.ok(events.some(({ event, data }) =>
       event === 'mazePublicEvent' && data.type === 'player_rescued'
     ));
     game.destroy();
+    mock.timers.reset();
   });
 
-  it('Should only let a nearby player break a red impostor wall that opens a prison', () => {
+  it('Should award the impostor a capture win only after caging every good player', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
+    const players = Array.from({ length: 6 }, (_, index) => ({
+      id: `maze_unlimited_break_${index}`,
+      username: `Unlimited${index}`,
+      isGuest: false,
+      color: ['#FF3B30', '#007AFF', '#FFCC00', '#34C759', '#AF52DE', '#FF9500'][index]
+    }));
+    const game = new GameInstance('maze_unlimited_break_test', 'labyrinth', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+    const board = game.board as MazeBoard;
+    board.walls = [];
+    board.keys = [];
+    for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+
+    const impostor = board.players.get(game.impostorId!)!;
+    impostor.x = 39;
+    impostor.y = 39;
+    board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
+    const goods = players
+      .map(player => board.players.get(player.id)!)
+      .filter(player => player.id !== impostor.id);
+    const prisonerPositions = [{ x: 4, y: 4 }, { x: 9, y: 9 }, { x: 30, y: 30 }, { x: 35, y: 35 }];
+    let wallsPlaced = 0;
+    goods.forEach((player, index) => {
+      const position = prisonerPositions[index] || { x: 0, y: 0 };
+      player.x = position.x;
+      player.y = position.y;
+      board.grid[player.y][player.x].hasPlayer = player.id;
+      if (index >= prisonerPositions.length) return;
+      const cageWalls = [
+        { x: position.x - 1, y: position.y - 1, horizontal: true },
+        { x: position.x, y: position.y, horizontal: true },
+        { x: position.x - 1, y: position.y, horizontal: false },
+        { x: position.x, y: position.y - 1, horizontal: false }
+      ];
+      cageWalls.forEach((wall, wallIndex) => {
+        if (wallsPlaced > 0) mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+        assert.equal(
+          game.placeMazeWall(impostor.id, wall.x, wall.y, wall.horizontal, `unlimited_cage_${index}_${wallIndex}`),
+          true
+        );
+        wallsPlaced++;
+      });
+    });
+
+    assert.equal(goods.slice(0, prisonerPositions.length).filter(player => player.isInPrison).length, 4);
+    assert.equal(game.state, 'playing');
+
+    const lastGood = goods.at(-1)!;
+    lastGood.x = 34;
+    lastGood.y = 4;
+    board.grid[0][0].hasPlayer = null;
+    board.grid[lastGood.y][lastGood.x].hasPlayer = lastGood.id;
+    const finalCageWalls = [
+      { x: lastGood.x - 1, y: lastGood.y - 1, horizontal: true },
+      { x: lastGood.x, y: lastGood.y, horizontal: true },
+      { x: lastGood.x - 1, y: lastGood.y, horizontal: false },
+      { x: lastGood.x, y: lastGood.y - 1, horizontal: false }
+    ];
+    finalCageWalls.forEach((wall, index) => {
+      mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+      assert.equal(
+        game.placeMazeWall(impostor.id, wall.x, wall.y, wall.horizontal, `unlimited_final_cage_${index}`),
+        true
+      );
+    });
+    assert.equal(lastGood.isInPrison, true);
+    assert.equal(game.state, 'finished');
+    assert.equal(game.winner, impostor.id);
+    game.destroy();
+    mock.timers.reset();
+  });
+
+  it('Should let any active player break player-placed adjacent walls without spending an action', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
     const players = Array.from({ length: 6 }, (_, index) => ({
       id: `maze_break_${index}`,
       username: `Break${index}`,
@@ -1469,52 +1915,88 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const goodPlayers = players.map(player => game.board.players.get(player.id)!)
       .filter(player => player.id !== impostor.id);
     const target = goodPlayers[0];
-    target.x = middle;
-    target.y = middle;
-    game.board.grid[middle][middle].hasPlayer = target.id;
+    target.x = 4;
+    target.y = 4;
+    game.board.grid[target.y][target.x].hasPlayer = target.id;
     goodPlayers.slice(1).forEach((player, index) => {
       const position = [{ x: 0, y: 0 }, { x: edge, y: 0 }, { x: 0, y: edge }, { x: edge, y: edge }][index];
       player.x = position.x;
       player.y = position.y;
       game.board.grid[player.y][player.x].hasPlayer = player.id;
     });
-    impostor.x = middle;
+    impostor.x = 10;
     impostor.y = 0;
-    game.board.grid[0][middle].hasPlayer = impostor.id;
+    game.board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
 
     const cageWalls = [
-      { x: middle - 1, y: middle - 1, horizontal: true },
-      { x: middle, y: middle, horizontal: true },
-      { x: middle - 1, y: middle, horizontal: false },
-      { x: middle, y: middle - 1, horizontal: false }
+      { x: target.x - 1, y: target.y - 1, horizontal: true },
+      { x: target.x, y: target.y, horizontal: true },
+      { x: target.x - 1, y: target.y, horizontal: false },
+      { x: target.x, y: target.y - 1, horizontal: false }
     ];
     cageWalls.forEach((wall, index) => {
+      if (index > 0) mock.timers.tick(LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
       assert.equal(game.placeMazeWall(impostor.id, wall.x, wall.y, wall.horizontal, `maze_break_cage_${index}`), true);
     });
     const mazeBoard = game.board as MazeBoard;
     const releaseWall = mazeBoard.getMazeReleaseWalls(target.id)
       .find(wall => wall.isSabotageWall);
     assert.ok(releaseWall);
+    assert.equal(game.breakMazeBlock(target.id, releaseWall.id), false, 'an imprisoned player cannot break their cage');
     const rescuer = goodPlayers[1];
-    assert.equal(game.breakMazeBlock(rescuer.id, releaseWall.id), false, 'the rescuer must travel to the captive');
+    assert.equal(game.breakMazeBlock(rescuer.id, releaseWall.id), false, 'the player must stand next to the wall');
 
     game.board.grid[rescuer.y][rescuer.x].hasPlayer = null;
-    rescuer.x = middle + 1;
-    rescuer.y = middle;
+    const adjacentCells = releaseWall.isHorizontal
+      ? [
+          { x: releaseWall.x, y: releaseWall.y },
+          { x: releaseWall.x, y: releaseWall.y + 1 },
+          { x: releaseWall.x + 1, y: releaseWall.y },
+          { x: releaseWall.x + 1, y: releaseWall.y + 1 }
+        ]
+      : [
+          { x: releaseWall.x, y: releaseWall.y },
+          { x: releaseWall.x + 1, y: releaseWall.y },
+          { x: releaseWall.x, y: releaseWall.y + 1 },
+          { x: releaseWall.x + 1, y: releaseWall.y + 1 }
+        ];
+    const adjacentCell = adjacentCells.find(cell =>
+      ![...game.board.players.values()].some(player =>
+        player.id !== rescuer.id && player.x === cell.x && player.y === cell.y
+      )
+    );
+    assert.ok(adjacentCell);
+    rescuer.x = adjacentCell.x;
+    rescuer.y = adjacentCell.y;
+    assert.equal(mazeBoard.isPlayerAdjacentToWall(rescuer.id, releaseWall), true);
     game.board.grid[rescuer.y][rescuer.x].hasPlayer = rescuer.id;
     assert.equal(game.breakMazeBlock(rescuer.id, releaseWall.id), true);
     assert.equal(target.isInPrison, false);
-    assert.equal(game.getMazePublicActionCounts()[rescuer.id], 1);
+    assert.equal(game.getMazePublicActionCounts()[rescuer.id], 0);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazeStateChanged' && data.publicActionCounts[rescuer.id] === 1
+      event === 'mazeStateChanged' && data.publicActionCounts[rescuer.id] === 0
     ));
-    assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' && data.type === 'impostor_sabotage'
-    ));
+    assert.equal(events.some(({ event, data }) =>
+      event === 'mazePublicEvent' &&
+      (data.type === 'impostor_sabotage' || data.type === 'player_wall_placed')
+    ), false, 'placing a wall must not produce a public notification');
     assert.ok(events.some(({ event, data }) =>
       event === 'mazePublicEvent' && data.type === 'player_broke_prison_wall'
     ));
+    const goodOwnedWall = new Wall('good_owned_wall', goodPlayers[0].id, 32, 32, true);
+    assert.equal(mazeBoard.placeMazeWall(goodOwnedWall), true);
+    game.board.grid[impostor.y][impostor.x].hasPlayer = null;
+    impostor.x = 32;
+    impostor.y = 32;
+    game.board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
+    assert.equal(game.breakMazeBlock(impostor.id, goodOwnedWall.id), true,
+      'the impostor can break a wall placed by a good player');
+    const generatedWall = new Wall('maze_generated_wall', 'maze', 32, 32, false);
+    assert.equal(mazeBoard.placeMazeWall(generatedWall), true);
+    assert.equal(game.breakMazeBlock(impostor.id, generatedWall.id), false,
+      'generated maze walls cannot be broken');
     game.destroy();
+    mock.timers.reset();
   });
 
   it('Should correctly set up a 2v2 Team mode with 2 balanced teams', () => {

@@ -275,6 +275,29 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         games.push(game);
         game.start();
 
+        const assertPortalsAvoidGoalExtremes = (): void => {
+          if (mode !== '1v1' && mode !== 'vs_ai' && mode !== '2v2') return;
+          const goalExtremes = new Set<string>();
+          const lastCoordinate = game.board.size - 1;
+          for (const player of game.board.players.values()) {
+            if (player.targetY !== undefined) {
+              goalExtremes.add(`0,${player.targetY}`);
+              goalExtremes.add(`${lastCoordinate},${player.targetY}`);
+            }
+            if (player.targetX !== undefined) {
+              goalExtremes.add(`${player.targetX},0`);
+              goalExtremes.add(`${player.targetX},${lastCoordinate}`);
+            }
+          }
+          const portals = game.board.boosts.filter(boost => boost.type === 'portal');
+          assert.equal(portals.length, 2, `${mode}: a portal pair must be present`);
+          assert.ok(
+            portals.every(portal => !goalExtremes.has(`${portal.x},${portal.y}`)),
+            `${mode}: neither portal may spawn at an extreme of a winning line`
+          );
+        };
+        assertPortalsAvoidGoalExtremes();
+
         const timedTypes = ['ghost', 'exchange_item', 'portal', ...(hasKiller ? ['killer_item'] : [])];
         for (const type of timedTypes) {
           assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} spawns`);
@@ -295,6 +318,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         for (const type of timedTypes) {
           assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} respawns after cooldown`);
         }
+        assertPortalsAvoidGoalExtremes();
       }
     } finally {
       for (const game of games) game.destroy();

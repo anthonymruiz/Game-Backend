@@ -215,14 +215,13 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     await container.resolve(MazeAuditService).releaseMatch(matchId);
   });
 
-  it('GameService rejects Labyrinth rooms with fewer than two real players', async () => {
+  it('GameService accepts 1 human player in Labyrinth mode and rejects 0 human players', async () => {
     const gameService = container.resolve(GameService);
     await assert.rejects(
-      gameService.createGame(`maze-too-small-${randNum}`, 'labyrinth', [
-        { id: 'maze-small-human-1', username: 'Human 1', isGuest: false, color: '#FF3B30' },
+      gameService.createGame(`maze-no-human-${randNum}`, 'labyrinth', [
         { id: 'bot_maze_small_1', username: 'Bot 1', isGuest: true, color: '#FFCC00' },
       ]),
-      /at least 2 human players/
+      /at least 1 human player/i
     );
   });
 
