@@ -68,12 +68,74 @@ describe('Infection mode', () => {
     assert.equal(infectedView.ghostPickups.length, 0);
     assert.equal(infectedView.invisiblePickups.length, 0);
     assert.equal(survivorView.players[survivor.id].isInvisible, true);
-    assert.ok(survivorView.ghostPickups.length >= 10);
+    assert.equal(survivorView.ghostPickups.length, 3);
     assert.ok(survivorView.invisiblePickups.length > 0);
     assert.equal(infectedState.rescueStatus.capturedPlayers.includes(survivor.id), false);
     assert.equal(survivorState.rescueStatus.capturedPlayers.includes(survivor.id), true);
     assert.equal(game.canViewerSeeInfectionPlayer(infected.id, survivor.id), false);
     assert.equal(game.canViewerSeeInfectionPlayer(survivor.id, survivor.id), true);
+    game.destroy();
+  });
+
+  it('keeps three ghost pickups active and relocates a collected pickup', () => {
+    const game = createGame();
+    const board = game.board as InfectionBoard;
+    assert.equal(board.ghostPickups.length, 3);
+    const previousPosition = board.ghostPickups[0];
+    assert.ok(previousPosition);
+
+    assert.equal(board.collectInfectionPowerupAt(previousPosition.x, previousPosition.y), 'ghost');
+    assert.equal(board.ghostPickups.length, 3);
+    assert.ok(board.ghostPickups.every(pickup =>
+      pickup.x !== previousPosition.x || pickup.y !== previousPosition.y
+    ));
+    game.destroy();
+  });
+
+  it('prevents infected players from returning to the safe zone', () => {
+    const game = createGame();
+    game.start();
+    const board = game.board as InfectionBoard;
+    const infected = [...board.players.values()].find(player => player.isInfected);
+    assert.ok(infected);
+
+    for (const row of board.grid) {
+      for (const cell of row) cell.hasPlayer = null;
+    }
+    const middle = Math.floor(board.size / 2);
+    infected.x = middle - 6;
+    infected.y = middle;
+    board.grid[infected.y][infected.x].hasPlayer = infected.id;
+    board.walls = [];
+    const safeZoneCell = { x: middle - 5, y: middle };
+    assert.equal(board.isSafeZoneCell(safeZoneCell.x, safeZoneCell.y), true);
+    assert.equal(game.executeMove(infected.id, safeZoneCell.x, safeZoneCell.y), false);
+    assert.deepEqual({ x: infected.x, y: infected.y }, { x: middle - 6, y: middle });
+    game.destroy();
+  });
+
+  it('moves infection portals to new random positions after use', () => {
+    const game = createGame();
+    game.start();
+    const board = game.board as InfectionBoard;
+    const survivor = [...board.players.values()].find(player => !player.isInfected);
+    const source = board.teleports[0];
+    assert.ok(survivor && source);
+    const oldPositions = new Set(board.teleports.map(({ x, y }) => `${x},${y}`));
+
+    for (const row of board.grid) {
+      for (const cell of row) cell.hasPlayer = null;
+    }
+    survivor.x = source.x;
+    survivor.y = source.y;
+    board.grid[survivor.y][survivor.x].hasPlayer = survivor.id;
+    for (const player of board.players.values()) {
+      if (player.id === survivor.id) continue;
+      board.grid[player.y][player.x].hasPlayer = player.id;
+    }
+
+    assert.equal(game.teleportMazePlayer(survivor.id, source.id), true);
+    assert.ok(board.teleports.every(({ x, y }) => !oldPositions.has(`${x},${y}`)));
     game.destroy();
   });
 
