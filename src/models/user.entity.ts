@@ -1,4 +1,4 @@
-import { Entity, Column, OneToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, Column, OneToOne, JoinColumn, OneToMany, Index } from 'typeorm';
 import { AbstractBaseEntity } from './base.entity.js';
 import { Preferences } from './preferences.entity.js';
 import { Stats } from './stats.entity.js';
@@ -11,6 +11,7 @@ import { UserRole } from './user-role.enum.js';
 import { PresenceStatus } from './presence.enum.js';
 
 @Entity('users')
+@Index('IDX_users_online_presence', ['isOnline', 'presenceStatus'])
 export class User extends AbstractBaseEntity {
   @Column({ type: 'varchar', unique: true })
   email!: string;

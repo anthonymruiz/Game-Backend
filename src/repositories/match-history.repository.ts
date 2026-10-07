@@ -17,9 +17,17 @@ export class MatchHistoryRepository {
 
   public async getModeDistribution(): Promise<{ mode: string; count: number }[]> {
     const rows = await this.ormRepository.createQueryBuilder('match')
-      .select('match.mode', 'mode')
+      .select(
+        `CASE
+          WHEN match.mode = 'vs_ai' OR (
+            match.mode = '1v1' AND LOWER(COALESCE(match.opponentUsername, '')) LIKE 'bot%'
+          ) THEN 'vs_ai'
+          ELSE match.mode
+        END`,
+        'mode'
+      )
       .addSelect('COUNT(DISTINCT match.matchId)', 'count')
-      .groupBy('match.mode')
+      .groupBy('mode')
       .getRawMany<{ mode: string; count: string }>();
 
     return rows.map(row => ({
@@ -95,7 +103,15 @@ export class MatchHistoryRepository {
       } else if (modeFilter === '6-FFA' || modeFilter === '6way') {
         queryBuilder.andWhere('match.mode IN (:...modes)', { modes: ['6-FFA', '6way'] });
       } else if (modeFilter === '1v1') {
-        queryBuilder.andWhere('(match.mode = :mode OR match.mode IS NULL)', { mode: modeFilter });
+        queryBuilder.andWhere(
+          '(match.mode = :mode OR match.mode IS NULL) AND LOWER(COALESCE(match.opponentUsername, \'\')) NOT LIKE :botPrefix',
+          { mode: modeFilter, botPrefix: 'bot%' }
+        );
+      } else if (modeFilter === 'vs_ai') {
+        queryBuilder.andWhere(
+          '(match.mode = :mode OR (match.mode = :legacyMode AND LOWER(COALESCE(match.opponentUsername, \'\')) LIKE :botPrefix))',
+          { mode: modeFilter, legacyMode: '1v1', botPrefix: 'bot%' }
+        );
       } else {
         queryBuilder.andWhere('match.mode = :mode', { mode: modeFilter });
       }

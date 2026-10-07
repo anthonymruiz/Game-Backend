@@ -6,6 +6,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { paginateQueryBuilder, IPaginationOptions, IPaginatedResult } from '../utils/pagination.util.js';
 import { UserRole } from '../models/user-role.enum.js';
 import { PresenceStatus } from '../models/presence.enum.js';
+import type { IUserPresenceChange } from '../services/presence-tracker.service.js';
 
 @injectable()
 export class UserRepository {
@@ -170,13 +171,58 @@ export class UserRepository {
     return this.ormRepository.count({ where: { isOnline: true } });
   }
 
+  public async countPlaying(): Promise<number> {
+    return this.ormRepository.count({
+      where: {
+        isOnline: true,
+        presenceStatus: PresenceStatus.PLAYING
+      }
+    });
+  }
+
+  public async markAllOnlineOffline(): Promise<void> {
+    await this.ormRepository.update(
+      { isOnline: true },
+      { isOnline: false, presenceStatus: PresenceStatus.OFFLINE }
+    );
+  }
+
+  public async updatePresenceBatch(changes: IUserPresenceChange[]): Promise<void> {
+    const offlineIds: string[] = [];
+    const onlineIds: string[] = [];
+    const playingIds: string[] = [];
+
+    for (const change of changes) {
+      if (!change.presence.online) offlineIds.push(change.userId);
+      else if (change.presence.playing) playingIds.push(change.userId);
+      else onlineIds.push(change.userId);
+    }
+
+    const updates: Promise<unknown>[] = [];
+    if (offlineIds.length > 0) {
+      updates.push(this.ormRepository.update(
+        { id: In(offlineIds), isOnline: true },
+        { isOnline: false, presenceStatus: PresenceStatus.OFFLINE }
+      ));
+    }
+    if (onlineIds.length > 0) {
+      updates.push(this.ormRepository.update(
+        { id: In(onlineIds) },
+        { isOnline: true, presenceStatus: PresenceStatus.ONLINE }
+      ));
+    }
+    if (playingIds.length > 0) {
+      updates.push(this.ormRepository.update(
+        { id: In(playingIds) },
+        { isOnline: true, presenceStatus: PresenceStatus.PLAYING }
+      ));
+    }
+    await Promise.all(updates);
+  }
+
   public async findActiveUsers(): Promise<User[]> {
     return this.ormRepository.find({
-      where: [
-        { presenceStatus: PresenceStatus.PLAYING },
-        { presenceStatus: PresenceStatus.ONLINE },
-        { isOnline: true }
-      ],
+      where: { isOnline: true },
       select: {
         id: true,
         username: true,
@@ -220,7 +266,9 @@ export class UserRepository {
     }
 
     if (filterPresence && filterPresence !== 'all') {
-      queryBuilder.andWhere('user.presenceStatus = :presenceStatus', { presenceStatus: filterPresence });
+      queryBuilder.andWhere('user.presenceStatus = :presenceStatus', {
+        presenceStatus: filterPresence.toLowerCase()
+      });
     }
 
     return paginateQueryBuilder(queryBuilder, {

@@ -56,13 +56,20 @@ export class AdminService {
   public async getMetrics() {
     const totalUsers = await this.userRepository.countTotal();
     const totalMatches = await this.matchRepository.countTotal();
-    const onlineUsers = await this.userRepository.countOnline();
+    const activeMatches = this.gameService.getActiveGameCountsByMode()
+      .reduce((total, { count }) => total + count, 0);
+    const [onlineUsers, playingUsers] = await Promise.all([
+      this.userRepository.countOnline(),
+      this.userRepository.countPlaying()
+    ]);
     const pendingReports = await this.reportRepository.countPending();
 
     return {
       totalUsers,
       totalMatches,
+      activeMatches,
       onlineUsers,
+      playingUsers,
       pendingReports
     };
   }
@@ -423,14 +430,15 @@ export class AdminService {
   }
 
   public async updateUserRole(targetUserId: string, newRole: UserRole): Promise<User> {
+    if (newRole !== UserRole.USER && newRole !== UserRole.ADMIN) {
+      throw new Error('Only user and admin roles can be assigned.');
+    }
+
     const targetUser = await this.userRepository.findById(targetUserId);
     if (!targetUser) {
       throw new Error('User not found.');
     }
 
-    if (newRole === UserRole.BANNED && (targetUser.role === UserRole.SUPERADMIN || targetUser.role === UserRole.ADMIN || targetUser.role === ('superadmin' as any))) {
-      throw new Error('Cannot ban admins or superadmins.');
-    }
     const oldRole = targetUser.role;
     targetUser.role = newRole;
     const savedUser = await this.userRepository.save(targetUser);
@@ -451,7 +459,7 @@ export class AdminService {
 
       try {
         const notifService = container.resolve(NotificationService);
-        const isPromoted = (newRole === UserRole.ADMIN || newRole === UserRole.SUPERADMIN);
+        const isPromoted = newRole === UserRole.ADMIN;
         const titleEn = isPromoted ? 'Role Promoted' : 'Role Updated';
         const titleEs = isPromoted ? 'Rol Promovido' : 'Rol Actualizado';
         const msgEn = isPromoted 
