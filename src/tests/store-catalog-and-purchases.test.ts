@@ -44,11 +44,21 @@ describe('Store catalog categories, inventory and purchases', () => {
     assert.equal(StoreItemCategory.PAWN_COLOR, 'PAWN_COLOR');
     const colorSeeds = DEFAULT_STORE_ITEMS.filter(item => item.category === StoreItemCategory.PAWN_COLOR);
     const skinSeeds = DEFAULT_STORE_ITEMS.filter(item => item.category === StoreItemCategory.PAWN_SKIN);
+    const commonItems = DEFAULT_STORE_ITEMS.filter(item => item.rarity === 'COMMON');
 
+    assert.ok(commonItems.length > 0);
+    assert.ok(commonItems.every(item => item.pricePoints === 100));
     assert.equal(colorSeeds.length, 11);
     assert.ok(skinSeeds.length > 0);
     assert.ok(colorSeeds.every(item => item.code.startsWith('PWN-')));
     assert.ok(skinSeeds.every(item => item.code.startsWith('SKN-')));
+    assert.ok(colorSeeds.every(item => {
+      const config = item.configuration as { es: { name: string }; en: { name: string } };
+      return !/^Color\s/i.test(config.es.name)
+        && !/\p{Extended_Pictographic}/u.test(config.es.name)
+        && !/\bColor$/i.test(config.en.name)
+        && !/\p{Extended_Pictographic}/u.test(config.en.name);
+    }));
 
     const response = await makeRequest(app, 'GET', '/api/store/items');
     assert.equal(response.status, 200);

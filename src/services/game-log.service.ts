@@ -202,17 +202,19 @@ export class GameLogService {
           }
         }
 
-        const badgeEvents: IBadgeEvent[] = abandoned ? [] : [{ event: 'match_played' }];
+        const badgeEvents: IBadgeEvent[] = abandoned || hasBot ? [] : [{ event: 'match_played' }];
         if (isWin) {
-          badgeEvents.push({ event: 'match_win' });
+          if (hasBot) badgeEvents.push({ event: 'bot_win' });
+          else badgeEvents.push({ event: 'match_win' });
           const modeWinEvents: Record<string, BadgeEvent> = {
             '1v1': 'win_1v1',
             '2v2': 'win_2v2',
             '4-FFA': 'win_4ffa',
             '6-FFA': 'win_6ffa'
           };
-          if (modeWinEvents[mode]) badgeEvents.push({ event: modeWinEvents[mode] });
-          if (hasBot) badgeEvents.push({ event: 'bot_win' });
+          if (modeWinEvents[mode] && (!hasBot || mode !== '1v1')) {
+            badgeEvents.push({ event: modeWinEvents[mode] });
+          }
         }
         badgeEventsByPlayer.set(user.id, badgeEvents);
 
@@ -349,7 +351,7 @@ export class GameLogService {
           }
         }
 
-        if (events.some(activity => activity.event === 'match_win') && maxStreakBadge) {
+        if (events.some(activity => activity.event === 'match_win' || activity.event === 'bot_win') && maxStreakBadge) {
           const recentMatches = await historyRepository.find({
             where: { userId },
             order: { createdAt: 'DESC' },

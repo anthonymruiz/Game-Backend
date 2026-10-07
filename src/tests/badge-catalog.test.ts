@@ -44,24 +44,41 @@ describe('Default badge catalog', () => {
   });
 
   it('uses the requested level, match, and portal milestones without duplicate portal tiers', () => {
+    const targetsFor = (event: string) => badges
+      .filter(badge => badge.event === event)
+      .map(badge => badge.target)
+      .sort((a, b) => a - b);
     assert.deepEqual(
       badges.filter(badge => badge.category === 'LEVELS')
         .map(badge => badge.target)
         .sort((a, b) => a - b),
       [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     );
-    assert.deepEqual(
-      badges.filter(badge => badge.event === 'match_played')
-        .map(badge => badge.target)
-        .sort((a, b) => a - b),
-      [10, 25, 50, 100, 150, 250]
-    );
-    assert.deepEqual(
-      badges.filter(badge => badge.event === 'portal_used')
-        .map(badge => badge.target)
-        .sort((a, b) => a - b),
-      [1, 5, 15, 30, 50]
-    );
+    assert.deepEqual(targetsFor('bot_win'), [1, 5, 15, 30, 50]);
+    assert.deepEqual(targetsFor('match_win'), [1, 20, 75, 150, 250]);
+    assert.deepEqual(targetsFor('match_played'), [10, 30, 75, 150, 250, 500]);
+    assert.deepEqual(targetsFor('win_1v1'), [1, 10, 50, 150, 250]);
+    assert.deepEqual(targetsFor('win_2v2'), [1, 10, 50, 100]);
+    assert.deepEqual(targetsFor('win_4ffa'), [1, 10, 50, 100, 150, 200]);
+    assert.deepEqual(targetsFor('win_6ffa'), [1, 10, 50, 100]);
+    assert.deepEqual(targetsFor('win_streak'), [2, 3, 5, 8, 12]);
+    assert.deepEqual(targetsFor('wall_placed'), [1, 10, 50, 100, 200, 500, 1000, 1500, 2000]);
+    assert.deepEqual(targetsFor('move_completed'), [500, 5000]);
+    assert.deepEqual(targetsFor('win_without_walls'), [1]);
+    assert.deepEqual(targetsFor('boost_wall'), [1, 10, 30, 50, 75, 100]);
+    assert.deepEqual(targetsFor('boost_killer'), [1, 50, 200]);
+    assert.deepEqual(targetsFor('boost_exchange'), [1, 20, 100]);
+    assert.deepEqual(targetsFor('portal_used'), [1, 20, 50, 100, 200]);
+    assert.deepEqual(targetsFor('friend_added'), [1, 10, 30]);
+    assert.deepEqual(targetsFor('friend_match'), [1, 50]);
+    assert.deepEqual(targetsFor('spectate'), [1, 20]);
+    assert.deepEqual(targetsFor('spectated'), [1, 10]);
+    assert.deepEqual(targetsFor('emote_sent'), [1, 100, 500, 1000]);
+    assert.deepEqual(targetsFor('weekly_first_place'), [1]);
+    assert.deepEqual(targetsFor('weekly_second_place'), [1]);
+    assert.deepEqual(targetsFor('weekly_third_place'), [1]);
+    assert.deepEqual(targetsFor('store_purchase'), [1, 25, 60]);
+    assert.deepEqual(targetsFor('point_purchase'), [1, 5]);
     assert.ok(!badges.some(badge => [
       'challenge_portal_used_3',
       'challenge_portal_used_10',
@@ -92,8 +109,9 @@ describe('Default badge catalog', () => {
       badges.filter(badge => badge.category === 'BOT').map(badge => [badge.code, badge.locales.es.name])
     );
     assert.equal(botBadges.get('bot_win'), 'Primer bot derrotado');
-    assert.equal(botBadges.get('challenge_bot_win_3'), 'Cazador de bots');
-    assert.equal(botBadges.get('challenge_bot_win_5'), 'Asesino de bots');
-    assert.equal(botBadges.get('challenge_bot_win_10'), 'Aniquilador de bots');
+    assert.equal(botBadges.get('challenge_bot_win_5'), 'Cazador de bots');
+    assert.equal(botBadges.get('challenge_bot_win_15'), 'Asesino de bots');
+    assert.equal(botBadges.get('challenge_bot_win_30'), 'Aniquilador de bots');
+    assert.equal(botBadges.get('challenge_bot_win_50'), 'Némesis de la IA');
   });
 });

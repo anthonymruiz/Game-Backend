@@ -71,7 +71,7 @@ const LEGACY_RULES: Record<string, { category: BadgeCategory; event: BadgeEvent 
 
 const EXTRA_GROUPS: IExtraBadgeGroup[] = [
   {
-    category: 'BOT', event: 'bot_win', icon: '🤖', targets: [3, 5, 10, 25],
+    category: 'BOT', event: 'bot_win', icon: '🤖', targets: [5, 15, 30, 50],
     titles: [
       { es: 'Cazador de bots', en: 'Bot Hunter' },
       { es: 'Asesino de bots', en: 'Bot Slayer' },
@@ -80,7 +80,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MODE_1V1', event: 'win_1v1', icon: '⚔️', targets: [1, 3, 5, 25],
+    category: 'MODE_1V1', event: 'win_1v1', icon: '⚔️', targets: [1, 50, 150, 250],
     titles: [
       { es: 'Primer duelo', en: 'First Duel' },
       { es: 'Espadachín', en: 'Swordsman' },
@@ -89,7 +89,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MODE_2V2', event: 'win_2v2', icon: '🤝', targets: [1, 3, 5, 25],
+    category: 'MODE_2V2', event: 'win_2v2', icon: '🤝', targets: [1, 10, 50, 100],
     titles: [
       { es: 'Dúo victorioso', en: 'Victorious Duo' },
       { es: 'Socios de batalla', en: 'Battle Partners' },
@@ -98,7 +98,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MODE_4FFA', event: 'win_4ffa', icon: '👑', targets: [3, 10, 25, 50],
+    category: 'MODE_4FFA', event: 'win_4ffa', icon: '👑', targets: [10, 50, 150, 200],
     titles: [
       { es: 'Dueño de la arena', en: 'Arena Owner' },
       { es: 'Monarca del caos', en: 'Monarch of Chaos' },
@@ -107,7 +107,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MODE_6FFA', event: 'win_6ffa', icon: '🏟️', targets: [1, 3, 10, 25],
+    category: 'MODE_6FFA', event: 'win_6ffa', icon: '🏟️', targets: [1, 10, 50, 100],
     titles: [
       { es: 'Superviviente del coliseo', en: 'Colosseum Survivor' },
       { es: 'Gladiador imparable', en: 'Unstoppable Gladiator' },
@@ -116,7 +116,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MATCHES', event: 'match_win', icon: '🏆', targets: [3, 10, 25, 100],
+    category: 'MATCHES', event: 'match_win', icon: '🏆', targets: [20, 75, 150, 250],
     titles: [
       { es: 'Aspirante a campeón', en: 'Champion Contender' },
       { es: 'Coleccionista de victorias', en: 'Victory Collector' },
@@ -125,7 +125,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'WALLS', event: 'wall_placed', icon: '🧱', targets: [5, 50, 150, 500],
+    category: 'WALLS', event: 'wall_placed', icon: '🧱', targets: [50, 200, 1000, 1500],
     titles: [
       { es: 'Primer arquitecto', en: 'Junior Architect' },
       { es: 'Maestro constructor', en: 'Master Builder' },
@@ -134,7 +134,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'BOOST_WALL', event: 'boost_wall', icon: '🧰', targets: [5, 15, 50],
+    category: 'BOOST_WALL', event: 'boost_wall', icon: '🧰', targets: [50, 75, 100],
     titles: [
       { es: 'Muro reforzado', en: 'Reinforced Wall' },
       { es: 'Proveedor de defensas', en: 'Defense Provider' },
@@ -142,7 +142,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'BOOST_KILLER', event: 'boost_killer', icon: '🎯', targets: [1, 5, 20],
+    category: 'BOOST_KILLER', event: 'boost_killer', icon: '🎯', targets: [1, 50, 200],
     titles: [
       { es: 'Primer impacto', en: 'First Strike' },
       { es: 'Tirador certero', en: 'Sharpshooter' },
@@ -150,7 +150,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'BOOST_EXCHANGE', event: 'boost_exchange', icon: '🔄', targets: [1, 5, 20],
+    category: 'BOOST_EXCHANGE', event: 'boost_exchange', icon: '🔄', targets: [1, 20, 100],
     titles: [
       { es: 'Giro inesperado', en: 'Unexpected Turn' },
       { es: 'Maestro del intercambio', en: 'Exchange Master' },
@@ -158,7 +158,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MATCHES', event: 'match_played', icon: '🎮', targets: [10, 50, 150],
+    category: 'MATCHES', event: 'match_played', icon: '🎮', targets: [10, 150, 500],
     titles: [
       { es: 'Aficionado al tablero', en: 'Board Enthusiast' },
       { es: 'Habitual de la arena', en: 'Arena Regular' },
@@ -166,7 +166,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'STORE_PURCHASES', event: 'store_purchase', icon: '🛍️', targets: [1, 5, 20],
+    category: 'STORE_PURCHASES', event: 'store_purchase', icon: '🛍️', targets: [1, 25, 60],
     titles: [
       { es: 'Primera adquisición', en: 'First Acquisition' },
       { es: 'Colección en marcha', en: 'Collection in Progress' },
@@ -199,7 +199,7 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'FRIEND_MATCHES', event: 'friend_match', icon: '🧑‍🤝‍🧑', targets: [1, 5],
+    category: 'FRIEND_MATCHES', event: 'friend_match', icon: '🧑‍🤝‍🧑', targets: [1, 50],
     titles: [
       { es: 'Primera partida en equipo', en: 'First Game Together' },
       { es: 'Amistad inquebrantable', en: 'Unbreakable Friendship' }
@@ -262,9 +262,9 @@ const LEGACY_TITLES: Record<string, { es: string; en: string }> = {
 
 const EVENT_COPY: Record<BadgeEvent, { es: string; en: string; nameEs: string; nameEn: string }> = {
   bot_win: { es: 'Gana {target} partida(s) en Juega con IA.', en: 'Win {target} match(es) in Play vs AI.', nameEs: 'Cazador de IA', nameEn: 'AI Hunter' },
-  match_played: { es: 'Completa {target} partida(s).', en: 'Complete {target} match(es).', nameEs: 'Veterano', nameEn: 'Veteran' },
-  match_win: { es: 'Gana {target} partida(s).', en: 'Win {target} match(es).', nameEs: 'Campeón', nameEn: 'Champion' },
-  win_1v1: { es: 'Gana {target} partida(s) en modo 1 vs 1.', en: 'Win {target} 1 vs 1 match(es).', nameEs: 'Duelista', nameEn: 'Duelist' },
+  match_played: { es: 'Completa {target} partida(s) que no sean contra la IA.', en: 'Complete {target} matches against human opponents.', nameEs: 'Veterano', nameEn: 'Veteran' },
+  match_win: { es: 'Gana {target} partida(s) que no sean contra la IA.', en: 'Win {target} matches against human opponents.', nameEs: 'Campeón', nameEn: 'Champion' },
+  win_1v1: { es: 'Gana {target} partida(s) 1 vs 1 que no sean contra la IA.', en: 'Win {target} 1 vs 1 matches against human opponents.', nameEs: 'Duelista', nameEn: 'Duelist' },
   win_2v2: { es: 'Gana {target} partida(s) en modo 2 vs 2.', en: 'Win {target} 2 vs 2 match(es).', nameEs: 'Aliado', nameEn: 'Teammate' },
   win_4ffa: { es: 'Gana {target} partida(s) en modo 4-FFA.', en: 'Win {target} 4-FFA match(es).', nameEs: 'Rey de la arena', nameEn: 'Arena champion' },
   win_6ffa: { es: 'Gana {target} partida(s) en modo 6-FFA.', en: 'Win {target} 6-FFA match(es).', nameEs: 'Leyenda de la arena', nameEn: 'Arena legend' },
@@ -410,7 +410,9 @@ export async function seedBadges(): Promise<void> {
       await badges.save(retired);
     });
   }
-  const existing = await repository.find({ select: { id: true, code: true, locales: true } });
+  const existing = await repository.find({
+    select: { id: true, code: true, category: true, event: true, target: true, icon: true, locales: true }
+  });
   const existingByCode = new Map(existing.map(badge => [badge.code, badge]));
   const missing = defaults
     .filter(badge => !existingByCode.has(badge.code))
@@ -488,14 +490,35 @@ export async function seedBadges(): Promise<void> {
       const definition = defaultByCode.get(badge.code);
       if (!definition) return null;
       const locales: BadgeLocales = {
-        es: { ...badge.locales.es, name: definition.locales.es.name },
-        en: { ...badge.locales.en, name: definition.locales.en.name }
+        es: {
+          ...badge.locales.es,
+          name: definition.locales.es.name,
+          description: definition.locales.es.description
+        },
+        en: {
+          ...badge.locales.en,
+          name: definition.locales.en.name,
+          description: definition.locales.en.description
+        }
       };
       if (
+        badge.category === definition.category &&
+        badge.event === definition.event &&
+        badge.target === definition.target &&
+        badge.icon === definition.icon &&
         locales.es.name === badge.locales.es.name &&
-        locales.en.name === badge.locales.en.name
+        locales.en.name === badge.locales.en.name &&
+        locales.es.description === badge.locales.es.description &&
+        locales.en.description === badge.locales.en.description
       ) return null;
-      return repository.create({ id: badge.id, locales });
+      return repository.create({
+        id: badge.id,
+        category: definition.category,
+        event: definition.event,
+        target: definition.target,
+        icon: definition.icon,
+        locales
+      });
     })
     .filter((badge): badge is Badge => badge !== null);
   if (staleSeededBadges.length) await repository.save(staleSeededBadges);

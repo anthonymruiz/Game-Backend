@@ -162,6 +162,23 @@ describe('Badge administration and player progress', () => {
     assert.equal(refreshedBadge.isActive, false);
   });
 
+  it('refreshes seeded targets and descriptions from the catalog', async () => {
+    const repository = AppDataSource.getRepository(Badge);
+    const seededBadge = await repository.findOneByOrFail({ code: 'challenge_match_win_20' });
+    seededBadge.target = 999;
+    seededBadge.locales.es.description = 'Descripción obsoleta.';
+    await repository.save(seededBadge);
+
+    await seedBadges();
+
+    const refreshedBadge = await repository.findOneByOrFail({ code: 'challenge_match_win_20' });
+    assert.equal(refreshedBadge.target, 20);
+    assert.equal(
+      refreshedBadge.locales.es.description,
+      'Gana 20 partida(s) que no sean contra la IA.'
+    );
+  });
+
   it('validates badge rules and persists unique progress and unlock notifications', async () => {
     const locales = {
       es: { name: 'Partidas iniciales', motto: 'Cada partida cuenta.', description: 'Completa dos partidas.' },
@@ -418,10 +435,12 @@ describe('Badge administration and player progress', () => {
     ], '1v1');
     const botMatchBadges = await AppDataSource.getRepository(UserBadge).findBy({ userId: botMatchUserId });
     for (const badge of botBadges) {
-      assert.ok(
-        botMatchBadges.find(userBadge => userBadge.badgeId === badge.id)?.unlockedAt,
-        `Winning against a bot should emit ${badge.event} for ${badge.code}`
-      );
+      const unlocked = botMatchBadges.find(userBadge => userBadge.badgeId === badge.id)?.unlockedAt;
+      if (badge.event === 'bot_win') {
+        assert.ok(unlocked, `Winning against a bot should emit bot_win for ${badge.code}`);
+      } else {
+        assert.equal(unlocked, null, `A bot match must not count toward ${badge.event} (${badge.code})`);
+      }
     }
   });
 

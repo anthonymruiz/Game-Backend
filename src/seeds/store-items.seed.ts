@@ -9,11 +9,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Rosa 💖",
+        "name": "Rosa",
         "description": "Color exclusivo Rosa Neón vibrante para personalizar tu ficha en el tablero."
       },
       "en": {
-        "name": "Pink Color 💖",
+        "name": "Pink",
         "description": "Vibrant Neon Pink color to customize your pawn on the board."
       }
     },
@@ -29,11 +29,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Cyan 🩵",
+        "name": "Cyan",
         "description": "Color exclusivo Cyan Fotónico brillante para resaltar tu posición en la arena."
       },
       "en": {
-        "name": "Cyan Color 🩵",
+        "name": "Cyan",
         "description": "Bright Photonic Cyan color to make your position stand out in the arena."
       }
     },
@@ -49,11 +49,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Dorado",
+        "name": "Dorado",
         "description": "Aspecto exclusivo esculpido en Oro Puro de 24k con brillo dorado reactivo."
       },
       "en": {
-        "name": "Gold Color",
+        "name": "Gold",
         "description": "Exclusive 24k pure gold finish with a reactive golden glow."
       }
     },
@@ -69,11 +69,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Plata",
+        "name": "Plata",
         "description": "Aspecto exclusivo en Plata Pulida con destellos metálicos plateados."
       },
       "en": {
-        "name": "Silver Color",
+        "name": "Silver",
         "description": "Exclusive polished silver finish with metallic glints."
       }
     },
@@ -89,11 +89,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Bronce",
+        "name": "Bronce",
         "description": "Aspecto exclusivo en Bronce Antiguo de alta resistencia táctica."
       },
       "en": {
-        "name": "Bronze Color",
+        "name": "Bronze",
         "description": "Exclusive ancient bronze finish with tactical durability."
       }
     },
@@ -109,11 +109,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Rubí",
+        "name": "Rubí",
         "description": "Color exclusivo Carmesí Rubí brillante con luz neón pulsante."
       },
       "en": {
-        "name": "Ruby Color",
+        "name": "Ruby",
         "description": "Bright ruby crimson color with a pulsing neon glow."
       }
     },
@@ -129,11 +129,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Zafiro",
+        "name": "Zafiro",
         "description": "Color exclusivo Azul Zafiro Profundo con halo estelar nocturno."
       },
       "en": {
-        "name": "Sapphire Color",
+        "name": "Sapphire",
         "description": "Deep sapphire blue color with a nocturnal stellar halo."
       }
     },
@@ -149,11 +149,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Esmeralda",
+        "name": "Esmeralda",
         "description": "Color exclusivo Verde Esmeralda neón con trazo de movimiento de energía."
       },
       "en": {
-        "name": "Emerald Color",
+        "name": "Emerald",
         "description": "Neon emerald green color with an energetic movement trail."
       }
     },
@@ -169,12 +169,12 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Obsidiana",
-        "description": "Aspecto exclusivo en Obsidiana Negra mate con aura sombría."
+        "name": "Negro",
+        "description": "Color negro mate con un aura sombría."
       },
       "en": {
-        "name": "Obsidian Color",
-        "description": "Matte black obsidian finish with a dark aura."
+        "name": "Black",
+        "description": "Matte black color with a dark aura."
       }
     },
     "sortOrder": 8
@@ -189,11 +189,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Madera",
+        "name": "Madera",
         "description": "Aspecto exclusivo de textura y vetas de Madera de Roble tallada a mano."
       },
       "en": {
-        "name": "Wood Color",
+        "name": "Wood",
         "description": "Exclusive hand-carved oak wood texture and grain."
       }
     },
@@ -209,11 +209,11 @@ export const DEFAULT_STORE_ITEMS = [
     "allowColor": false,
     "configuration": {
       "es": {
-        "name": "Color Blanco",
+        "name": "Blanco",
         "description": "Color Blanco Marfil puro para personalizar tu ficha en el tablero."
       },
       "en": {
-        "name": "White Color",
+        "name": "White",
         "description": "Pure ivory white color to customize your pawn on the board."
       }
     },
@@ -243,7 +243,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-510",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "♥︎",
     "allowColor": true,
@@ -263,7 +263,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-513",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "★︎",
     "allowColor": true,
@@ -283,7 +283,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-516",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "⚓︎",
     "allowColor": true,
@@ -483,7 +483,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-304",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🔥",
     "allowColor": false,
@@ -543,7 +543,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-304",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🥳",
     "allowColor": false,
@@ -563,7 +563,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-305",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "😢",
     "allowColor": false,
@@ -643,7 +643,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-309",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🤡",
     "allowColor": false,
@@ -683,7 +683,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-315",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🤔",
     "allowColor": false,
@@ -703,7 +703,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-316",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "😉",
     "allowColor": false,
@@ -723,7 +723,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-318",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "👀",
     "allowColor": false,
@@ -743,7 +743,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EMT-319",
     "category": "EXCLUSIVE_EMOTES",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🫡",
     "allowColor": false,
@@ -843,7 +843,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-503",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "👻",
     "allowColor": false,
@@ -923,7 +923,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "SKN-508",
     "category": "PAWN_SKIN",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🤡",
     "allowColor": false,
@@ -1003,7 +1003,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "EFX-104",
     "category": "WALL_EFFECT",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "✨",
     "allowColor": false,
@@ -1063,7 +1063,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "TRL-204",
     "category": "MOVEMENT_TRAIL",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "🍃",
     "allowColor": false,
@@ -1183,7 +1183,7 @@ export const DEFAULT_STORE_ITEMS = [
     "code": "TRL-210",
     "category": "MOVEMENT_TRAIL",
     "rarity": "COMMON",
-    "pricePoints": 200,
+    "pricePoints": 100,
     "status": "AVAILABLE",
     "icon": "💎",
     "allowColor": false,
