@@ -33,8 +33,8 @@ export class InfectionBoard extends MazeBoard {
     return x >= minX && x <= maxX && y >= minY && y <= maxY;
   }
 
-  public override canPlaceTrap(x: number, y: number): boolean {
-    return super.canPlaceTrap(x, y) &&
+  public override canPlaceTrap(x: number, y: number, allowPlayerId?: string): boolean {
+    return super.canPlaceTrap(x, y, allowPlayerId) &&
       !this.ghostPickups.some(pickup => pickup.x === x && pickup.y === y) &&
       !this.invisiblePickups.some(pickup => pickup.x === x && pickup.y === y) &&
       this.getAvailablePowerupCells().length > 9;

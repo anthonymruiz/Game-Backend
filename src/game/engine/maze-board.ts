@@ -82,10 +82,6 @@ export class MazeBoard extends Board {
       );
     }
 
-    const blockedPassages = new Set<number>();
-    for (const wall of this.walls) {
-      for (const passage of this.getWallPassages(wall)) blockedPassages.add(passage.key);
-    }
     for (const wall of candidates) {
       if (this.walls.length >= targetWallCount) break;
       if (!super.canPlaceWall(wall)) continue;
@@ -95,13 +91,11 @@ export class MazeBoard extends Board {
       )) continue;
 
       this.walls.push(wall);
-      passages.forEach(passage => blockedPassages.add(passage.key));
       const enclosesFreePlayer = [...this.players.values()].some(player =>
         !player.isInPrison && this.isMazePlayerEnclosed(player.id)
       );
-      if (!this.isBoardConnected(blockedPassages) || enclosesFreePlayer) {
+      if (!this.isBoardConnected() || enclosesFreePlayer) {
         this.walls.pop();
-        passages.forEach(passage => blockedPassages.delete(passage.key));
       }
     }
   }
@@ -358,11 +352,11 @@ export class MazeBoard extends Board {
     return true;
   }
 
-  public canPlaceTrap(x: number, y: number): boolean {
+  public canPlaceTrap(x: number, y: number, allowPlayerId?: string): boolean {
     return Number.isInteger(x) && Number.isInteger(y) &&
       this.isInsideBoard(x, y) &&
       !this.isSafeZoneCell(x, y) &&
-      !this.grid[y][x].hasPlayer &&
+      (!this.grid[y][x].hasPlayer || this.grid[y][x].hasPlayer === allowPlayerId) &&
       !this.keys.some(key => key.x === x && key.y === y) &&
       !this.exits.some(exit => exit.x === x && exit.y === y) &&
       !this.teleports.some(teleport => teleport.x === x && teleport.y === y) &&
@@ -370,8 +364,8 @@ export class MazeBoard extends Board {
       !this.traps.some(trap => trap.x === x && trap.y === y);
   }
 
-  public placeTrap(trap: IMazeTrap): boolean {
-    if (!this.canPlaceTrap(trap.x, trap.y)) return false;
+  public placeTrap(trap: IMazeTrap, allowPlayerId?: string): boolean {
+    if (!this.canPlaceTrap(trap.x, trap.y, allowPlayerId)) return false;
     this.traps.push({ ...trap });
     return true;
   }
@@ -967,7 +961,7 @@ export class MazeBoard extends Board {
     return isInsideRoom(passage.x1, passage.y1) && isInsideRoom(passage.x2, passage.y2);
   }
 
-  private isBoardConnected(blockedPassages: Set<number>): boolean {
+  private isBoardConnected(): boolean {
     const totalCells = this.size * this.size;
     const excludedCells = new Uint8Array(totalCells);
     for (const player of this.players.values()) {
@@ -987,10 +981,10 @@ export class MazeBoard extends Board {
       const currentIndex = queue[readIndex++];
       const x = currentIndex % this.size;
       const y = Math.floor(currentIndex / this.size);
-      if (y > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - this.size, totalCells, blockedPassages, excludedCells, visited, queue, writeIndex);
-      if (y < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + this.size, totalCells, blockedPassages, excludedCells, visited, queue, writeIndex);
-      if (x > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - 1, totalCells, blockedPassages, excludedCells, visited, queue, writeIndex);
-      if (x < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + 1, totalCells, blockedPassages, excludedCells, visited, queue, writeIndex);
+      if (y > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - this.size, excludedCells, visited, queue, writeIndex);
+      if (y < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + this.size, excludedCells, visited, queue, writeIndex);
+      if (x > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - 1, excludedCells, visited, queue, writeIndex);
+      if (x < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + 1, excludedCells, visited, queue, writeIndex);
     }
     for (let index = 0; index < totalCells; index++) {
       if (!excludedCells[index] && !visited[index]) return false;
@@ -1001,16 +995,17 @@ export class MazeBoard extends Board {
   private enqueueMazeCell(
     currentIndex: number,
     nextIndex: number,
-    totalCells: number,
-    blockedPassages: Set<number>,
     excludedCells: Uint8Array,
     visited: Uint8Array,
     queue: Int32Array,
     writeIndex: number
   ): number {
     if (visited[nextIndex] || excludedCells[nextIndex]) return writeIndex;
-    const passageKey = Math.min(currentIndex, nextIndex) * totalCells + Math.max(currentIndex, nextIndex);
-    if (blockedPassages.has(passageKey)) return writeIndex;
+    const currentX = currentIndex % this.size;
+    const currentY = Math.floor(currentIndex / this.size);
+    const nextX = nextIndex % this.size;
+    const nextY = Math.floor(nextIndex / this.size);
+    if (this.isWallBlocking(currentX, currentY, nextX, nextY)) return writeIndex;
     visited[nextIndex] = 1;
     queue[writeIndex++] = nextIndex;
     return writeIndex;

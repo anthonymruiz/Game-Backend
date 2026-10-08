@@ -29,7 +29,8 @@ export class GameService {
     roomPlayers: IRoomPlayer[],
     isPrivate: boolean = false,
     roomName?: string,
-    isRanked: boolean = false
+    isRanked: boolean = false,
+    startImmediately: boolean = true
   ) {
     const humanPlayerCount = roomPlayers.filter(player => !player.id.startsWith('bot_')).length;
     if (mode === 'labyrinth' && humanPlayerCount < LABYRINTH_MIN_HUMAN_PLAYERS) {
@@ -105,13 +106,31 @@ export class GameService {
       void this.mazeAuditService.recordState(matchId, 'game_created', game.getMazeAuditSnapshot())
         .catch(error => console.error(`Failed to save initial Maze audit state for ${matchId}:`, error));
     }
+    if (startImmediately) await this.startGame(matchId);
+  }
+
+  public async startGame(matchId: string): Promise<void> {
+    const game = this.activeGames.get(matchId);
+    if (!game) throw new Error(`Game ${matchId} has not been prepared.`);
+    if (game.state === 'playing') return;
+    if (game.state !== 'waiting') throw new Error(`Game ${matchId} cannot be started from ${game.state}.`);
+
     try {
       game.start();
     } catch (error) {
       this.activeGames.delete(matchId);
-      if (mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
+      game.destroy();
+      if (game.mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
       throw error;
     }
+  }
+
+  public async discardPreparedGame(matchId: string): Promise<void> {
+    const game = this.activeGames.get(matchId);
+    if (!game || game.state !== 'waiting') return;
+    this.activeGames.delete(matchId);
+    game.destroy();
+    if (game.mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
   }
 
   private async handleGameFinished(

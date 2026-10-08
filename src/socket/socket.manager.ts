@@ -640,26 +640,42 @@ export class SocketManager {
           }
           if (room.status === RoomStatus.PLAYING) return;
 
-          // Broadcast 3-second countdown to all players in room
+          const countdownDurationMs = 3_000;
+          const countdownEndsAt = Date.now() + countdownDurationMs;
+          const startingPlayerIds = room.players.map(player => player.id);
+          room.status = RoomStatus.PLAYING;
+          this.lastMatchPlayers.set(room.id, [...room.players]);
           matchmakingNs.to(room.id).emit('gameStartingCountdown', { matchId: room.id, countdownSeconds: 3 });
-
-          setTimeout(async () => {
-            room.status = RoomStatus.PLAYING;
-            this.lastMatchPlayers.set(room.id, [...room.players]);
+          void this.broadcastPublicRooms();
+          void (async () => {
             try {
-              await this.gameService.createGame(room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked);
+              await this.gameService.createGame(
+                room.id, room.mode, room.players, room.isPrivate, room.name, room.isRanked, false
+              );
+              await new Promise(resolve => setTimeout(resolve, Math.max(0, countdownEndsAt - Date.now())));
+              const currentRoom = this.roomService.getRoom(room.id);
+              const currentPlayerIds = currentRoom?.players.map(player => player.id) ?? [];
+              if (currentRoom !== room ||
+                  currentPlayerIds.length !== startingPlayerIds.length ||
+                  startingPlayerIds.some((playerId, index) => currentPlayerIds[index] !== playerId)) {
+                await this.gameService.discardPreparedGame(room.id);
+                throw new Error('The room changed while its game was starting.');
+              }
+              await this.gameService.startGame(room.id);
               matchmakingNs.to(room.id).emit('gameStarting', { matchId: room.id, mode: room.mode });
               void this.broadcastPublicRooms();
             } catch (error) {
               console.error(`Failed to create game for room ${room.id}:`, error);
+              await this.gameService.discardPreparedGame(room.id);
               room.status = RoomStatus.WAITING;
               this.lastMatchPlayers.delete(room.id);
               matchmakingNs.to(room.id).emit('gameStartFailed', {
                 message: 'No se pudo iniciar la partida. Inténtalo de nuevo.'
               });
               matchmakingNs.to(room.id).emit('roomUpdated', room);
+              void this.broadcastPublicRooms();
             }
-          }, 3000);
+          })();
         } catch (err: any) {
           socket.emit('error', err.message);
         }

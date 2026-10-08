@@ -215,6 +215,35 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     await container.resolve(MazeAuditService).releaseMatch(matchId);
   });
 
+  it('GameService prepares matches before the countdown and starts them on request', async () => {
+    const emittedEvents: string[] = [];
+    const io = {
+      of: () => ({
+        to: () => ({
+          emit: (event: string) => emittedEvents.push(event)
+        })
+      })
+    };
+    const gameService = container.resolve(GameService);
+    gameService.setSocketServer(io as any);
+    const matchId = `prepared-match-${randNum}`;
+
+    await gameService.createGame(matchId, '1v1', [
+      { id: `prepared-player-1-${randNum}`, username: 'Prepared Player 1', isGuest: false, color: '#FF3B30' },
+      { id: `prepared-player-2-${randNum}`, username: 'Prepared Player 2', isGuest: false, color: '#007AFF' }
+    ], false, undefined, false, false);
+
+    const game = gameService.getGame(matchId);
+    assert.ok(game);
+    assert.equal(game.state, 'waiting');
+    assert.equal(emittedEvents.length, 0);
+
+    await gameService.startGame(matchId);
+    assert.equal(game.state, 'playing');
+    assert.ok(emittedEvents.includes('gameStarted'));
+    game.destroy();
+  });
+
   it('GameService accepts 1 human player in Labyrinth mode and rejects 0 human players', async () => {
     const gameService = container.resolve(GameService);
     await assert.rejects(

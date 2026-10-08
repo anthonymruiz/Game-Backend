@@ -9,6 +9,7 @@ import {
   LABYRINTH_TELEPORT_ANIMATION_MS,
   LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS
 } from '../game/engine/game-instance.js';
+import { InfectionBoard } from '../game/engine/infection-board.js';
 import { MazeBoard } from '../game/engine/maze-board.js';
 import { Player, Wall } from '../game/engine/models.js';
 import { MazeAuditService } from '../services/maze-audit.service.js';
@@ -445,6 +446,61 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     const dto = board.toDTO();
     assert.ok(dto.walls.every(wall => wall.ownerId === 'maze'));
     assert.ok(dto.walls.every(wall => 'isSabotageWall' in wall));
+  });
+
+  it('Should keep all four cardinal zones reachable from the Infection spawn', () => {
+    class InspectableInfectionBoard extends InfectionBoard {
+      public canReach(start: { x: number; y: number }, target: { x: number; y: number }): boolean {
+        const queue = [start];
+        const visited = new Set([`${start.x},${start.y}`]);
+        for (let index = 0; index < queue.length; index++) {
+          const current = queue[index];
+          if (current.x === target.x && current.y === target.y) return true;
+          for (const next of [
+            { x: current.x, y: current.y - 1 },
+            { x: current.x + 1, y: current.y },
+            { x: current.x, y: current.y + 1 },
+            { x: current.x - 1, y: current.y }
+          ]) {
+            const key = `${next.x},${next.y}`;
+            if (next.x < 0 || next.x >= this.size ||
+                next.y < 0 || next.y >= this.size ||
+                visited.has(key) || this.isWallBlocking(current.x, current.y, next.x, next.y)) continue;
+            visited.add(key);
+            queue.push(next);
+          }
+        }
+        return false;
+      }
+    }
+
+    for (let seed = 1; seed <= 8; seed++) {
+      const board = new InspectableInfectionBoard(20);
+      const infected = new Player(`infection_spawn_${seed}`, 'Infected', false, 0, 0);
+      board.addPlayer(infected);
+      const spawn = board.placePlayerAtSouthEdge(infected.id);
+      let randomState = seed;
+      const random = (): number => {
+        randomState = (randomState * 48271) % 2_147_483_647;
+        return randomState / 2_147_483_647;
+      };
+      board.generateRandomMazeWalls(undefined, random);
+
+      const middle = Math.floor(board.size / 2);
+      const cardinalZones = [
+        { x: middle, y: 0 },
+        { x: board.size - 1, y: middle },
+        { x: middle, y: board.size - 1 },
+        { x: 0, y: middle }
+      ];
+      for (const zone of cardinalZones) {
+        assert.equal(
+          board.canReach(spawn, zone),
+          true,
+          `seed ${seed} should keep the Infection spawn connected to (${zone.x}, ${zone.y})`
+        );
+      }
+    }
   });
 
   it('Should always generate four exits with two humans and four bots', () => {
