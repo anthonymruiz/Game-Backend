@@ -286,8 +286,7 @@ export class AdminService {
 
   private normalizeDashboardMode(mode: string): string {
     const normalized = mode.toLowerCase();
-    if (normalized === '4way') return '4-ffa';
-    if (normalized === '6way') return '6-ffa';
+    if (normalized === '4way' || normalized === '6way' || normalized === '4-ffa' || normalized === '6-ffa') return 'ffa';
     return normalized;
   }
 

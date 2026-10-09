@@ -22,6 +22,7 @@ export class MatchHistoryRepository {
           WHEN match.mode = 'vs_ai' OR (
             match.mode = '1v1' AND LOWER(COALESCE(match.opponentUsername, '')) LIKE 'bot%'
           ) THEN 'vs_ai'
+          WHEN match.mode = 'FFA' THEN 'FFA'
           ELSE match.mode
         END`,
         'mode'
@@ -98,11 +99,7 @@ export class MatchHistoryRepository {
       ]);
 
     if (modeFilter && modeFilter !== 'all') {
-      if (modeFilter === '4-FFA' || modeFilter === '4way') {
-        queryBuilder.andWhere('match.mode IN (:...modes)', { modes: ['4-FFA', '4way'] });
-      } else if (modeFilter === '6-FFA' || modeFilter === '6way') {
-        queryBuilder.andWhere('match.mode IN (:...modes)', { modes: ['6-FFA', '6way'] });
-      } else if (modeFilter === '1v1') {
+      if (modeFilter === '1v1') {
         queryBuilder.andWhere(
           '(match.mode = :mode OR match.mode IS NULL) AND LOWER(COALESCE(match.opponentUsername, \'\')) NOT LIKE :botPrefix',
           { mode: modeFilter, botPrefix: 'bot%' }

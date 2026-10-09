@@ -327,11 +327,11 @@ export async function seedMatchHistory(): Promise<void> {
         const mockMatches = [
           { mode: '1v1', result: 'win', opp: users[1].username, duration: 185 },
           { mode: '1v1', result: 'loss', opp: users[0].username, duration: 240 },
-          { mode: '4-FFA', result: 'win', opp: 'Arena Global 4P', duration: 420 },
+          { mode: 'FFA', result: 'win', opp: 'Arena FFA', duration: 420 },
           { mode: '2v2', result: 'win', opp: 'Equipo Rojo', duration: 310 },
           { mode: '1v1', result: 'win', opp: users[2]?.username || 'ShadowStriker', duration: 150 },
           { mode: 'vs_ai', result: 'win', opp: 'Bot Entrenador', duration: 95 },
-          { mode: '4-FFA', result: 'loss', opp: 'Arena Global 4P', duration: 380 },
+          { mode: 'FFA', result: 'loss', opp: 'Arena FFA', duration: 380 },
           { mode: '1v1', result: 'draw', opp: users[3]?.username || 'ApexLegend', duration: 300 }
         ];
 

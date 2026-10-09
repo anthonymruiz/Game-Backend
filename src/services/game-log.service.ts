@@ -209,8 +209,7 @@ export class GameLogService {
           const modeWinEvents: Record<string, BadgeEvent> = {
             '1v1': 'win_1v1',
             '2v2': 'win_2v2',
-            '4-FFA': 'win_4ffa',
-            '6-FFA': 'win_6ffa'
+            'FFA': 'win_ffa'
           };
           if (modeWinEvents[mode] && (!hasBot || mode !== '1v1')) {
             badgeEvents.push({ event: modeWinEvents[mode] });

@@ -29,9 +29,9 @@ const LEGACY_RULES: Record<string, { category: BadgeCategory; event: BadgeEvent 
   level_100: { category: 'LEVELS', event: 'level_reached' },
   first_win: { category: 'MATCHES', event: 'match_win' },
   bot_win: { category: 'BOT', event: 'bot_win' },
-  win_4p_mode: { category: 'MODE_4FFA', event: 'win_4ffa' },
+  win_4p_mode: { category: 'MODE_FFA', event: 'win_ffa' },
   win_1v1_10: { category: 'MODE_1V1', event: 'win_1v1' },
-  win_4p_5: { category: 'MODE_4FFA', event: 'win_4ffa' },
+  win_4p_5: { category: 'MODE_FFA', event: 'win_ffa' },
   streak_2: { category: 'STREAKS', event: 'win_streak' },
   streak_3: { category: 'STREAKS', event: 'win_streak' },
   streak_5: { category: 'STREAKS', event: 'win_streak' },
@@ -98,21 +98,12 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
-    category: 'MODE_4FFA', event: 'win_4ffa', icon: '👑', targets: [10, 50, 150, 200],
+    category: 'MODE_FFA', event: 'win_ffa', icon: '👑', targets: [5, 10, 50, 200],
     titles: [
       { es: 'Dueño de la arena', en: 'Arena Owner' },
       { es: 'Monarca del caos', en: 'Monarch of Chaos' },
-      { es: 'Conquistador del todos contra todos', en: 'Free-for-All Conqueror' },
-      { es: 'Soberano de la arena', en: 'Arena Sovereign' }
-    ]
-  },
-  {
-    category: 'MODE_6FFA', event: 'win_6ffa', icon: '🏟️', targets: [1, 10, 50, 100],
-    titles: [
-      { es: 'Superviviente del coliseo', en: 'Colosseum Survivor' },
-      { es: 'Gladiador imparable', en: 'Unstoppable Gladiator' },
-      { es: 'Dominador de seis', en: 'Six-Player Dominator' },
-      { es: 'Campeón del gran coliseo', en: 'Grand Colosseum Champion' }
+      { es: 'Conquistador de la arena', en: 'Arena Conqueror' },
+      { es: 'Emperador de la arena', en: 'Arena Emperor' }
     ]
   },
   {
@@ -293,8 +284,7 @@ const EVENT_COPY: Record<BadgeEvent, { es: string; en: string; nameEs: string; n
   match_win: { es: 'Gana {target} partida(s) que no sean contra la IA.', en: 'Win {target} matches against human opponents.', nameEs: 'Campeón', nameEn: 'Champion' },
   win_1v1: { es: 'Gana {target} partida(s) 1 vs 1 que no sean contra la IA.', en: 'Win {target} 1 vs 1 matches against human opponents.', nameEs: 'Duelista', nameEn: 'Duelist' },
   win_2v2: { es: 'Gana {target} partida(s) en modo 2 vs 2.', en: 'Win {target} 2 vs 2 match(es).', nameEs: 'Aliado', nameEn: 'Teammate' },
-  win_4ffa: { es: 'Gana {target} partida(s) en modo 4-FFA.', en: 'Win {target} 4-FFA match(es).', nameEs: 'Rey de la arena', nameEn: 'Arena champion' },
-  win_6ffa: { es: 'Gana {target} partida(s) en modo 6-FFA.', en: 'Win {target} 6-FFA match(es).', nameEs: 'Leyenda de la arena', nameEn: 'Arena legend' },
+  win_ffa: { es: 'Gana {target} partida(s) en modo Todos contra Todos (FFA).', en: 'Win {target} Free-for-All (FFA) match(es).', nameEs: 'Rey de la arena', nameEn: 'Arena champion' },
   win_streak: { es: 'Consigue una racha de {target} victorias.', en: 'Reach a streak of {target} wins.', nameEs: 'Racha de fuego', nameEn: 'Winning streak' },
   wall_placed: { es: 'Coloca {target} muro(s) en partidas.', en: 'Place {target} wall(s) in matches.', nameEs: 'Arquitecto', nameEn: 'Builder' },
   boost_wall: { es: 'Recoge {target} recarga(s) de muro.', en: 'Collect {target} wall refill(s).', nameEs: 'Refuerzo', nameEn: 'Reinforcement' },
@@ -370,8 +360,8 @@ export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'eve
   }));
 
   const allBadges = [...legacy, ...extra];
-  if (allBadges.length !== 109) {
-    throw new Error(`Expected exactly 109 default badges, got ${allBadges.length}`);
+  if (allBadges.length !== 105) {
+    throw new Error(`Expected exactly 105 default badges, got ${allBadges.length}`);
   }
   return allBadges;
 }
