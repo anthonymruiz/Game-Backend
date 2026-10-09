@@ -8,7 +8,7 @@ import { AppDataSource } from '../config/database.config.js';
 import { User } from '../models/user.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { Report, ReportCategory, ReportStatus } from '../models/report.entity.js';
-import { MazeMatchAuditState } from '../models/maze-match-audit-state.entity.js';
+import { ImpostorMatchAuditState } from '../models/impostor-match-audit-state.entity.js';
 
 describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () => {
   let app: Application;
@@ -135,10 +135,10 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
     }
   });
 
-  it('Admin match pagination includes all normal and Maze matches across combined pages', async () => {
+  it('Admin match pagination includes all normal and Impostor matches across combined pages', async () => {
     const searchToken = `combined-pagination-${Date.now()}`;
     const matchRepository = AppDataSource.getRepository(MatchHistory);
-    const auditRepository = AppDataSource.getRepository(MazeMatchAuditState);
+    const auditRepository = AppDataSource.getRepository(ImpostorMatchAuditState);
     const normalMatches = await matchRepository.save(Array.from({ length: 12 }, (_, index) =>
       matchRepository.create({
         userId: user1Id,
@@ -150,18 +150,18 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
         createdAt: new Date(Date.UTC(2020, 0, index + 1))
       })
     ));
-    const mazeMatchIds = [`${searchToken}-maze-1`, `${searchToken}-maze-2`];
-    await auditRepository.save(mazeMatchIds.map((matchId, index) =>
+    const impostorMatchIds = [`${searchToken}-impostor-1`, `${searchToken}-impostor-2`];
+    await auditRepository.save(impostorMatchIds.map((matchId, index) =>
       auditRepository.create({
         matchId,
         sequence: 1,
         event: 'game_finished',
         snapshot: {
           state: 'finished',
-          winner: `maze-host-${index}`,
+          winner: `impostor-host-${index}`,
           startedAt: Date.UTC(2025, 0, index + 1),
           capturedAt: Date.UTC(2025, 0, index + 1),
-          players: [{ id: `maze-host-${index}`, username: `MazeHost${index}`, role: 'good' }]
+          players: [{ id: `impostor-host-${index}`, username: `ImpostorHost${index}`, role: 'good' }]
         }
       })
     ));
@@ -194,11 +194,11 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
       assert.equal(returnedIds.length, 14);
       assert.deepEqual(
         new Set(returnedIds),
-        new Set([...normalMatches.map(match => match.matchId), ...mazeMatchIds])
+        new Set([...normalMatches.map(match => match.matchId), ...impostorMatchIds])
       );
     } finally {
       await matchRepository.delete(normalMatches.map(match => match.id));
-      await auditRepository.delete(mazeMatchIds.map(matchId => ({ matchId })));
+      await auditRepository.delete(impostorMatchIds.map(matchId => ({ matchId })));
     }
   });
 

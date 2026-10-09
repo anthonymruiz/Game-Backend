@@ -18,7 +18,7 @@ import { RoomStatus } from '../models/room-status.enum.js';
 import { StoreItemCategory } from '../models/store-item.enum.js';
 import { StoreItemService } from '../services/store-item.service.js';
 import { BadgeService } from '../services/badge.service.js';
-import { LABYRINTH_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
+import { IMPOSTOR_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { PresenceTrackerService, IUserPresenceSnapshot } from '../services/presence-tracker.service.js';
 
@@ -617,14 +617,14 @@ export class SocketManager {
           const room = this.roomService.getRoom(data.roomId);
           if (!room) throw new Error('Room not found');
           if (room.hostId !== userId) throw new Error('Only the room host can start the game');
-          if (room.mode === 'labyrinth' &&
-              room.players.filter(p => !p.id.startsWith('bot_')).length < LABYRINTH_MIN_HUMAN_PLAYERS) {
-            throw new Error(`El modo Laberinto requiere al menos ${LABYRINTH_MIN_HUMAN_PLAYERS} jugador real.`);
+          if (room.mode === 'impostor' &&
+              room.players.filter(p => !p.id.startsWith('bot_')).length < IMPOSTOR_MIN_HUMAN_PLAYERS) {
+            throw new Error(`El modo Impostor requiere al menos ${IMPOSTOR_MIN_HUMAN_PLAYERS} jugador real.`);
           }
           if (room.mode === 'infection' && room.players.length < 3) {
             throw new Error('El modo Infección requiere al menos 3 participantes.');
           }
-          if (room.mode !== 'labyrinth' && room.mode !== 'infection' &&
+          if (room.mode !== 'impostor' && room.mode !== 'infection' &&
               room.players.length < room.maxPlayers) {
             throw new Error('Todos los cupos de la sala deben estar llenos para iniciar la partida.');
           }
@@ -766,7 +766,7 @@ export class SocketManager {
         }
         const game = this.gameService.getGame(roomId);
         if (!game) {
-          if (expectedMode === 'labyrinth' || expectedMode === 'infection') {
+          if (expectedMode === 'impostor' || expectedMode === 'infection') {
             socket.emit('gameUnavailable', { reason: 'ended' });
           } else {
             socket.emit('gameFinished', { winner: null, alreadyFinished: true });
@@ -777,11 +777,11 @@ export class SocketManager {
           socket.emit('gameUnavailable', { reason: 'wrong_mode' });
           return;
         }
-        if ((game.mode === 'labyrinth' || game.mode === 'infection') && !game.playersList.includes(userId)) {
+        if ((game.mode === 'impostor' || game.mode === 'infection') && !game.playersList.includes(userId)) {
           socket.emit('gameUnavailable', { reason: 'not_participant' });
           return;
         }
-        if ((game.mode === 'labyrinth' || game.mode === 'infection') && game.state !== 'playing') {
+        if ((game.mode === 'impostor' || game.mode === 'infection') && game.state !== 'playing') {
           socket.emit('gameUnavailable', { reason: 'ended' });
           return;
         }
@@ -792,8 +792,15 @@ export class SocketManager {
         {
           if (game.playersList.includes(userId)) game.recordPlayerActivity(userId);
           if (game.state === 'finished') {
-            if (game.mode === 'labyrinth' || game.mode === 'infection') {
+            if (game.mode === 'impostor' || game.mode === 'infection') {
               socket.emit('gameUnavailable', { reason: 'ended' });
+            } else if (game.mode === 'vs_ai') {
+              socket.emit('gameFinished', {
+                winner: game.winner,
+                mode: game.mode,
+                board: game.board.toDTO(userId, userId === game.impostorId),
+                alreadyFinished: false
+              });
             } else {
               socket.emit('gameFinished', { winner: game.winner, alreadyFinished: true });
             }
@@ -811,13 +818,15 @@ export class SocketManager {
             socket.emit('gameStarted', {
               matchId: roomId,
               mode: game.mode,
-              board: game.board.toDTO(userId),
+              isResuming: true,
+              board: game.board.toDTO(userId, userId === game.impostorId),
               pendingBoostDecision: game.getPendingBoostDecision(),
-              ...(game.mode === 'labyrinth' || game.mode === 'infection'
+              ...(game.mode === 'impostor' || game.mode === 'infection'
                 ? {
-                    gameTimeLimitSeconds: game.getMazeGameTimeLimitSeconds(),
-                    gameSecondsRemaining: game.getMazeRemainingSeconds(),
-                    mazeSecondsUntilChange: game.getMazeSecondsUntilChange(),
+                    gameTimeLimitSeconds: game.getImpostorGameTimeLimitSeconds(),
+                    gameSecondsRemaining: game.getImpostorRemainingSeconds(),
+                    impostorSecondsUntilChange: game.getImpostorSecondsUntilChange(),
+                    impostorGeneratorSabotageSecondsRemaining: game.getImpostorGeneratorSabotageCooldownSeconds(),
                     serverTime: Date.now()
                   }
                 : {
@@ -826,32 +835,42 @@ export class SocketManager {
                     turnSecondsRemaining: game.getRemainingTurnSeconds()
                   })
             });
-            if (game.mode === 'labyrinth' || game.mode === 'infection') {
-              socket.emit('mazeGhostPickups', game.getMazeGhostPickupsForPlayer(userId));
+            if (game.mode === 'impostor' || game.mode === 'infection') {
+              socket.emit('impostorGhostPickups', game.getImpostorGhostPickupsForPlayer(userId));
               if (game.mode === 'infection') {
                 socket.emit('infectionInvisiblePickups', game.getInfectionInvisiblePickupsForPlayer(userId));
               }
             }
-            const privateMazeRole = game.getPrivateMazeRole(userId);
-            if (privateMazeRole) socket.emit('mazeRole', privateMazeRole);
-            if (game.mode === 'labyrinth' || game.mode === 'infection') {
-              socket.emit('mazeRescueStatus', game.getMazeRescueStatus());
-              socket.emit('mazePublicActions', game.getMazePublicActionCounts());
-              socket.emit('mazePublicEvents', game.getMazePublicEvents());
-              socket.emit('mazeTimerUpdated', {
-                gameSecondsRemaining: game.getMazeRemainingSeconds(),
-                mazeSecondsUntilChange: game.getMazeSecondsUntilChange()
+            const privateImpostorRole = game.getPrivateImpostorRole(userId);
+            if (privateImpostorRole) socket.emit('impostorRole', privateImpostorRole);
+            if (game.mode === 'impostor' || game.mode === 'infection') {
+              socket.emit('impostorRescueStatus', game.getImpostorRescueStatus());
+              socket.emit('impostorPublicActions', game.getImpostorPublicActionCounts());
+              socket.emit('impostorPublicEvents', game.getImpostorPublicEvents());
+              socket.emit('impostorTimerUpdated', {
+                gameSecondsRemaining: game.getImpostorRemainingSeconds(),
+                impostorSecondsUntilChange: game.getImpostorSecondsUntilChange(),
+                impostorGeneratorSabotageSecondsRemaining: game.getImpostorGeneratorSabotageCooldownSeconds(),
+                impostorEmergencyMeetingSecondsRemaining: game.getImpostorEmergencyMeetingSecondsRemaining(),
+                serverTime: Date.now()
               });
-              const privateMazeTrapState = game.getPrivateMazeTrapState(userId);
-              if (privateMazeTrapState) socket.emit('mazeTrapState', privateMazeTrapState);
+              if (game.mode === 'impostor') {
+                socket.emit('impostorStateChanged', game.getImpostorStateDataForPlayer(userId));
+                const existingVote = game.getImpostorEmergencyMeetingVote(userId);
+                if (existingVote) {
+                  socket.emit('impostorEmergencyMeetingVoteRecorded', { targetId: existingVote });
+                }
+              }
+              const privateImpostorTrapState = game.getPrivateImpostorTrapState(userId);
+              if (privateImpostorTrapState) socket.emit('impostorTrapState', privateImpostorTrapState);
               const player = game.board.players.get(userId);
-              socket.emit('mazeActionState', {
-                canBreakBlock: privateMazeRole?.canBreakBlock === true,
-                canPlaceWall: privateMazeRole?.canPlaceWall === true,
-                canRescue: privateMazeRole?.canRescue === true,
+              socket.emit('impostorActionState', {
+                canBreakBlock: privateImpostorRole?.canBreakBlock === true,
+                canPlaceWall: privateImpostorRole?.canPlaceWall === true,
+                canRescue: privateImpostorRole?.canRescue === true,
                 isInPrison: player?.isInPrison === true,
-                wallPlacementCooldownUntil: privateMazeRole?.wallPlacementCooldownUntil ?? 0,
-                wallBreakCooldownUntil: privateMazeRole?.wallBreakCooldownUntil ?? 0
+                wallPlacementCooldownUntil: privateImpostorRole?.wallPlacementCooldownUntil ?? 0,
+                serverTime: Date.now()
               });
               const privateInfectionState = game.getPrivateInfectionState(userId);
               if (privateInfectionState) socket.emit('infectionState', privateInfectionState);
@@ -870,7 +889,7 @@ export class SocketManager {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
         if (game) {
-          if ((game.mode === 'labyrinth' || game.mode === 'infection') &&
+          if ((game.mode === 'impostor' || game.mode === 'infection') &&
               data.roomId !== socket.data.currentRoomId) return;
           if (!game.playersList.includes(userId)) {
             socket.emit('error', 'Los espectadores no pueden realizar movimientos.');
@@ -880,7 +899,7 @@ export class SocketManager {
         }
       });
 
-      socket.on('placeMazeTrap', (data: {
+      socket.on('placeImpostorTrap', (data: {
         roomId: string;
         type: 'ice' | 'teleport';
         x: number;
@@ -890,21 +909,110 @@ export class SocketManager {
             (data.type !== 'ice' && data.type !== 'teleport') ||
             !Number.isInteger(data.x) || !Number.isInteger(data.y)) return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+        if (!game || (game.mode !== 'impostor' && game.mode !== 'infection') ||
             data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
-        if (!game.placeMazeTrap(userId, data.type, data.x, data.y)) {
-          socket.emit('mazeTrapPlacementRejected');
+        if (!game.placeImpostorTrap(userId, data.type, data.x, data.y)) {
+          socket.emit('impostorTrapPlacementRejected');
         }
       });
 
-      socket.on('teleportMazePlayer', (data: { roomId: string; teleportId: string }) => {
+      socket.on('removeImpostorTrap', (data: { roomId: string; trapId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.trapId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.removeImpostorTrap(userId, data.trapId)) {
+          socket.emit('impostorTrapRemovalRejected');
+        }
+      });
+
+      socket.on('takeImpostorTool', (data: { roomId: string; toolId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.toolId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.takeImpostorTool(userId, data.toolId)) socket.emit('impostorToolActionRejected');
+      });
+
+      socket.on('dropImpostorTool', (data: { roomId: string }) => {
+        if (typeof data?.roomId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.dropImpostorTool(userId)) socket.emit('impostorToolActionRejected');
+      });
+
+      socket.on('requestImpostorTool', (data: { roomId: string; targetId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.targetId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId) || !game.playersList.includes(data.targetId)) return;
+        if (!game.requestImpostorTool(userId, data.targetId)) {
+          socket.emit('impostorToolRequestRejected');
+        }
+      });
+
+      socket.on('respondImpostorToolRequest', (data: {
+        roomId: string;
+        requestId: string;
+        accepted: boolean;
+      }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.requestId !== 'string' ||
+            typeof data.accepted !== 'boolean') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.respondToImpostorToolRequest(userId, data.requestId, data.accepted)) {
+          socket.emit('impostorToolRequestRejected');
+        }
+      });
+
+      socket.on('damageImpostorGenerator', (data: { roomId: string; generatorId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.generatorId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.damageImpostorGenerator(userId, data.generatorId)) {
+          socket.emit('impostorGeneratorActionRejected');
+        }
+      });
+
+      socket.on('repairImpostorGenerator', (data: { roomId: string; generatorId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.generatorId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.beginImpostorGeneratorRepair(userId, data.generatorId)) {
+          socket.emit('impostorGeneratorActionRejected');
+        }
+      });
+
+      socket.on('callImpostorEmergencyMeeting', (data: { roomId: string }) => {
+        if (typeof data?.roomId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.callImpostorEmergencyMeeting(userId)) socket.emit('impostorEmergencyMeetingRejected');
+      });
+
+      socket.on('voteImpostorEmergencyMeeting', (data: { roomId: string; targetId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.targetId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.voteImpostorEmergencyMeeting(userId, data.targetId)) {
+          socket.emit('impostorEmergencyMeetingVoteRejected');
+        }
+      });
+
+      socket.on('teleportImpostorPlayer', (data: { roomId: string; teleportId: string }) => {
         if (!data || typeof data.roomId !== 'string' || typeof data.teleportId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+        if (!game || (game.mode !== 'impostor' && game.mode !== 'infection') ||
             data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
-        game.teleportMazePlayer(userId, data.teleportId);
+        game.teleportImpostorPlayer(userId, data.teleportId);
       });
 
       socket.on('useInfectionLastSurvivorTeleport', (data: { roomId: string }) => {
@@ -929,87 +1037,112 @@ export class SocketManager {
         game.useInfectionLastSurvivorPower(userId, data.power);
       });
 
-      socket.on('sealMazeExit', (data: { roomId: string; exitId: string }) => {
+      socket.on('sealImpostorExit', (data: { roomId: string; exitId: string }) => {
         if (!data || typeof data.roomId !== 'string' || typeof data.exitId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
-        if (game.sealMazeExit(userId, data.exitId)) {
-          socket.emit('mazeRole', game.getPrivateMazeRole(userId));
+        if (game.sealImpostorExit(userId, data.exitId)) {
+          socket.emit('impostorRole', game.getPrivateImpostorRole(userId));
         }
       });
 
-      socket.on('openMazeExit', (data: { roomId: string; exitId: string }) => {
+      socket.on('openImpostorExit', (data: { roomId: string; exitId: string }) => {
         if (!data || typeof data.roomId !== 'string' || typeof data.exitId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
             !game.playersList.includes(userId)) return;
-        game.openMazeExit(userId, data.exitId);
+        game.openImpostorExit(userId, data.exitId);
       });
 
-      socket.on('changeMazeLayout', (data: { roomId: string }) => {
-        if (!data || typeof data.roomId !== 'string') return;
+      socket.on('changeImpostorLayout', (
+        data: { roomId: string },
+        acknowledge?: (success: boolean) => void
+      ) => {
+        if (!data || typeof data.roomId !== 'string') {
+          acknowledge?.(false);
+          return;
+        }
         const game = this.gameService.getGame(data.roomId);
-        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+        if (!game || (game.mode !== 'impostor' && game.mode !== 'infection') ||
             data.roomId !== socket.data.currentRoomId ||
-            !game.playersList.includes(userId)) return;
-        game.changeMazeLayout(userId);
+            !game.playersList.includes(userId)) {
+          acknowledge?.(false);
+          return;
+        }
+        if (!game.beginImpostorLayoutChange(userId)) {
+          acknowledge?.(false);
+          return;
+        }
+        const gameNamespace = this.io.of('/game');
+        gameNamespace.to(data.roomId).emit('impostorLayoutChanging');
+        acknowledge?.(true);
+        setImmediate(() => {
+          try {
+            if (!game.completeImpostorLayoutChange(userId)) {
+              gameNamespace.to(data.roomId).emit('impostorLayoutChangeFailed');
+            }
+          } catch (error) {
+            console.error(`Failed to change impostor layout in room ${data.roomId}:`, error);
+            gameNamespace.to(data.roomId).emit('impostorLayoutChangeFailed');
+          }
+        });
       });
 
-      socket.on('placeMazeWall', (data: { roomId: string; x: number; y: number; isHorizontal: boolean }) => {
+      socket.on('placeImpostorWall', (data: { roomId: string; x: number; y: number; isHorizontal: boolean }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+        if (!game || (game.mode !== 'impostor' && game.mode !== 'infection') ||
             data.roomId !== socket.data.currentRoomId ||
             !Number.isInteger(data.x) || !Number.isInteger(data.y) ||
             typeof data.isHorizontal !== 'boolean' || !game.playersList.includes(userId)) return;
-        const success = game.placeMazeWall(userId, data.x, data.y, data.isHorizontal, `maze_wall_${Math.random().toString(36).slice(2)}`);
+        const success = game.placeImpostorWall(userId, data.x, data.y, data.isHorizontal, `impostor_wall_${Math.random().toString(36).slice(2)}`);
         if (success) {
-          const role = game.getPrivateMazeRole(userId);
-          socket.emit('mazeActionState', {
+          const role = game.getPrivateImpostorRole(userId);
+          socket.emit('impostorActionState', {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
             wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
-            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
+            serverTime: Date.now()
           });
         }
       });
 
-      socket.on('breakMazeBlock', (data: { roomId: string; wallId: string }) => {
+      socket.on('breakImpostorBlock', (data: { roomId: string; wallId: string }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || (game.mode !== 'labyrinth' && game.mode !== 'infection') ||
+        if (!game || (game.mode !== 'impostor' && game.mode !== 'infection') ||
             data.roomId !== socket.data.currentRoomId ||
             typeof data.wallId !== 'string' || !game.playersList.includes(userId)) return;
-        if (game.breakMazeBlock(userId, data.wallId)) {
-          const role = game.getPrivateMazeRole(userId);
-          socket.emit('mazeActionState', {
+        if (game.breakImpostorBlock(userId, data.wallId)) {
+          const role = game.getPrivateImpostorRole(userId);
+          socket.emit('impostorActionState', {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
             wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
-            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
+            serverTime: Date.now()
           });
         }
       });
 
-      socket.on('rescueMazePlayer', (data: { roomId: string; targetPlayerId: string }) => {
+      socket.on('rescueImpostorPlayer', (data: { roomId: string; targetPlayerId: string }) => {
         if (!data || typeof data.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
-        if (!game || game.mode !== 'labyrinth' || data.roomId !== socket.data.currentRoomId ||
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
             typeof data.targetPlayerId !== 'string' || !game.playersList.includes(userId)) return;
-        if (game.rescueMazePlayer(userId, data.targetPlayerId)) {
-          const role = game.getPrivateMazeRole(userId);
-          socket.emit('mazeActionState', {
+        if (game.rescueImpostorPlayer(userId, data.targetPlayerId)) {
+          const role = game.getPrivateImpostorRole(userId);
+          socket.emit('impostorActionState', {
             canBreakBlock: role?.canBreakBlock === true,
             canPlaceWall: role?.canPlaceWall === true,
             canRescue: role?.canRescue === true,
             isInPrison: game.board.players.get(userId)?.isInPrison === true,
             wallPlacementCooldownUntil: role?.wallPlacementCooldownUntil ?? 0,
-            wallBreakCooldownUntil: role?.wallBreakCooldownUntil ?? 0
+            serverTime: Date.now()
           });
         }
       });
@@ -1048,11 +1181,12 @@ export class SocketManager {
               socket.emit('error', 'Los espectadores no pueden rendirse.');
               return;
             }
-            if (data?.abandonBotGame === true && game.hasBots()) {
+            if (data?.abandonBotGame === true && game.mode === 'vs_ai' && game.hasBots()) {
+              this.roomService.deleteRoom(roomId);
               game.abandon();
             } else {
               const surrendered = game.surrender(userId);
-              if (surrendered && game.state === 'playing') {
+              if (surrendered && (game.state === 'playing' || game.mode === 'infection')) {
                 socket.emit('playerSurrendered', { roomId });
               }
             }

@@ -50,13 +50,13 @@ describe('Badge administration and player progress', () => {
     await teardownTestEnvironment();
   });
 
-  it('seeds exactly 100 badges idempotently and serves the protected admin catalog', async () => {
+  it('seeds exactly 109 badges idempotently and serves the protected admin catalog', async () => {
     await seedBadges();
-    assert.equal(await AppDataSource.getRepository(Badge).count(), 100);
+    assert.equal(await AppDataSource.getRepository(Badge).count(), 109);
 
     const response = await makeRequest(app, 'GET', '/api/admin/badges', undefined, adminToken);
     assert.equal(response.status, 200, JSON.stringify(response.body));
-    assert.equal(response.body.badges.length, 100);
+    assert.equal(response.body.badges.length, 109);
   });
 
   it('unlocks every seeded badge at its own event threshold and not before it', async () => {
@@ -74,7 +74,7 @@ describe('Badge administration and player progress', () => {
     const seededBadges = await repository.find({
       where: definitions.map(({ code }) => ({ code }))
     });
-    assert.equal(seededBadges.length, 100);
+    assert.equal(seededBadges.length, 109);
     const previousActiveStates = new Map(seededBadges.map(badge => [badge.id, badge.isActive]));
     const seededByCode = new Map(seededBadges.map(badge => [badge.code, badge]));
     const definitionsByEvent = new Map<typeof definitions[number]['event'], typeof definitions>();
@@ -131,12 +131,12 @@ describe('Badge administration and player progress', () => {
       }
 
       const userBadges = await AppDataSource.getRepository(UserBadge).findBy({ userId: testUserId });
-      assert.equal(userBadges.filter(userBadge => userBadge.unlockedAt).length, 100);
+      assert.equal(userBadges.filter(userBadge => userBadge.unlockedAt).length, 109);
       assert.equal(
         await AppDataSource.getRepository(Notification).count({
           where: { user: { id: testUserId }, type: 'BADGE_UNLOCKED' }
         }),
-        100
+        109
       );
     } finally {
       await repository.save(seededBadges.map(badge => {
@@ -567,7 +567,7 @@ describe('Badge administration and player progress', () => {
       userId: retiredUserId,
       badgeId: weeklyBadge.id
     }), null);
-    assert.equal(await badgeRepository.count(), 100);
+    assert.equal(await badgeRepository.count(), 109);
   });
 
 });

@@ -1,7 +1,11 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { InfectionBoard } from '../game/engine/infection-board.js';
-import { GameInstance } from '../game/engine/game-instance.js';
+import {
+  GameInstance,
+  INFECTION_LAST_SURVIVOR_BURN_DURATION_MS,
+  INFECTION_WALL_PLACEMENT_COOLDOWN_MS
+} from '../game/engine/game-instance.js';
 import { Player, Wall } from '../game/engine/models.js';
 import type { IRoomPlayer } from '../services/room.service.js';
 import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
@@ -64,7 +68,7 @@ describe('Infection mode', () => {
     }
 
     assert.equal(game.impostorId, 'player_0');
-    assert.equal(game.getPrivateMazeRole('player_0')?.role, 'infected');
+    assert.equal(game.getPrivateImpostorRole('player_0')?.role, 'infected');
     game.destroy();
   });
 
@@ -88,7 +92,7 @@ describe('Infection mode', () => {
     assert.equal(game.getPrivateInfectionState(infected.id)?.huntSecondsRemaining, 0);
     assert.equal(game.executeMove(infected.id, infected.x, infected.y - 1), true);
     await new Promise(resolve => setTimeout(resolve, 1_050));
-    assert.equal(events.filter(item => item.event === 'mazePublicEvent' &&
+    assert.equal(events.filter(item => item.event === 'impostorPublicEvent' &&
       item.data.type === 'infection_hunt_started').length, 1);
     game.destroy();
   });
@@ -151,7 +155,7 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
-  it('keeps Infection safe-zone entrances open after maze reshuffles and ejects beside the zone', () => {
+  it('keeps Infection safe-zone entrances open after impostor reshuffles and ejects beside the zone', () => {
     const game = createGame();
     const board = game.board as InfectionBoard;
     const middle = Math.floor(board.size / 2);
@@ -161,8 +165,8 @@ describe('Infection mode', () => {
 
     assert.equal(board.isSafeZoneCell(middle + radius, middle), true);
     assert.equal(board.isSafeZoneCell(middle + radius + 1, middle), false);
-    board.reshuffleMaze(() => 0.5);
-    assert.ok(board.walls.some(wall => wall.id.startsWith('maze_center_')));
+    board.reshuffleImpostor(() => 0.5);
+    assert.ok(board.walls.some(wall => wall.id.startsWith('impostor_center_')));
     const entrances = [
       [middle - 1, middle - radius - 1, middle - 1, middle - radius],
       [middle, middle - radius - 1, middle, middle - radius],
@@ -174,7 +178,7 @@ describe('Infection mode', () => {
       [middle + radius, middle - 1, middle + radius + 1, middle - 1]
     ];
     for (let reshuffle = 0; reshuffle < 3; reshuffle++) {
-      board.reshuffleMaze(() => 0.5);
+      board.reshuffleImpostor(() => 0.5);
       for (const [fromX, fromY, toX, toY] of entrances) {
         for (const row of board.grid) {
           for (const cell of row) cell.hasPlayer = null;
@@ -182,7 +186,7 @@ describe('Infection mode', () => {
         player.x = fromX;
         player.y = fromY;
         board.grid[fromY][fromX].hasPlayer = player.id;
-        assert.ok(board.getMazeValidMoves(player.id).some(move =>
+        assert.ok(board.getImpostorValidMoves(player.id).some(move =>
           move.x === toX && move.y === toY
         ));
       }
@@ -206,6 +210,59 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
+  it('keeps every infected connected to each survivor after reshuffling, including a last-survivor layout change', () => {
+    const game = createGame();
+    game.start();
+    const board = game.board as InfectionBoard;
+    const infectedPlayers = [...board.players.values()].filter(player => player.isInfected);
+    const survivors = [...board.players.values()].filter(player => !player.isInfected);
+    assert.equal(infectedPlayers.length, 1);
+    assert.equal(survivors.length, 2);
+
+    assert.equal(game.surrender(survivors[0].id), true);
+    const lastSurvivor = survivors[1];
+    const middle = Math.floor(board.size / 2);
+    for (const row of board.grid) {
+      for (const cell of row) cell.hasPlayer = null;
+    }
+    infectedPlayers.forEach((player, index) => {
+      player.isInPrison = false;
+      player.impostorFrozenUntil = 0;
+      player.impostorTeleportingUntil = 0;
+      player.x = 1;
+      player.y = middle + index;
+      board.grid[player.y][player.x].hasPlayer = player.id;
+    });
+    lastSurvivor.isInPrison = false;
+    lastSurvivor.x = board.size - 2;
+    lastSurvivor.y = middle;
+    board.grid[lastSurvivor.y][lastSurvivor.x].hasPlayer = lastSurvivor.id;
+
+    board.walls = Array.from({ length: board.size - 1 }, (_, y) =>
+      new Wall(`old-dividing-wall-${y}`, 'impostor', middle - 1, y, false)
+    );
+    assert.equal(game.changeImpostorLayout(lastSurvivor.id, () => 0.42), true);
+
+    const createRandom = (seed: number): (() => number) => {
+      let state = seed >>> 0;
+      return () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0x1_0000_0000;
+      };
+    };
+    for (let seed = 1; seed <= 8; seed++) {
+      if (seed > 1) board.reshuffleImpostor(createRandom(seed), true);
+      for (const infected of infectedPlayers) {
+        assert.ok(board.getImpostorValidMoves(infected.id).length > 0, `infected ${infected.id} can move`);
+        assert.ok(
+          board.isImpostorCellReachable(infected.x, infected.y, lastSurvivor.x, lastSurvivor.y),
+          `infected ${infected.id} has a route to the last survivor after reshuffle ${seed}`
+        );
+      }
+    }
+    game.destroy();
+  });
+
   it('keeps invisible survivors and powerups hidden from infected board DTOs', () => {
     const game = createGame();
     const board = game.board as InfectionBoard;
@@ -217,8 +274,8 @@ describe('Infection mode', () => {
     survivor.isInPrison = true;
     const infectedView = board.toDTO(infected.id);
     const survivorView = board.toDTO(survivor.id);
-    const infectedState = game.getMazeStateDataForPlayer(infected.id);
-    const survivorState = game.getMazeStateDataForPlayer(survivor.id);
+    const infectedState = game.getImpostorStateDataForPlayer(infected.id);
+    const survivorState = game.getImpostorStateDataForPlayer(survivor.id);
 
     assert.equal(infectedView.players[survivor.id], undefined);
     assert.equal(infectedView.grid[survivor.y][survivor.x].hasPlayer, null);
@@ -265,7 +322,7 @@ describe('Infection mode', () => {
     const board = game.board as InfectionBoard;
     const survivors = [...board.players.values()].filter(player => !player.isInfected);
     assert.equal(survivors.length, 2);
-    assert.equal(game.changeMazeLayout(survivors[0].id, () => 0.5), false);
+    assert.equal(game.changeImpostorLayout(survivors[0].id, () => 0.5), false);
     assert.equal(game.surrender(survivors[0].id), true);
     const lastSurvivor = survivors[1];
     const oldPowerupPositions = new Set([
@@ -286,7 +343,7 @@ describe('Infection mode', () => {
     const placedWall = new Wall('infection-wall-cleared-on-reshuffle', lastSurvivor.id, 1, 1, true);
     board.walls.push(placedWall);
 
-    assert.equal(game.changeMazeLayout(lastSurvivor.id, () => 0.5), true);
+    assert.equal(game.changeImpostorLayout(lastSurvivor.id, () => 0.5), true);
     const currentPowerups = [
       ...board.ghostPickups,
       ...board.invisiblePickups,
@@ -299,6 +356,12 @@ describe('Infection mode', () => {
     assert.ok(currentPowerups.every(({ x, y }) => !oldPowerupPositions.has(`${x},${y}`)));
     assert.equal(board.walls.includes(placedWall), false);
     assert.deepEqual(board.traps, [trap]);
+    assert.equal(game.getImpostorSecondsUntilChange(), 60);
+    assert.ok(game.getImpostorPublicEvents().some(event =>
+      event.type === 'impostor_changed' &&
+      event.playerId === lastSurvivor.id &&
+      event.playerName === lastSurvivor.username
+    ));
     game.destroy();
   });
 
@@ -356,8 +419,8 @@ describe('Infection mode', () => {
     }
 
     assert.equal(game.executeMove(survivor.id, shield.x, shield.y), true);
-    assert.equal(survivor.mazeShieldActive, true);
-    assert.ok(survivor.mazeShieldExpiresAt - Date.now() <= 15_000);
+    assert.equal(survivor.impostorShieldActive, true);
+    assert.ok(survivor.impostorShieldExpiresAt - Date.now() <= 15_000);
     assert.equal(survivor.isInfected, false);
     game.destroy();
   });
@@ -384,7 +447,7 @@ describe('Infection mode', () => {
     const survivor = [...board.players.values()].find(player => !player.isInfected);
     assert.ok(survivor);
     board.walls = [];
-    const pickup = board.getMazeValidMoves(survivor.id)[0];
+    const pickup = board.getImpostorValidMoves(survivor.id)[0];
     assert.ok(pickup);
     board.ghostPickups[0] = { id: 'infection-ghost-duration-test', ...pickup };
 
@@ -414,12 +477,12 @@ describe('Infection mode', () => {
     board.grid[survivor.y]![survivor.x]!.hasPlayer = survivor.id;
 
     assert.equal(game.getPrivateInfectionState(survivor.id)?.isLastSurvivor, true);
-    assert.ok(infected.mazeFrozenUntil >= Date.now() + 4_900);
+    assert.ok(infected.impostorFrozenUntil >= Date.now() + 4_900);
     assert.ok((game.getPrivateInfectionState(survivor.id)?.lastSurvivorCountdownUntil ?? 0) > Date.now());
-    const firstMove = board.getMazeValidMoves(survivor.id)[0];
+    const firstMove = board.getImpostorValidMoves(survivor.id)[0];
     assert.ok(firstMove);
     assert.equal(game.executeMove(survivor.id, firstMove.x, firstMove.y), true);
-    const secondMove = board.getMazeValidMoves(survivor.id)[0];
+    const secondMove = board.getImpostorValidMoves(survivor.id)[0];
     assert.ok(secondMove);
     assert.equal(game.executeMove(survivor.id, secondMove.x, secondMove.y), false);
     mock.timers.tick(80);
@@ -473,11 +536,11 @@ describe('Infection mode', () => {
 
     survivor.ghostModeExpiresAt = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'shield'), true);
-    assert.equal(survivor.mazeShieldActive, true);
+    assert.equal(survivor.impostorShieldActive, true);
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'invisible'), false);
 
-    survivor.mazeShieldActive = false;
-    survivor.mazeShieldExpiresAt = 0;
+    survivor.impostorShieldActive = false;
+    survivor.impostorShieldExpiresAt = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'invisible'), true);
     assert.ok(survivor.invisibleUntil > Date.now());
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'teleport'), false);
@@ -485,7 +548,7 @@ describe('Infection mode', () => {
     survivor.invisibleUntil = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'teleport', () => 0.5), true);
     const powerEvents = publicEvents.filter(({ event, data }) =>
-      event === 'mazePublicEvent' && data.type === 'infection_last_survivor_power_used'
+      event === 'impostorPublicEvent' && data.type === 'infection_last_survivor_power_used'
     );
     assert.equal(powerEvents.length, 4);
     assert.ok(powerEvents.every(({ data }) =>
@@ -544,7 +607,7 @@ describe('Infection mode', () => {
       board.grid[player.y][player.x].hasPlayer = player.id;
     }
 
-    assert.equal(game.teleportMazePlayer(survivor.id, source.id), true);
+    assert.equal(game.teleportImpostorPlayer(survivor.id, source.id), true);
     assert.equal(board.teleports.length, oldPortalCount);
     assert.ok(board.teleports.every(({ x, y }) => !oldPositions.has(`${x},${y}`)));
     game.destroy();
@@ -562,10 +625,10 @@ describe('Infection mode', () => {
       Array.from({ length: board.size }, (_, x) => ({ x, y }))
     ).flat().find(({ x, y }) => board.canPlaceTrap(x, y));
     assert.ok(trapCell);
-    assert.equal(game.placeMazeTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
-    assert.equal(game.getPrivateMazeTrapState(infected.id), null);
-    assert.equal(game.getPrivateMazeTrapState(survivor.id)?.traps.length, 1);
-    assert.ok((game.getPrivateMazeTrapState(survivor.id)?.cooldowns.ice ?? 0) > 0);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
+    assert.equal(game.getPrivateImpostorTrapState(infected.id), null);
+    assert.equal(game.getPrivateImpostorTrapState(survivor.id)?.traps.length, 1);
+    assert.ok((game.getPrivateImpostorTrapState(survivor.id)?.cooldowns.ice ?? 0) > 0);
 
     const otherSurvivor = [...board.players.values()].find(player =>
       !player.isInfected && player.id !== survivor.id
@@ -577,20 +640,67 @@ describe('Infection mode', () => {
       (x !== trapCell.x || y !== trapCell.y) && board.canPlaceTrap(x, y)
     );
     assert.ok(secondTrapCell);
-    assert.equal(game.placeMazeTrap(otherSurvivor.id, 'ice', secondTrapCell.x, secondTrapCell.y), true);
-    assert.equal(game.getPrivateMazeTrapState(otherSurvivor.id)?.traps.length, 2);
-    assert.ok((game.getPrivateMazeTrapState(otherSurvivor.id)?.cooldowns.ice ?? 0) > 0);
-    assert.equal(game.placeMazeTrap(infected.id, 'teleport', trapCell.x + 1, trapCell.y), false);
+    assert.equal(game.placeImpostorTrap(otherSurvivor.id, 'ice', secondTrapCell.x, secondTrapCell.y), true);
+    assert.equal(game.getPrivateImpostorTrapState(otherSurvivor.id)?.traps.length, 2);
+    assert.ok((game.getPrivateImpostorTrapState(otherSurvivor.id)?.cooldowns.ice ?? 0) > 0);
+    assert.equal(game.placeImpostorTrap(infected.id, 'teleport', trapCell.x + 1, trapCell.y), false);
 
     const wallCell = Array.from({ length: board.size - 1 }, (_, y) =>
       Array.from({ length: board.size - 1 }, (_, x) => ({ x, y }))
     ).flat().find(({ x, y }) => board.canPlaceWall(new Wall('candidate', survivor.id, x, y, true)));
     assert.ok(wallCell);
     const initialWallCount = board.walls.length;
-    assert.equal(game.placeMazeWall(survivor.id, wallCell.x, wallCell.y, true, 'infection-wall'), true);
+    assert.equal(game.placeImpostorWall(survivor.id, wallCell.x, wallCell.y, true, 'infection-wall'), true);
     assert.equal(board.walls.length, initialWallCount + 1);
-    assert.equal(game.placeMazeWall(infected.id, wallCell.x, wallCell.y + 2, true, 'infected-wall'), false);
+    assert.equal(game.placeImpostorWall(infected.id, wallCell.x, wallCell.y + 2, true, 'infected-wall'), false);
     game.destroy();
+  });
+
+  it('gives normal survivors a five-second wall cooldown and keeps walls disabled for the God-mode survivor', () => {
+    mock.timers.enable({ apis: ['Date'], now: 1_000 });
+    const game = createGame();
+    try {
+      game.start();
+      const board = game.board as InfectionBoard;
+      const survivors = [...board.players.values()].filter(player => !player.isInfected);
+      assert.equal(survivors.length, 2);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.canPlaceWall, true);
+
+      const findWallCell = () => Array.from({ length: board.size - 1 }, (_, y) =>
+        Array.from({ length: board.size - 1 }, (_, x) => ({ x, y }))
+      ).flat().find(({ x, y }) =>
+        board.canPlaceWall(new Wall(`candidate-${Date.now()}-${x}-${y}`, survivors[0].id, x, y, true))
+      );
+      const firstCell = findWallCell();
+      assert.ok(firstCell);
+      assert.equal(game.placeImpostorWall(survivors[0].id, firstCell.x, firstCell.y, true, 'cooldown-wall-1'), true);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.wallPlacementCooldownUntil, 6_000);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.canPlaceWall, false);
+
+      const secondCell = findWallCell();
+      assert.ok(secondCell);
+      assert.equal(game.placeImpostorWall(survivors[1].id, secondCell.x, secondCell.y, true, 'cooldown-wall-2'), true);
+
+      mock.timers.tick(INFECTION_WALL_PLACEMENT_COOLDOWN_MS - 1);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.canPlaceWall, false);
+      mock.timers.tick(1);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.canPlaceWall, true);
+
+      assert.equal(game.surrender(survivors[1].id), true);
+      assert.equal(game.getPrivateImpostorRole(survivors[0].id)?.canPlaceWall, false);
+      const godModeCell = findWallCell();
+      assert.ok(godModeCell);
+      assert.equal(game.placeImpostorWall(
+        survivors[0].id,
+        godModeCell.x,
+        godModeCell.y,
+        true,
+        'god-mode-wall'
+      ), false);
+    } finally {
+      game.destroy();
+      mock.timers.reset();
+    }
   });
 
   it('allows the infected to break an adjacent player-placed wall', () => {
@@ -604,13 +714,13 @@ describe('Infection mode', () => {
     infected.x = 1;
     infected.y = 1;
     const wall = new Wall('infection-test-wall', 'player_1', 1, 1, false);
-    assert.equal(board.placeMazeWall(wall), true);
+    assert.equal(board.placeImpostorWall(wall), true);
 
-    assert.equal(game.getPrivateMazeRole(infected.id)?.canBreakBlock, true);
-    assert.equal(game.breakMazeBlock(infected.id, wall.id), true);
+    assert.equal(game.getPrivateImpostorRole(infected.id)?.canBreakBlock, true);
+    assert.equal(game.breakImpostorBlock(infected.id, wall.id), true);
     assert.equal(board.walls.some(candidate => candidate.id === wall.id), false);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'player_broke_wall' &&
       data.playerId === infected.id &&
       data.wallIsHorizontal === false
@@ -618,7 +728,7 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
-  it('limits infected wall breaking to once every five seconds', () => {
+  it('allows infected players to break multiple walls without a cooldown', () => {
     mock.timers.enable({ apis: ['Date'], now: 1_000 });
     const game = createGame();
     game.start();
@@ -632,13 +742,8 @@ describe('Infection mode', () => {
     const secondWall = new Wall('infection-cooldown-wall-2', 'player_1', 1, 1, true);
     board.walls.push(firstWall, secondWall);
 
-    assert.equal(game.breakMazeBlock(infected.id, firstWall.id), true);
-    assert.equal(game.getPrivateMazeRole(infected.id)?.wallBreakCooldownUntil, 6_000);
-    assert.equal(game.breakMazeBlock(infected.id, secondWall.id), false);
-    mock.timers.tick(4_999);
-    assert.equal(game.breakMazeBlock(infected.id, secondWall.id), false);
-    mock.timers.tick(1);
-    assert.equal(game.breakMazeBlock(infected.id, secondWall.id), true);
+    assert.equal(game.breakImpostorBlock(infected.id, firstWall.id), true);
+    assert.equal(game.breakImpostorBlock(infected.id, secondWall.id), true);
     game.destroy();
     mock.timers.reset();
   });
@@ -659,8 +764,8 @@ describe('Infection mode', () => {
     survivor.y = trapCell.y;
     board.grid[trapCell.y][trapCell.x].hasPlayer = survivor.id;
 
-    assert.equal(game.placeMazeTrap(survivor.id, 'ice', survivor.x, survivor.y), true);
-    assert.equal(game.placeMazeTrap(survivor.id, 'teleport', survivor.x, survivor.y), false);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', survivor.x, survivor.y), true);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'teleport', survivor.x, survivor.y), false);
     assert.equal(board.traps.length, 1);
     game.destroy();
   });
@@ -674,12 +779,12 @@ describe('Infection mode', () => {
     const survivor = [...board.players.values()].find(player => !player.isInfected);
     assert.ok(infected && survivor);
 
-    const trapCell = board.getMazeValidMoves(infected.id).find(({ x, y }) => board.canPlaceTrap(x, y));
+    const trapCell = board.getImpostorValidMoves(infected.id).find(({ x, y }) => board.canPlaceTrap(x, y));
     assert.ok(trapCell);
-    assert.equal(game.placeMazeTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
     assert.equal(game.executeMove(infected.id, trapCell.x, trapCell.y), true);
-    assert.ok(infected.mazeFrozenUntil >= Date.now() + 9_000);
-    assert.ok(infected.mazeFrozenUntil <= Date.now() + 10_000);
+    assert.ok(infected.impostorFrozenUntil >= Date.now() + 9_000);
+    assert.ok(infected.impostorFrozenUntil <= Date.now() + 10_000);
     game.destroy();
   });
 
@@ -695,10 +800,10 @@ describe('Infection mode', () => {
 
     assert.equal(game.surrender(survivors[0].id), true);
     const lastSurvivor = survivors[1];
-    assert.equal(game.getPrivateMazeRole(lastSurvivor.id)?.canPlaceWall, false);
+    assert.equal(game.getPrivateImpostorRole(lastSurvivor.id)?.canPlaceWall, false);
     assert.ok(privateEvents.some(({ playerId, event, data }) =>
       playerId === lastSurvivor.id &&
-      event === 'mazeActionState' &&
+      event === 'impostorActionState' &&
       data.canPlaceWall === false
     ));
 
@@ -709,7 +814,7 @@ describe('Infection mode', () => {
       board.canPlaceWall(new Wall('candidate', lastSurvivor.id, x, y, true))
     );
     assert.ok(wallCell);
-    assert.equal(game.placeMazeWall(lastSurvivor.id, wallCell.x, wallCell.y, true, 'last-survivor-wall'), false);
+    assert.equal(game.placeImpostorWall(lastSurvivor.id, wallCell.x, wallCell.y, true, 'last-survivor-wall'), false);
 
     const trapCell = Array.from({ length: board.size }, (_, y) =>
       Array.from({ length: board.size }, (_, x) => ({ x, y }))
@@ -721,7 +826,7 @@ describe('Infection mode', () => {
     lastSurvivor.x = trapCell.x;
     lastSurvivor.y = trapCell.y;
     board.grid[trapCell.y][trapCell.x].hasPlayer = lastSurvivor.id;
-    assert.equal(game.placeMazeTrap(lastSurvivor.id, 'ice', lastSurvivor.x, lastSurvivor.y), true);
+    assert.equal(game.placeImpostorTrap(lastSurvivor.id, 'ice', lastSurvivor.x, lastSurvivor.y), true);
     game.destroy();
   });
 
@@ -741,10 +846,10 @@ describe('Infection mode', () => {
 
     for (const [index, type] of (['ice', 'teleport'] as const).entries()) {
       assert.equal(
-        game.placeMazeTrap(lastSurvivor.id, type, validTrapCells[index].x, validTrapCells[index].y),
+        game.placeImpostorTrap(lastSurvivor.id, type, validTrapCells[index].x, validTrapCells[index].y),
         true
       );
-      const cooldown = game.getPrivateMazeTrapState(lastSurvivor.id)?.cooldowns[type] ?? 0;
+      const cooldown = game.getPrivateImpostorTrapState(lastSurvivor.id)?.cooldowns[type] ?? 0;
       assert.ok(cooldown > 0 && cooldown <= 20);
     }
     game.destroy();
@@ -785,9 +890,9 @@ describe('Infection mode', () => {
     assert.equal(game.executeMove(infected.id, trap.x, trap.y), true);
 
     assert.equal(board.traps.length, 0);
-    assert.ok(infected.mazeFrozenUntil >= Date.now() + 9_000);
+    assert.ok(infected.impostorFrozenUntil >= Date.now() + 9_000);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'infection_trap_triggered' &&
       data.playerId === infected.id &&
       data.playerName === infected.username &&
@@ -814,17 +919,17 @@ describe('Infection mode', () => {
       if (player.id.startsWith('bot_')) continue;
       if (player.id !== infected.id) board.grid[player.y][player.x].hasPlayer = player.id;
     }
-    infected.mazeShieldActive = true;
-    infected.mazeShieldExpiresAt = Date.now() + 10_000;
+    infected.impostorShieldActive = true;
+    infected.impostorShieldExpiresAt = Date.now() + 10_000;
     const trap = { id: 'infection-teleport-shield', type: 'teleport' as const, x: 2, y: 1 };
     assert.equal(board.placeTrap(trap), true);
 
     assert.equal(game.executeMove(infected.id, trap.x, trap.y), true);
     assert.deepEqual({ x: infected.x, y: infected.y }, { x: trap.x, y: trap.y });
-    assert.equal(infected.mazeShieldActive, false);
+    assert.equal(infected.impostorShieldActive, false);
     assert.equal(board.traps.length, 0);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'infection_trap_triggered' &&
       data.playerId === infected.id &&
       data.trapType === 'teleport' &&
@@ -855,7 +960,7 @@ describe('Infection mode', () => {
       infected.y === 0 || infected.y === board.size - 1);
     assert.equal(board.traps.length, 0);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'infection_trap_triggered' &&
       data.playerId === infected.id &&
       data.trapType === 'teleport' &&
@@ -893,7 +998,7 @@ describe('Infection mode', () => {
     assert.equal(game.executeMove(infected.id, 2, 1), true);
     assert.equal(survivors[0].isInfected, true);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'player_infected' &&
       data.playerName === survivors[0].username
     ));
@@ -901,13 +1006,13 @@ describe('Infection mode', () => {
     assert.equal(game.getPrivateInfectionState(survivors[1].id)?.playerCount, 3);
     assert.equal(game.getPrivateInfectionState(survivors[1].id)?.isLastSurvivor, true);
     assert.ok((game.getPrivateInfectionState(survivors[1].id)?.lastSurvivorCountdownUntil ?? 0) > Date.now());
-    assert.ok(infected.mazeFrozenUntil > Date.now());
+    assert.ok(infected.impostorFrozenUntil > Date.now());
     assert.equal(game.getPrivateInfectionState(survivors[1].id)?.lastSurvivorTeleportCooldownUntil, 0);
     assert.ok(privateEvents.some(({ playerId, event }) =>
       playerId === survivors[1].id && event === 'infectionLastSurvivor'
     ));
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'infection_last_survivor' &&
       data.playerId === survivors[1].id &&
       data.playerName === survivors[1].username
@@ -926,7 +1031,7 @@ describe('Infection mode', () => {
 
     assert.equal(game.surrender(survivors[0].id), true);
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'infection_last_survivor' &&
       data.playerId === survivors[1].id &&
       data.playerName === survivors[1].username
@@ -954,6 +1059,54 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
+  it('burns the board for four seconds and blocks actions after the last survivor is infected', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
+    const events: Array<{ event: string; data: any }> = [];
+    const game = createGame(makePlayers(3), (event, data) => events.push({ event, data }));
+    try {
+      game.start();
+      const board = game.board as InfectionBoard;
+      const infected = [...board.players.values()].find(player => player.isInfected);
+      const survivors = [...board.players.values()].filter(player => !player.isInfected);
+      assert.ok(infected && survivors.length === 2);
+
+      survivors[1].isDead = true;
+      board.walls = [];
+      for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+      infected.x = 1;
+      infected.y = 1;
+      survivors[0].x = 3;
+      survivors[0].y = 1;
+      board.grid[infected.y][infected.x].hasPlayer = infected.id;
+      board.grid[survivors[0].y][survivors[0].x].hasPlayer = survivors[0].id;
+      game.startTime = Date.now() - 11_000;
+
+      assert.equal(game.executeMove(infected.id, 2, 1), true);
+      assert.equal(game.state, 'playing');
+      assert.equal(game.winner, null);
+      assert.equal(
+        game.getPrivateInfectionState(survivors[0].id)?.burnUntil,
+        Date.now() + INFECTION_LAST_SURVIVOR_BURN_DURATION_MS
+      );
+      assert.ok(events.some(({ event, data }) =>
+        event === 'impostorPublicEvent' && data.type === 'infection_final_survivor_burning'
+      ));
+      assert.equal(game.executeMove(infected.id, 2, 2), false);
+      assert.equal(game.surrender(infected.id), false);
+      game.abandon();
+      assert.equal(game.state, 'playing');
+
+      mock.timers.tick(INFECTION_LAST_SURVIVOR_BURN_DURATION_MS - 1);
+      assert.equal(game.state, 'playing');
+      mock.timers.tick(1);
+      assert.equal(game.state, 'finished');
+      assert.equal(game.winner, 'infected');
+    } finally {
+      game.destroy();
+      mock.timers.reset();
+    }
+  });
+
   it('finishes for survivors when the only infected player surrenders', () => {
     const game = createGame();
     game.start();
@@ -966,14 +1119,26 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
-  it('updates infection counts when a survivor surrenders and the game continues', () => {
-    const game = createGame();
+  it('removes a surrendered survivor from the board and updates infection counts', () => {
+    const events: Array<{ event: string; data: any }> = [];
+    const game = createGame(makePlayers(3), (event, data) => events.push({ event, data }));
     game.start();
     const survivors = [...game.board.players.values()].filter(player => !player.isInfected);
     assert.equal(survivors.length, 2);
+    const leavingPlayer = survivors[0];
+    const { x, y } = leavingPlayer;
 
-    assert.equal(game.surrender(survivors[0].id), true);
+    assert.equal(game.surrender(leavingPlayer.id), true);
     assert.equal(game.state, 'playing');
+    assert.equal(game.board.players.has(leavingPlayer.id), false);
+    assert.equal(game.playersList.includes(leavingPlayer.id), false);
+    assert.equal((game.board as InfectionBoard).grid[y][x].hasPlayer, null);
+    assert.ok(events.some(({ event, data }) =>
+      event === 'impostorPublicEvent' &&
+      data.type === 'player_left' &&
+      data.playerId === leavingPlayer.id &&
+      data.playerName === leavingPlayer.username
+    ));
     assert.equal(game.getPrivateInfectionState(survivors[1].id)?.playerCount, 2);
     assert.equal(game.getPrivateInfectionState(survivors[1].id)?.infectedCount, 1);
     game.destroy();
@@ -1010,10 +1175,41 @@ describe('Infection mode', () => {
     assert.equal(survivors[0].isInfected, true);
     assert.equal(survivors[1].isInfected, false, 'newly infected players must not cause a same-step chain');
     assert.ok(events.some(({ event, data }) =>
-      event === 'mazePublicEvent' &&
+      event === 'impostorPublicEvent' &&
       data.type === 'player_infected' &&
       data.playerName === survivors[0].username
     ));
+    game.destroy();
+  });
+
+  it('does not infect an adjacent survivor while their invisibility is active', () => {
+    const game = createGame();
+    game.start();
+    const board = game.board as InfectionBoard;
+    const infected = [...board.players.values()].find(player => player.isInfected);
+    const survivor = [...board.players.values()].find(player => !player.isInfected);
+    const otherSurvivor = [...board.players.values()].find(player =>
+      !player.isInfected && player.id !== survivor?.id
+    );
+    assert.ok(infected && survivor && otherSurvivor);
+
+    board.walls = [];
+    for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+    infected.x = 1;
+    infected.y = 1;
+    survivor.x = 3;
+    survivor.y = 1;
+    survivor.invisibleUntil = Date.now() + 5_000;
+    otherSurvivor.x = board.size - 2;
+    otherSurvivor.y = board.size - 2;
+    for (const player of [infected, survivor, otherSurvivor]) {
+      board.grid[player.y][player.x].hasPlayer = player.id;
+    }
+    game.startTime = Date.now() - 11_000;
+
+    assert.equal(game.executeMove(infected.id, 2, 1), true);
+    assert.equal(survivor.isInfected, false, 'invisibility prevents infection on contact');
+    assert.ok(survivor.invisibleUntil > Date.now(), 'avoiding infection does not consume invisibility');
     game.destroy();
   });
 
@@ -1039,7 +1235,7 @@ describe('Infection mode', () => {
     for (const player of [infected, survivor, otherSurvivor]) {
       board.grid[player.y][player.x].hasPlayer = player.id;
     }
-    assert.equal(board.placeMazeWall(new Wall('infection-separator', survivor.id, 4, 4, false)), true);
+    assert.equal(board.placeImpostorWall(new Wall('infection-separator', survivor.id, 4, 4, false)), true);
     game.startTime = Date.now() - 11_000;
 
     assert.equal(game.executeMove(survivor.id, 5, 4), true);

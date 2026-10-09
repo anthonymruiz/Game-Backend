@@ -4,8 +4,8 @@ import { setupTestEnvironment, teardownTestEnvironment, makeRequest } from './te
 import { Application } from 'express';
 import { container } from 'tsyringe';
 import { GameService } from '../services/game.service.js';
-import { MazeBoard } from '../game/engine/maze-board.js';
-import { MazeAuditService } from '../services/maze-audit.service.js';
+import { ImpostorBoard } from '../game/engine/impostor-board.js';
+import { ImpostorAuditService } from '../services/impostor-audit.service.js';
 import { AppDataSource } from '../config/database.config.js';
 import { User } from '../models/user.entity.js';
 import { PointPackagePayment, PointPackagePaymentStatus } from '../models/point-package-payment.entity.js';
@@ -183,7 +183,7 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     game.destroy();
   });
 
-  it('GameService starts a full Labyrinth room without constructor-time state events', async () => {
+  it('GameService starts a full Impostor room without constructor-time state events', async () => {
     const emittedEvents: string[] = [];
     const io = {
       of: () => ({
@@ -194,25 +194,25 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     };
     const gameService = container.resolve(GameService);
     gameService.setSocketServer(io as any);
-    const matchId = `maze-start-${randNum}`;
+    const matchId = `impostor-start-${randNum}`;
 
-    await gameService.createGame(matchId, 'labyrinth', [
-      { id: 'maze-start-human-1', username: 'Human 1', isGuest: false, color: '#FF3B30' },
-      { id: 'maze-start-human-2', username: 'Human 2', isGuest: false, color: '#007AFF' },
-      { id: 'maze-start-human-3', username: 'Human 3', isGuest: false, color: '#FFCC00' },
-      { id: 'maze-start-human-4', username: 'Human 4', isGuest: false, color: '#34C759' },
-      { id: 'bot_maze_start_1', username: 'Bot 1', isGuest: true, color: '#AF52DE' },
-      { id: 'bot_maze_start_2', username: 'Bot 2', isGuest: true, color: '#FF9500' }
+    await gameService.createGame(matchId, 'impostor', [
+      { id: 'impostor-start-human-1', username: 'Human 1', isGuest: false, color: '#FF3B30' },
+      { id: 'impostor-start-human-2', username: 'Human 2', isGuest: false, color: '#007AFF' },
+      { id: 'impostor-start-human-3', username: 'Human 3', isGuest: false, color: '#FFCC00' },
+      { id: 'impostor-start-human-4', username: 'Human 4', isGuest: false, color: '#34C759' },
+      { id: 'bot_impostor_start_1', username: 'Bot 1', isGuest: true, color: '#AF52DE' },
+      { id: 'bot_impostor_start_2', username: 'Bot 2', isGuest: true, color: '#FF9500' }
     ]);
 
     const game = gameService.getGame(matchId);
     assert.ok(game);
     assert.equal(game.state, 'playing');
-    assert.equal((game.board as MazeBoard).keys.length, 4);
-    assert.ok(emittedEvents.includes('mazeStateChanged'));
+    assert.equal((game.board as ImpostorBoard).keys.length, 4);
+    assert.ok(emittedEvents.includes('impostorStateChanged'));
     assert.ok(emittedEvents.includes('gameStarted'));
     game.destroy();
-    await container.resolve(MazeAuditService).releaseMatch(matchId);
+    await container.resolve(ImpostorAuditService).releaseMatch(matchId);
   });
 
   it('GameService prepares matches before the countdown and starts them on request', async () => {
@@ -244,11 +244,11 @@ describe('11 - System Settings Singleton, Validations & Registration Control Tes
     game.destroy();
   });
 
-  it('GameService accepts 1 human player in Labyrinth mode and rejects 0 human players', async () => {
+  it('GameService accepts 1 human player in Impostor mode and rejects 0 human players', async () => {
     const gameService = container.resolve(GameService);
     await assert.rejects(
-      gameService.createGame(`maze-no-human-${randNum}`, 'labyrinth', [
-        { id: 'bot_maze_small_1', username: 'Bot 1', isGuest: true, color: '#FFCC00' },
+      gameService.createGame(`impostor-no-human-${randNum}`, 'impostor', [
+        { id: 'bot_impostor_small_1', username: 'Bot 1', isGuest: true, color: '#FFCC00' },
       ]),
       /at least 1 human player/i
     );

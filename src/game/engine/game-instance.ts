@@ -1,7 +1,8 @@
 import { Board } from './board.js';
-import { MazeBoard, type IMazeTrap, type MazeTrapType } from './maze-board.js';
+import { ImpostorBoard, type IImpostorTrap, type ImpostorTrapType } from './impostor-board.js';
+import { ImpostorBoardBase } from './impostor-board-base.js';
 import { InfectionBoard } from './infection-board.js';
-import { Player, Wall, type Boost } from './models.js';
+import { Player, Wall, type Boost, type ImpostorToolType } from './models.js';
 import { GameMode } from '../../services/matchmaking.service.js';
 import { IRoomPlayer } from '../../services/room.service.js';
 import { GameModeRegistry, IGameModeRules } from './game-modes.js';
@@ -20,16 +21,23 @@ export type InfectionLastSurvivorPower = 'ghost' | 'shield' | 'invisible' | 'tel
 export const BOOST_MIN_DELAY_MS = 60_000;
 export const BOOST_MAX_DELAY_MS = 120_000;
 export const PLAYER_INACTIVITY_LIMIT_MS = 120_000;
-export const LABYRINTH_GAME_DURATION_MS = 10 * 60_000;
-export const LABYRINTH_IDLE_LIMIT_MS = 60_000;
-export const LABYRINTH_RESHUFFLE_INTERVAL_MS = 10_000;
-export const LABYRINTH_MIN_HUMAN_PLAYERS = 1;
-export const LABYRINTH_GHOST_DURATION_MS = 5_000;
-export const LABYRINTH_TRAP_COOLDOWN_MS = 60_000;
-export const LABYRINTH_EXIT_SEAL_COOLDOWN_MS = 60_000;
-export const LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS = 2_000;
-export const LABYRINTH_ICE_TRAP_DURATION_MS = 30_000;
-export const LABYRINTH_TELEPORT_ANIMATION_MS = 1_400;
+export const IMPOSTOR_GAME_DURATION_MS = 8 * 60_000;
+export const IMPOSTOR_IDLE_LIMIT_MS = 60_000;
+export const IMPOSTOR_RESHUFFLE_INTERVAL_MS = 60_000;
+export const IMPOSTOR_MIN_HUMAN_PLAYERS = 1;
+export const IMPOSTOR_GHOST_DURATION_MS = 5_000;
+export const IMPOSTOR_TRAP_COOLDOWN_MS = 15_000;
+export const IMPOSTOR_EXIT_SEAL_COOLDOWN_MS = 60_000;
+export const IMPOSTOR_WALL_PLACEMENT_COOLDOWN_MS = 10_000;
+export const IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS = 60_000;
+export const IMPOSTOR_GENERATOR_REPAIR_DURATION_MS = 5_000;
+export const IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS = 3 * 60_000;
+export const IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS = 3_000;
+export const IMPOSTOR_EMERGENCY_MEETING_VOTING_MS = 60_000;
+export const IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS = 7_000;
+export const IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE = 5;
+export const IMPOSTOR_ICE_TRAP_DURATION_MS = 30_000;
+export const IMPOSTOR_TELEPORT_ANIMATION_MS = 1_400;
 export const INFECTION_HUNT_DELAY_MS = 10_000;
 export const INFECTION_SAFE_ZONE_DURATION_MS = 10_000;
 export const INFECTION_SAFE_ZONE_COOLDOWN_MS = 60_000;
@@ -40,18 +48,41 @@ export const INFECTION_MAX_PLAYERS = 6;
 export const INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS = 20_000;
 export const INFECTION_LAST_SURVIVOR_TRAP_COOLDOWN_MS = 20_000;
 export const INFECTION_LAST_SURVIVOR_HUNT_COUNTDOWN_MS = 5_000;
+export const INFECTION_LAST_SURVIVOR_BURN_DURATION_MS = 4_000;
+export const INFECTION_WALL_PLACEMENT_COOLDOWN_MS = 5_000;
 export const INFECTION_ICE_TRAP_DURATION_MS = 10_000;
 export const INFECTION_RESHUFFLE_INTERVAL_MS = 60_000;
-export const INFECTION_WALL_BREAK_COOLDOWN_MS = 5_000;
 export const INFECTION_GHOST_PICKUP_COUNT = 3;
 export const INFECTION_GHOST_DURATION_MS = 15_000;
 export const INFECTION_INVISIBLE_PICKUP_COUNT = 3;
 export const INFECTION_INVISIBLE_DURATION_MS = 15_000;
 export const INFECTION_SHIELD_PICKUP_COUNT = 3;
 export const INFECTION_SHIELD_DURATION_MS = 15_000;
-const LABYRINTH_SHIELD_PICKUP_COUNT = 3;
-const LABYRINTH_SHIELD_RESPAWN_MS = 30_000;
-type MazeEndReason = 'capture' | 'timer' | 'inactivity' | 'escape' | 'surrender' | 'infection';
+const IMPOSTOR_SHIELD_PICKUP_COUNT = 3;
+const IMPOSTOR_SHIELD_RESPAWN_MS = 30_000;
+type ImpostorEndReason = 'capture' | 'timer' | 'inactivity' | 'escape' | 'surrender' | 'infection' | 'emergency_meeting';
+
+export type ImpostorEmergencyMeeting = {
+  id: string;
+  phase: 'announcement' | 'voting' | 'results';
+  starterId: string;
+  starterName: string;
+  startedAt: number;
+  phaseEndsAt: number;
+  votesCast: number;
+  voterCount: number;
+  results?: {
+    goodTeamWon: boolean;
+    impostorId: string;
+    ballots: Array<{
+      voterId: string;
+      voterName: string;
+      targetId: string | null;
+      targetName: string;
+      targetWasImpostor: boolean;
+    }>;
+  };
+};
 
 export function getRandomBoostDelayMs(random: () => number = Math.random): number {
   return BOOST_MIN_DELAY_MS
@@ -66,11 +97,18 @@ interface IPendingBoostDecision {
   timeout: NodeJS.Timeout | null;
 }
 
+interface IPendingImpostorToolRequest {
+  requesterId: string;
+  targetId: string;
+  toolType: ImpostorToolType;
+  timeout: NodeJS.Timeout;
+}
+
 export class GameInstance {
   public id: string;
   public mode: GameMode;
   public rules: IGameModeRules;
-  public board: Board | MazeBoard;
+  public board: Board | ImpostorBoardBase;
   public playersList: string[] = [];
   public currentTurnIndex: number = 0;
   
@@ -84,9 +122,9 @@ export class GameInstance {
   public hasSpawnedExchangeItem: boolean = false;
   public readonly impostorId: string | null;
   public onPrivateStateChange: (playerId: string, event: string, data: unknown) => void = () => {};
-  private readonly mazeMoveAt = new Map<string, number>();
-  private readonly mazeActionsUsed = new Map<string, number>();
-  private readonly mazePublicEvents: Array<{
+  private readonly impostorMoveAt = new Map<string, number>();
+  private readonly impostorActionsUsed = new Map<string, number>();
+  private readonly impostorPublicEvents: Array<{
     id: string;
     type: string;
     playerId?: string;
@@ -94,38 +132,50 @@ export class GameInstance {
     wallX?: number;
     wallY?: number;
     wallIsHorizontal?: boolean;
-    trapType?: MazeTrapType;
+    trapType?: ImpostorTrapType;
     shielded?: boolean;
     targetName?: string;
     rescuerName?: string;
     pairNumber?: number;
     exitNumber?: number;
     power?: InfectionLastSurvivorPower;
+    generatorSector?: string;
   }> = [];
-  private readonly mazeExitOpenUsed = new Set<string>();
-  private mazeKeysDelivered = 0;
-  private mazeGoodKeysDelivered = 0;
-  private mazeGameTimer: NodeJS.Timeout | null = null;
-  private mazeTimerInterval: NodeJS.Timeout | null = null;
-  private mazeInactivityTimer: NodeJS.Timeout | null = null;
-  private mazeLayoutChangedAt = 0;
-  private mazeEndReason: MazeEndReason | null = null;
-  private lastMazeGhostId: string | null = null;
-  private mazeGhostPickupCount = 0;
-  private mazeTrapCooldownUntil: Record<MazeTrapType, number> = { ice: 0, teleport: 0 };
-  private readonly infectionTrapCooldownUntil = new Map<string, Record<MazeTrapType, number>>();
-  private mazeWallPlacementCooldownUntil = new Map<string, number>();
-  private mazeExitSealCooldownUntil = 0;
-  private mazeShieldRespawnTimers = new Set<NodeJS.Timeout>();
+  private readonly impostorExitOpenUsed = new Set<string>();
+  private impostorGoodPlayersReturned = 0;
+  private impostorGameTimer: NodeJS.Timeout | null = null;
+  private impostorTimerInterval: NodeJS.Timeout | null = null;
+  private impostorInactivityTimer: NodeJS.Timeout | null = null;
+  private impostorLayoutChangedAt = 0;
+  private impostorLayoutChangeInProgress = false;
+  private impostorGeneratorSabotageCooldownUntil = 0;
+  private impostorEmergencyMeetingAvailableAt = 0;
+  private impostorEmergencyMeeting: ImpostorEmergencyMeeting | null = null;
+  private readonly impostorEmergencyMeetingVotes = new Map<string, string>();
+  private impostorEmergencyMeetingTimers: NodeJS.Timeout[] = [];
+  private impostorEmergencyMeetingPausedAt = 0;
+  private impostorEmergencyMeetingGameRemainingMs = 0;
+  private readonly impostorToolRequests = new Map<string, IPendingImpostorToolRequest>();
+  private impostorToolRequestSequence = 0;
+  private impostorEndReason: ImpostorEndReason | null = null;
+  private lastImpostorGhostId: string | null = null;
+  private impostorGhostPickupCount = 0;
+  private impostorTrapCooldownUntil: Record<ImpostorTrapType, number> = { ice: 0, teleport: 0 };
+  private readonly impostorGeneratorRepairTimers = new Map<string, NodeJS.Timeout>();
+  private readonly infectionTrapCooldownUntil = new Map<string, Record<ImpostorTrapType, number>>();
+  private impostorWallPlacementCooldownUntil = new Map<string, number>();
+  private impostorExitSealCooldownUntil = 0;
+  private impostorShieldRespawnTimers = new Set<NodeJS.Timeout>();
   private readonly infectedPlayerIds = new Set<string>();
   private readonly infectionSafeZoneEnteredAt = new Map<string, number>();
   private readonly infectionSafeZoneCooldownUntil = new Map<string, number>();
   private readonly infectionSafeZoneTimers = new Map<string, NodeJS.Timeout>();
-  private readonly infectionWallBreakCooldownUntil = new Map<string, number>();
   private readonly infectionLastSurvivorPowerCooldownUntil =
     new Map<string, Record<InfectionLastSurvivorPower, number>>();
   private infectionLastSurvivorAlertSent = false;
   private infectionLastSurvivorCountdownUntil = 0;
+  private infectionBurnUntil = 0;
+  private infectionBurnTimer: NodeJS.Timeout | null = null;
   private infectionHuntStarted = false;
 
   private turnTimer: NodeJS.Timeout | null = null;
@@ -171,10 +221,10 @@ export class GameInstance {
     this.maxStrikesBeforeKick = options.maxStrikesBeforeKick;
 
     const size = this.rules.boardSize;
-    const isMazeBoardMode = mode === 'labyrinth' || mode === 'infection';
+    const isImpostorBoardMode = mode === 'impostor' || mode === 'infection';
     this.board = mode === 'infection'
       ? new InfectionBoard(size)
-      : mode === 'labyrinth' ? new MazeBoard(size) : new Board(size);
+      : mode === 'impostor' ? new ImpostorBoard(size) : new Board(size);
     
     const teamCounts: { [team: number]: number } = { 1: 0, 2: 0 };
 
@@ -214,10 +264,10 @@ export class GameInstance {
       );
       this.board.addPlayer(playerObj);
     });
-    if (isMazeBoardMode) {
+    if (isImpostorBoardMode) {
       const humanPlayers = roomPlayers.filter(player => !player.id.startsWith('bot_'));
       if (humanPlayers.length < 1) {
-        throw new Error('Labyrinth requires at least one human player.');
+        throw new Error('Impostor requires at least one human player.');
       }
       if (mode === 'infection' &&
           (roomPlayers.length < INFECTION_MIN_PLAYERS || roomPlayers.length > INFECTION_MAX_PLAYERS)) {
@@ -231,7 +281,6 @@ export class GameInstance {
       } else {
         this.impostorId = humanPlayers[Math.floor(Math.random() * humanPlayers.length)].id;
       }
-      const goodHumanCount = humanPlayers.filter(p => p.id !== this.impostorId).length;
       if (mode === 'infection' && this.impostorId) {
         this.infectedPlayerIds.add(this.impostorId);
         const initialInfected = this.board.players.get(this.impostorId);
@@ -239,21 +288,20 @@ export class GameInstance {
         this.getInfectionBoard().placePlayerAtSouthEdge(this.impostorId);
       }
 
-      this.getMazeBoard().generateRandomMazeWalls(undefined, Math.random, roomPlayers.length);
+      if (mode === 'impostor') this.getImpostorBoard().spawnGenerators();
+      this.getImpostorBoard().generateRandomImpostorWalls(undefined, Math.random, roomPlayers.length);
       if (mode === 'infection') {
-        this.getMazeBoard().spawnTeleports();
+        this.getImpostorBoard().spawnTeleports();
         this.getInfectionBoard().respawnInfectionPowerups(
           INFECTION_GHOST_PICKUP_COUNT,
           INFECTION_INVISIBLE_PICKUP_COUNT,
           INFECTION_SHIELD_PICKUP_COUNT
         );
       }
-      if (mode === 'labyrinth') {
-        this.getMazeBoard().spawnKeys(humanPlayers.length);
-        this.getMazeBoard().spawnTeleports();
-        this.getMazeBoard().spawnShieldPickups(LABYRINTH_SHIELD_PICKUP_COUNT);
-        this.mazeGhostPickupCount = Math.max(1, goodHumanCount);
-        this.getMazeBoard().spawnGhostPickups(this.mazeGhostPickupCount);
+      if (mode === 'impostor') {
+        const keyOwnerIds = humanPlayers.map(player => player.id);
+        this.getImpostorBoard().spawnKeys(keyOwnerIds);
+        this.getImpostorBoard().spawnTools();
       }
     } else {
       this.impostorId = null;
@@ -263,33 +311,40 @@ export class GameInstance {
   public start() {
     this.state = 'playing';
     this.startTime = Date.now();
+    if (this.mode === 'impostor') {
+      this.impostorEmergencyMeetingAvailableAt =
+        this.startTime + IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS;
+    }
     for (const playerId of this.playersList) {
       if (!playerId.startsWith('bot_')) this.recordPlayerActivity(playerId);
     }
-    if (this.isMazeBoardMode()) {
-      this.startMazeTimer();
+    if (this.isImpostorBoardMode()) {
+      this.startImpostorTimer();
     } else if (this.isFfaMode()) {
       this.board.spawnKillerItem();
       this.hasSpawnedKillerItem = true;
     } else {
       this.board.spawnFfaBoost('wall_pickup');
     }
-    if (!this.isMazeBoardMode()) {
+    if (!this.isImpostorBoardMode()) {
       this.board.spawnFfaBoost('portal', this.getPortalSpawnExclusions());
       this.board.spawnExchangeItem();
       this.hasSpawnedExchangeItem = true;
       this.board.spawnGhostItem();
       this.startTimedBoostLifecycles();
     }
-    if (!this.isMazeBoardMode()) this.startTurnTimer();
+    if (!this.isImpostorBoardMode()) this.startTurnTimer();
     this.onStateChange('gameStarted', {
       mode: this.mode,
       board: this.board.toDTO(this.getCurrentPlayer()),
-      ...(this.isMazeBoardMode()
+      ...(this.isImpostorBoardMode()
         ? {
-            gameTimeLimitSeconds: LABYRINTH_GAME_DURATION_MS / 1000,
-            gameSecondsRemaining: LABYRINTH_GAME_DURATION_MS / 1000,
-            mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
+            gameTimeLimitSeconds: IMPOSTOR_GAME_DURATION_MS / 1000,
+            gameSecondsRemaining: IMPOSTOR_GAME_DURATION_MS / 1000,
+            impostorSecondsUntilChange: this.getImpostorSecondsUntilChange(),
+            impostorGeneratorSabotageSecondsRemaining: this.getImpostorGeneratorSabotageCooldownSeconds(),
+            impostorEmergencyMeeting: this.getImpostorEmergencyMeetingState(),
+            impostorEmergencyMeetingSecondsRemaining: this.getImpostorEmergencyMeetingSecondsRemaining(),
             serverTime: Date.now()
           }
         : {
@@ -298,26 +353,27 @@ export class GameInstance {
             turnSecondsRemaining: this.turnTimeLimitSeconds
           })
     });
-    if (this.isMazeBoardMode()) {
-      this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    if (this.isImpostorBoardMode()) {
+      this.onStateChange('impostorStateChanged', this.getImpostorStateData());
     }
-    if (this.isMazeBoardMode()) {
-      this.emitPrivateMazeTrapState();
-      if (this.mode === 'labyrinth' || this.mode === 'infection') this.emitMazeGhostPickups();
+    if (this.isImpostorBoardMode()) {
+      this.emitPrivateImpostorActionStates();
+      this.emitPrivateImpostorTrapState();
+      if (this.mode === 'infection') this.emitImpostorGhostPickups();
       if (this.mode === 'infection') {
         this.initializeInfectionSafeZones();
         this.emitInfectionState();
       }
     }
-    if (!this.isMazeBoardMode()) this.checkTriggerBotTurn();
+    if (!this.isImpostorBoardMode()) this.checkTriggerBotTurn();
   }
 
   private isFfaMode(): boolean {
     return this.mode === '4-FFA' || this.mode === '6-FFA';
   }
 
-  private isMazeBoardMode(): boolean {
-    return this.mode === 'labyrinth' || this.mode === 'infection';
+  private isImpostorBoardMode(): boolean {
+    return this.mode === 'impostor' || this.mode === 'infection';
   }
 
   private getPortalSpawnExclusions(): { x: number; y: number }[] {
@@ -422,7 +478,7 @@ export class GameInstance {
   }
 
   private checkTriggerBotTurn() {
-    if (this.isMazeBoardMode()) return;
+    if (this.isImpostorBoardMode()) return;
     const currentId = this.getCurrentPlayer();
     if (currentId && currentId.startsWith('bot_')) {
       const thinkDelay = 400 + Math.floor(Math.random() * 500);
@@ -504,17 +560,20 @@ export class GameInstance {
     this.clearPendingBoostDecision();
     this.clearPlayerInactivityTimers();
     this.clearTimedBoostTimers();
-    this.clearMazeTimers();
+    this.clearImpostorTimers();
+    this.clearImpostorToolRequests();
+    if (this.infectionBurnTimer) clearTimeout(this.infectionBurnTimer);
+    this.infectionBurnTimer = null;
     for (const timer of this.infectionSafeZoneTimers.values()) clearTimeout(timer);
     this.infectionSafeZoneTimers.clear();
-    for (const timer of this.mazeShieldRespawnTimers) clearTimeout(timer);
-    this.mazeShieldRespawnTimers.clear();
+    for (const timer of this.impostorShieldRespawnTimers) clearTimeout(timer);
+    this.impostorShieldRespawnTimers.clear();
     this.state = 'finished';
   }
 
-  private getMazeBoard(): MazeBoard {
-    if (!(this.board instanceof MazeBoard)) {
-      throw new Error('Labyrinth board is not available for this game mode.');
+  private getImpostorBoard(): ImpostorBoardBase {
+    if (!(this.board instanceof ImpostorBoardBase)) {
+      throw new Error('Impostor board is not available for this game mode.');
     }
     return this.board;
   }
@@ -526,143 +585,340 @@ export class GameInstance {
     return this.board;
   }
 
-  private startMazeTimer(): void {
-    this.clearMazeTimers();
-    this.scheduleMazeInactivityTimer();
-    this.mazeGameTimer = setTimeout(() => {
-      this.mazeGameTimer = null;
+  private startImpostorTimer(gameDurationMs: number = IMPOSTOR_GAME_DURATION_MS): void {
+    this.clearImpostorTimers();
+    this.scheduleImpostorInactivityTimer();
+    this.impostorGameTimer = setTimeout(() => {
+      this.impostorGameTimer = null;
       if (this.state !== 'playing') return;
       if (this.mode === 'infection') {
-        this.finishMazeGame(
+        this.finishImpostorGame(
           this.getInfectionSurvivorIds().length > 0 ? 'survivors' : 'infected',
           'timer'
         );
       } else {
-        this.finishMazeGame(this.impostorId, 'timer');
+        this.finishImpostorGame(this.impostorId, 'timer');
       }
-    }, LABYRINTH_GAME_DURATION_MS);
-    this.mazeGameTimer.unref();
-    this.mazeTimerInterval = setInterval(() => {
+    }, gameDurationMs);
+    this.impostorGameTimer.unref();
+    this.impostorTimerInterval = setInterval(() => {
       if (this.state !== 'playing') {
-        this.clearMazeTimers();
+        this.clearImpostorTimers();
         return;
       }
-      this.onStateChange('mazeTimerUpdated', {
-        gameSecondsRemaining: this.getMazeRemainingSeconds(),
-        mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
+      this.onStateChange('impostorTimerUpdated', {
+        gameSecondsRemaining: this.getImpostorRemainingSeconds(),
+        impostorSecondsUntilChange: this.getImpostorSecondsUntilChange(),
+        impostorGeneratorSabotageSecondsRemaining: this.getImpostorGeneratorSabotageCooldownSeconds(),
+        impostorEmergencyMeetingSecondsRemaining: this.getImpostorEmergencyMeetingSecondsRemaining(),
         serverTime: Date.now()
       });
-      const mazeStateExpired = this.expireMazePlayerEffects();
-      if (mazeStateExpired) this.onStateChange('mazeStateChanged', this.getMazeStateData());
-      if (mazeStateExpired && this.mode === 'infection') this.resolveInfectionContact();
-      this.emitPrivateMazeTrapState();
-      this.expireMazeGhostModes();
-      this.emitPrivateMazeActionStates();
+      const impostorStateExpired = this.expireImpostorPlayerEffects();
+      if (impostorStateExpired) this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+      if (impostorStateExpired && this.mode === 'infection') this.resolveInfectionContact();
+      this.emitPrivateImpostorTrapState();
+      this.expireImpostorGhostModes();
+      this.emitPrivateImpostorActionStates();
       if (this.mode === 'infection') {
         if (!this.infectionHuntStarted && this.startTime &&
             Date.now() >= this.startTime + INFECTION_HUNT_DELAY_MS) {
           this.infectionHuntStarted = true;
-          this.emitMazePublicEvent('infection_hunt_started');
+          this.emitImpostorPublicEvent('infection_hunt_started');
         }
         this.processInfectionSafeZones();
         this.emitInfectionState();
       }
     }, 1000);
-    this.mazeTimerInterval.unref();
+    this.impostorTimerInterval.unref();
   }
 
-  private clearMazeTimers(): void {
-    if (this.mazeGameTimer) clearTimeout(this.mazeGameTimer);
-    if (this.mazeTimerInterval) clearInterval(this.mazeTimerInterval);
-    if (this.mazeInactivityTimer) clearTimeout(this.mazeInactivityTimer);
-    this.mazeGameTimer = null;
-    this.mazeTimerInterval = null;
-    this.mazeInactivityTimer = null;
+  private clearImpostorTimers(): void {
+    if (this.impostorGameTimer) clearTimeout(this.impostorGameTimer);
+    if (this.impostorTimerInterval) clearInterval(this.impostorTimerInterval);
+    if (this.impostorInactivityTimer) clearTimeout(this.impostorInactivityTimer);
+    this.impostorGameTimer = null;
+    this.impostorTimerInterval = null;
+    this.impostorInactivityTimer = null;
+    for (const timer of this.impostorGeneratorRepairTimers.values()) clearTimeout(timer);
+    this.impostorGeneratorRepairTimers.clear();
+    for (const timer of this.impostorEmergencyMeetingTimers) clearTimeout(timer);
+    this.impostorEmergencyMeetingTimers = [];
   }
 
-  private scheduleMazeInactivityTimer(): void {
-    if (this.mazeInactivityTimer) clearTimeout(this.mazeInactivityTimer);
-    if (!this.isMazeBoardMode() || this.state !== 'playing') return;
-    this.mazeInactivityTimer = setTimeout(() => {
-      this.mazeInactivityTimer = null;
-      if (this.state === 'playing') {
-        this.finishMazeGame(this.mode === 'infection' ? 'infected' : this.impostorId, 'inactivity');
+  private isInfectionBurning(now: number = Date.now()): boolean {
+    return this.mode === 'infection' && this.infectionBurnUntil > now;
+  }
+
+  private beginInfectionBurnSequence(): void {
+    if (this.mode !== 'infection' || this.state !== 'playing' || this.isInfectionBurning()) return;
+
+    this.infectionBurnUntil = Date.now() + INFECTION_LAST_SURVIVOR_BURN_DURATION_MS;
+    this.emitImpostorPublicEvent('infection_final_survivor_burning');
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+    this.emitInfectionState();
+    this.infectionBurnTimer = setTimeout(() => {
+      this.infectionBurnTimer = null;
+      this.infectionBurnUntil = 0;
+      if (this.state === 'playing' && this.getInfectionSurvivorIds().length === 0) {
+        this.finishImpostorGame('infected', 'infection');
+      } else {
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+        this.emitInfectionState();
       }
-    }, LABYRINTH_IDLE_LIMIT_MS);
-    this.mazeInactivityTimer.unref();
+    }, INFECTION_LAST_SURVIVOR_BURN_DURATION_MS);
+    this.infectionBurnTimer.unref();
   }
 
-  public getMazeRemainingSeconds(): number {
-    if (!this.startTime) return LABYRINTH_GAME_DURATION_MS / 1000;
-    return Math.max(0, Math.ceil((this.startTime + LABYRINTH_GAME_DURATION_MS - Date.now()) / 1000));
+  private scheduleImpostorInactivityTimer(): void {
+    if (this.impostorInactivityTimer) clearTimeout(this.impostorInactivityTimer);
+    if (!this.isImpostorBoardMode() || this.state !== 'playing' ||
+        this.isImpostorEmergencyMeetingActive()) return;
+    this.impostorInactivityTimer = setTimeout(() => {
+      this.impostorInactivityTimer = null;
+      if (this.state === 'playing' && !this.isImpostorEmergencyMeetingActive()) {
+        this.finishImpostorGame(this.mode === 'infection' ? 'infected' : this.impostorId, 'inactivity');
+      }
+    }, IMPOSTOR_IDLE_LIMIT_MS);
+    this.impostorInactivityTimer.unref();
   }
 
-  public getMazeGameTimeLimitSeconds(): number {
-    return LABYRINTH_GAME_DURATION_MS / 1000;
+  public getImpostorRemainingSeconds(): number {
+    if (this.isImpostorEmergencyMeetingActive()) {
+      return Math.ceil(this.impostorEmergencyMeetingGameRemainingMs / 1000);
+    }
+    if (!this.startTime) return IMPOSTOR_GAME_DURATION_MS / 1000;
+    return Math.max(0, Math.ceil((this.startTime + IMPOSTOR_GAME_DURATION_MS - Date.now()) / 1000));
   }
 
-  public getMazeSecondsUntilChange(now: number = Date.now()): number {
-    if (!this.mazeLayoutChangedAt) return 0;
+  public getImpostorGameTimeLimitSeconds(): number {
+    return IMPOSTOR_GAME_DURATION_MS / 1000;
+  }
+
+  public getImpostorSecondsUntilChange(now: number = Date.now()): number {
+    if (!this.impostorLayoutChangedAt) return 0;
     const interval = this.mode === 'infection'
       ? INFECTION_RESHUFFLE_INTERVAL_MS
-      : LABYRINTH_RESHUFFLE_INTERVAL_MS;
+      : IMPOSTOR_RESHUFFLE_INTERVAL_MS;
     return Math.max(0, Math.ceil(
-      (this.mazeLayoutChangedAt + interval - now) / 1000
+      (this.impostorLayoutChangedAt + interval - now) / 1000
     ));
   }
 
-  public getPrivateMazeTrapState(playerId: string): {
-    traps: IMazeTrap[];
-    cooldowns: Record<MazeTrapType, number>;
-  } | null {
-    const mayViewTraps = this.mode === 'labyrinth'
-      ? playerId === this.impostorId
-      : this.mode === 'infection' && !this.isInfected(playerId);
-    if (!this.isMazeBoardMode() || !mayViewTraps) return null;
+  public getImpostorGeneratorSabotageCooldownSeconds(now: number = Date.now()): number {
+    return Math.max(0, Math.ceil((this.impostorGeneratorSabotageCooldownUntil - now) / 1000));
+  }
+
+  public getImpostorEmergencyMeetingSecondsRemaining(now: number = Date.now()): number {
+    if (this.mode !== 'impostor' || !this.impostorEmergencyMeetingAvailableAt) return 0;
+    const effectiveNow = this.isImpostorEmergencyMeetingActive() ? this.impostorEmergencyMeetingPausedAt : now;
+    return Math.max(0, Math.ceil((this.impostorEmergencyMeetingAvailableAt - effectiveNow) / 1000));
+  }
+
+  public getImpostorEmergencyMeetingState(): ImpostorEmergencyMeeting | null {
+    if (!this.impostorEmergencyMeeting) return null;
     return {
-      traps: this.getMazeBoard().traps.map(trap => ({ ...trap })),
-      cooldowns: this.getMazeTrapCooldowns(playerId)
+      ...this.impostorEmergencyMeeting,
+      ...(this.impostorEmergencyMeeting.results
+        ? { results: { ...this.impostorEmergencyMeeting.results,
+            ballots: this.impostorEmergencyMeeting.results.ballots.map(ballot => ({ ...ballot })) } }
+        : {})
     };
   }
 
-  private getMazeTrapCooldowns(playerId?: string, now: number = Date.now()): Record<MazeTrapType, number> {
+  public getImpostorEmergencyMeetingVote(playerId: string): string | null {
+    return this.impostorEmergencyMeetingVotes.get(playerId) ?? null;
+  }
+
+  private isImpostorEmergencyMeetingActive(): boolean {
+    return this.mode === 'impostor' && this.impostorEmergencyMeeting !== null;
+  }
+
+  public callImpostorEmergencyMeeting(playerId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        this.getImpostorEmergencyMeetingSecondsRemaining() > 0 || !this.impostorId) return false;
+    const caller = this.board.players.get(playerId);
+    if (!caller || caller.id === this.impostorId || caller.isDead || caller.hasImpostorEscaped ||
+        !this.getImpostorBoard().isSafeZoneCell(caller.x, caller.y)) return false;
+
+    const activeVoters = this.playersList.filter(id => {
+      const player = this.board.players.get(id);
+      return !!player && !player.isDead;
+    });
+    const now = Date.now();
+    this.impostorEmergencyMeetingAvailableAt = now + IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS;
+    this.impostorEmergencyMeetingPausedAt = now;
+    this.impostorEmergencyMeetingGameRemainingMs = this.getImpostorRemainingSeconds() * 1000;
+    if (this.impostorGameTimer) clearTimeout(this.impostorGameTimer);
+    if (this.impostorTimerInterval) clearInterval(this.impostorTimerInterval);
+    if (this.impostorInactivityTimer) clearTimeout(this.impostorInactivityTimer);
+    this.impostorGameTimer = null;
+    this.impostorTimerInterval = null;
+    this.impostorInactivityTimer = null;
+    for (const repairPlayerId of [...this.impostorGeneratorRepairTimers.keys()]) {
+      this.cancelImpostorGeneratorRepair(repairPlayerId);
+    }
+    this.impostorEmergencyMeetingVotes.clear();
+    const meeting: ImpostorEmergencyMeeting = {
+      id: `emergency_meeting_${now}`,
+      phase: 'announcement',
+      starterId: caller.id,
+      starterName: caller.username,
+      startedAt: now,
+      phaseEndsAt: now + IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS,
+      votesCast: 0,
+      voterCount: activeVoters.length
+    };
+    this.impostorEmergencyMeeting = meeting;
+    this.emitImpostorState();
+    this.impostorEmergencyMeetingTimers.push(setTimeout(() => {
+      if (this.state !== 'playing' || this.impostorEmergencyMeeting?.id !== meeting.id) return;
+      meeting.phase = 'voting';
+      meeting.phaseEndsAt = Date.now() + IMPOSTOR_EMERGENCY_MEETING_VOTING_MS;
+      for (const botId of activeVoters.filter(id => id.startsWith('bot_'))) {
+        const candidates = activeVoters.filter(id => !this.board.players.get(id)?.isDead);
+        if (candidates.length > 0) this.impostorEmergencyMeetingVotes.set(
+          botId,
+          candidates[Math.floor(Math.random() * candidates.length)]
+        );
+      }
+      meeting.votesCast = this.impostorEmergencyMeetingVotes.size;
+      this.emitImpostorState();
+      if (meeting.votesCast >= meeting.voterCount) {
+        this.resolveImpostorEmergencyMeeting();
+        return;
+      }
+      this.impostorEmergencyMeetingTimers.push(setTimeout(() => {
+        if (this.impostorEmergencyMeeting?.id === meeting.id &&
+            this.impostorEmergencyMeeting.phase === 'voting') {
+          this.resolveImpostorEmergencyMeeting();
+        }
+      }, IMPOSTOR_EMERGENCY_MEETING_VOTING_MS));
+      this.impostorEmergencyMeetingTimers[this.impostorEmergencyMeetingTimers.length - 1].unref();
+    }, IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS));
+    this.impostorEmergencyMeetingTimers[0].unref();
+    return true;
+  }
+
+  public voteImpostorEmergencyMeeting(playerId: string, targetId: string): boolean {
+    const meeting = this.impostorEmergencyMeeting;
+    if (this.mode !== 'impostor' || this.state !== 'playing' ||
+        meeting?.phase !== 'voting' || this.impostorEmergencyMeetingVotes.has(playerId)) return false;
+    const voter = this.board.players.get(playerId);
+    const target = this.board.players.get(targetId);
+    if (!voter || voter.isDead || !target || target.isDead ||
+        !this.playersList.includes(playerId) || !this.playersList.includes(targetId)) return false;
+    this.impostorEmergencyMeetingVotes.set(playerId, targetId);
+    meeting.votesCast = this.impostorEmergencyMeetingVotes.size;
+    this.onPrivateStateChange(playerId, 'impostorEmergencyMeetingVoteRecorded', { targetId });
+    this.emitImpostorState();
+    if (meeting.votesCast >= meeting.voterCount) this.resolveImpostorEmergencyMeeting();
+    return true;
+  }
+
+  private resolveImpostorEmergencyMeeting(): void {
+    const meeting = this.impostorEmergencyMeeting;
+    if (!meeting || meeting.phase !== 'voting' || !this.impostorId) return;
+    for (const timer of this.impostorEmergencyMeetingTimers) clearTimeout(timer);
+    this.impostorEmergencyMeetingTimers = [];
+    const ballots: NonNullable<ImpostorEmergencyMeeting['results']>['ballots'] =
+      [...this.impostorEmergencyMeetingVotes].map(([voterId, targetId]) => {
+      const voter = this.board.players.get(voterId);
+      const target = this.board.players.get(targetId);
+      return {
+        voterId,
+        voterName: voter?.username ?? voterId,
+        targetId,
+        targetName: target?.username ?? targetId,
+        targetWasImpostor: targetId === this.impostorId
+      };
+    });
+    for (const voterId of this.playersList) {
+      if (this.impostorEmergencyMeetingVotes.has(voterId)) continue;
+      const voter = this.board.players.get(voterId);
+      if (!voter || voter.isDead) continue;
+      ballots.push({
+        voterId,
+        voterName: voter.username,
+        targetId: null,
+        targetName: '',
+        targetWasImpostor: false
+      });
+    }
+    const goodTeamWon = ballots.some(ballot => ballot.voterId !== this.impostorId) &&
+      ballots.filter(ballot => ballot.voterId !== this.impostorId)
+        .every(ballot => ballot.targetWasImpostor);
+    meeting.phase = 'results';
+    meeting.phaseEndsAt = Date.now() + IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS;
+    meeting.votesCast = ballots.length;
+    meeting.results = { goodTeamWon, impostorId: this.impostorId, ballots };
+    this.emitImpostorState();
+    const resultsTimer = setTimeout(() => {
+      if (this.impostorEmergencyMeeting?.id !== meeting.id || this.state !== 'playing') return;
+      this.startTime = (this.startTime ?? Date.now()) +
+        Math.max(0, Date.now() - this.impostorEmergencyMeetingPausedAt);
+      this.impostorLayoutChangedAt += Math.max(0, Date.now() - this.impostorEmergencyMeetingPausedAt);
+      this.impostorEmergencyMeetingAvailableAt +=
+        Math.max(0, Date.now() - this.impostorEmergencyMeetingPausedAt);
+      this.impostorEmergencyMeeting = null;
+      this.impostorEmergencyMeetingVotes.clear();
+      this.finishImpostorGame(goodTeamWon ? 'good' : this.impostorId, 'emergency_meeting');
+    }, IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS);
+    resultsTimer.unref();
+    this.impostorEmergencyMeetingTimers.push(resultsTimer);
+  }
+
+  public getPrivateImpostorTrapState(playerId: string): {
+    traps: IImpostorTrap[];
+    cooldowns: Record<ImpostorTrapType, number>;
+  } | null {
+    const mayViewTraps = this.mode === 'impostor'
+      ? playerId === this.impostorId
+      : this.mode === 'infection' && !this.isInfected(playerId);
+    if (!this.isImpostorBoardMode() || !mayViewTraps) return null;
+    return {
+      traps: this.getImpostorBoard().traps.map(trap => ({ ...trap })),
+      cooldowns: this.getImpostorTrapCooldowns(playerId)
+    };
+  }
+
+  private getImpostorTrapCooldowns(playerId?: string, now: number = Date.now()): Record<ImpostorTrapType, number> {
     const cooldownUntil = this.mode === 'infection' && playerId
       ? this.infectionTrapCooldownUntil.get(playerId) ?? { ice: 0, teleport: 0 }
-      : this.mazeTrapCooldownUntil;
+      : this.impostorTrapCooldownUntil;
     return {
       ice: Math.max(0, Math.ceil((cooldownUntil.ice - now) / 1000)),
       teleport: Math.max(0, Math.ceil((cooldownUntil.teleport - now) / 1000))
     };
   }
 
-  private emitPrivateMazeTrapState(): void {
-    if (this.mode === 'labyrinth') {
+  private emitPrivateImpostorTrapState(): void {
+    if (this.mode === 'impostor') {
       if (!this.impostorId) return;
-      const state = this.getPrivateMazeTrapState(this.impostorId);
-      if (state) this.onPrivateStateChange(this.impostorId, 'mazeTrapState', state);
+      const state = this.getPrivateImpostorTrapState(this.impostorId);
+      if (state) this.onPrivateStateChange(this.impostorId, 'impostorTrapState', state);
       return;
     }
     if (this.mode === 'infection') {
       for (const playerId of this.getInfectionSurvivorIds()) {
-        const state = this.getPrivateMazeTrapState(playerId);
-        if (state) this.onPrivateStateChange(playerId, 'mazeTrapState', state);
+        const state = this.getPrivateImpostorTrapState(playerId);
+        if (state) this.onPrivateStateChange(playerId, 'impostorTrapState', state);
       }
     }
   }
 
-  private emitPrivateMazeActionStates(): void {
-    if (!this.isMazeBoardMode()) return;
+  private emitPrivateImpostorActionStates(): void {
+    if (!this.isImpostorBoardMode()) return;
     for (const playerId of this.playersList) {
-      const role = this.getPrivateMazeRole(playerId);
+      const role = this.getPrivateImpostorRole(playerId);
       const player = this.board.players.get(playerId);
       if (!role || !player) continue;
-      this.onPrivateStateChange(playerId, 'mazeActionState', {
+      this.onPrivateStateChange(playerId, 'impostorActionState', {
         canBreakBlock: role.canBreakBlock,
         canPlaceWall: role.canPlaceWall,
         canRescue: role.canRescue,
         isInPrison: player.isInPrison,
         wallPlacementCooldownUntil: role.wallPlacementCooldownUntil,
-        wallBreakCooldownUntil: role.wallBreakCooldownUntil
+        serverTime: Date.now()
       });
     }
     }
@@ -680,13 +936,13 @@ export class GameInstance {
 
   private processInfectionSafeZones(now: number = Date.now()): void {
     if (this.mode !== 'infection' || this.state !== 'playing') return;
-    const mazeBoard = this.getInfectionBoard();
+    const impostorBoard = this.getInfectionBoard();
     let boardChanged = false;
 
     for (const playerId of this.getInfectionSurvivorIds()) {
       const player = this.board.players.get(playerId);
       if (!player) continue;
-      const isInside = mazeBoard.isSafeZoneCell(player.x, player.y);
+      const isInside = impostorBoard.isSafeZoneCell(player.x, player.y);
       const enteredAt = this.infectionSafeZoneEnteredAt.get(playerId);
 
       if (!isInside) {
@@ -706,7 +962,7 @@ export class GameInstance {
 
       const fromX = player.x;
       const fromY = player.y;
-      const destination = mazeBoard.ejectPlayerFromSafeZone(playerId);
+      const destination = impostorBoard.ejectPlayerFromSafeZone(playerId);
       if (!destination) {
         console.error(`Could not eject Infection player ${playerId} to the edge of the safe zone.`);
         continue;
@@ -725,7 +981,7 @@ export class GameInstance {
       boardChanged = true;
     }
 
-    if (boardChanged) this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    if (boardChanged) this.onStateChange('impostorStateChanged', this.getImpostorStateData());
   }
 
   private scheduleInfectionSafeZoneExpiry(playerId: string, enteredAt: number): void {
@@ -804,6 +1060,7 @@ export class GameInstance {
       lastSurvivorTeleportCooldownUntil: number;
       lastSurvivorPowerCooldowns: Record<InfectionLastSurvivorPower, number>;
       lastSurvivorCountdownUntil: number;
+      burnUntil: number;
       serverTime: number;
     } | null {
       if (this.mode !== 'infection' || !this.playersList.includes(playerId)) return null;
@@ -834,6 +1091,7 @@ export class GameInstance {
           teleport: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.teleport ?? 0
         },
         lastSurvivorCountdownUntil: this.infectionLastSurvivorCountdownUntil,
+        burnUntil: this.infectionBurnUntil,
         serverTime: Date.now()
       };
     }
@@ -847,111 +1105,326 @@ export class GameInstance {
       }
     }
 
-    private expireMazePlayerEffects(now: number = Date.now()): boolean {
+    private expireImpostorPlayerEffects(now: number = Date.now()): boolean {
     let expired = false;
     for (const player of this.board.players.values()) {
-      if (player.mazeFrozenUntil > 0 && player.mazeFrozenUntil <= now) {
-        player.mazeFrozenUntil = 0;
+      if (player.impostorFrozenUntil > 0 && player.impostorFrozenUntil <= now) {
+        player.impostorFrozenUntil = 0;
         expired = true;
       }
-      if (player.mazeTeleportingUntil > 0 && player.mazeTeleportingUntil <= now) {
-        player.mazeTeleportingUntil = 0;
+      if (player.impostorTeleportingUntil > 0 && player.impostorTeleportingUntil <= now) {
+        player.impostorTeleportingUntil = 0;
         expired = true;
       }
       if (player.invisibleUntil > 0 && player.invisibleUntil <= now) {
         player.invisibleUntil = 0;
         expired = true;
       }
-      if (player.mazeShieldExpiresAt > 0 && player.mazeShieldExpiresAt <= now) {
-        player.mazeShieldExpiresAt = 0;
-        player.mazeShieldActive = false;
+      if (player.impostorShieldExpiresAt > 0 && player.impostorShieldExpiresAt <= now) {
+        player.impostorShieldExpiresAt = 0;
+        player.impostorShieldActive = false;
         expired = true;
       }
     }
     return expired;
   }
 
-  private scheduleMazeShieldRespawn(): void {
+  private scheduleImpostorShieldRespawn(): void {
     const timer = setTimeout(() => {
-      this.mazeShieldRespawnTimers.delete(timer);
+      this.impostorShieldRespawnTimers.delete(timer);
       if (this.state !== 'playing') return;
-      this.getMazeBoard().spawnShieldPickups(LABYRINTH_SHIELD_PICKUP_COUNT);
-      this.onStateChange('mazeStateChanged', this.getMazeStateData());
-    }, LABYRINTH_SHIELD_RESPAWN_MS);
+      this.getImpostorBoard().spawnShieldPickups(IMPOSTOR_SHIELD_PICKUP_COUNT);
+      this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+    }, IMPOSTOR_SHIELD_RESPAWN_MS);
     timer.unref();
-    this.mazeShieldRespawnTimers.add(timer);
+    this.impostorShieldRespawnTimers.add(timer);
   }
 
-  public placeMazeTrap(playerId: string, type: MazeTrapType, x: number, y: number): boolean {
+  public placeImpostorTrap(playerId: string, type: ImpostorTrapType, x: number, y: number): boolean {
     const player = this.board.players.get(playerId);
-    const canPlaceTrap = this.mode === 'labyrinth'
+    const canPlaceTrap = this.mode === 'impostor'
       ? playerId === this.impostorId
       : this.mode === 'infection' && !this.isInfected(playerId);
-    if (!this.isMazeBoardMode() || this.state !== 'playing' ||
+    if (!this.isImpostorBoardMode() || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        this.isInfectionBurning() ||
         !canPlaceTrap || !player || player.isDead ||
-        player.isInPrison || player.hasMazeEscaped ||
+        player.isInPrison || player.hasImpostorEscaped ||
         (type !== 'ice' && type !== 'teleport') ||
+        (this.mode === 'impostor' &&
+          this.getImpostorBoard().traps.filter(trap => trap.type === type).length >= IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE) ||
         (this.mode === 'infection'
           ? (this.infectionTrapCooldownUntil.get(playerId)?.[type] ?? 0)
-          : this.mazeTrapCooldownUntil[type]) > Date.now() ||
-        !this.getMazeBoard().canPlaceTrap(x, y, playerId)) return false;
+          : this.impostorTrapCooldownUntil[type]) > Date.now() ||
+        !this.getImpostorBoard().canPlaceTrap(x, y, playerId)) return false;
 
-    const trap: IMazeTrap = {
-      id: `maze_trap_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    const trap: IImpostorTrap = {
+      id: `impostor_trap_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       type,
       x,
       y
     };
-    if (!this.getMazeBoard().placeTrap(trap, playerId)) return false;
+    if (!this.getImpostorBoard().placeTrap(trap, playerId)) return false;
     if (this.mode === 'infection') {
       const cooldowns = this.infectionTrapCooldownUntil.get(playerId) ?? { ice: 0, teleport: 0 };
       const cooldownDuration = this.isLastInfectionSurvivor(playerId)
         ? INFECTION_LAST_SURVIVOR_TRAP_COOLDOWN_MS
-        : LABYRINTH_TRAP_COOLDOWN_MS;
+        : IMPOSTOR_TRAP_COOLDOWN_MS;
       this.infectionTrapCooldownUntil.set(playerId, {
         ...cooldowns,
         [type]: Date.now() + cooldownDuration
       });
     } else {
-      this.mazeTrapCooldownUntil[type] = Date.now() + LABYRINTH_TRAP_COOLDOWN_MS;
+      this.impostorTrapCooldownUntil[type] = Date.now() + IMPOSTOR_TRAP_COOLDOWN_MS;
     }
     this.recordPlayerActivity(playerId);
-    this.emitPrivateMazeTrapState();
+    this.emitPrivateImpostorTrapState();
     return true;
   }
 
-  private triggerMazeTrap(playerId: string, x: number, y: number): boolean {
+  public removeImpostorTrap(playerId: string, trapId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        playerId !== this.impostorId) return false;
     const player = this.board.players.get(playerId);
-    const mazeBoard = this.getMazeBoard();
-    if (!player || (this.mode === 'labyrinth' && playerId === this.impostorId) ||
+    const trap = this.getImpostorBoard().traps.find(item => item.id === trapId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped || !trap) return false;
+    const removed = this.getImpostorBoard().removeTrapAt(trap.x, trap.y);
+    if (!removed) return false;
+    this.recordPlayerActivity(playerId);
+    this.emitPrivateImpostorTrapState();
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+    return true;
+  }
+
+  public takeImpostorTool(playerId: string, toolId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive()) return false;
+    const player = this.board.players.get(playerId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        !this.getImpostorBoard().takeTool(playerId, toolId)) return false;
+    this.cancelImpostorGeneratorRepair(playerId);
+    this.recordPlayerActivity(playerId);
+    this.emitImpostorState();
+    return true;
+  }
+
+  public dropImpostorTool(playerId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        !this.playersList.includes(playerId)) return false;
+    const player = this.board.players.get(playerId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        !this.getImpostorBoard().dropTool(playerId)) return false;
+    this.cancelImpostorGeneratorRepair(playerId);
+    this.recordPlayerActivity(playerId);
+    this.emitImpostorState();
+    return true;
+  }
+
+  public requestImpostorTool(requesterId: string, targetId: string): boolean {
+    if (!this.arePlayersEligibleForToolTransfer(requesterId, targetId)) return false;
+    const requester = this.getImpostorBoard().players.get(requesterId)!;
+    const target = this.getImpostorBoard().players.get(targetId)!;
+    const toolType = target.impostorTool;
+    if (!toolType || [...this.impostorToolRequests.values()].some(request =>
+      request.requesterId === requesterId || request.targetId === targetId
+    )) return false;
+
+    const requestId = `${Date.now()}-${++this.impostorToolRequestSequence}`;
+    const timeout = setTimeout(() => {
+      const request = this.impostorToolRequests.get(requestId);
+      if (!request) return;
+      this.impostorToolRequests.delete(requestId);
+      this.onPrivateStateChange(request.targetId, 'impostorToolRequestClosed', { requestId });
+      this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+        requestId,
+        status: 'expired',
+        playerName: target.username,
+        toolType
+      });
+    }, 15_000);
+    timeout.unref();
+    this.impostorToolRequests.set(requestId, { requesterId, targetId, toolType, timeout });
+    this.onPrivateStateChange(targetId, 'impostorToolRequestReceived', {
+      requestId,
+      requesterId,
+      requesterName: requester.username,
+      toolType
+    });
+    return true;
+  }
+
+  public respondToImpostorToolRequest(
+    targetId: string,
+    requestId: string,
+    accepted: boolean
+  ): boolean {
+    const request = this.impostorToolRequests.get(requestId);
+    if (!request || request.targetId !== targetId) return false;
+    this.clearImpostorToolRequest(requestId);
+
+    if (!accepted) {
+      this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+        requestId,
+        status: 'denied',
+        playerName: this.getImpostorBoard().players.get(targetId)?.username,
+        toolType: request.toolType
+      });
+      return true;
+    }
+
+    const holder = this.getImpostorBoard().players.get(targetId);
+    const transferred = holder?.impostorTool === request.toolType &&
+      this.arePlayersEligibleForToolTransfer(request.requesterId, targetId) &&
+      this.getImpostorBoard().transferTool(targetId, request.requesterId);
+    if (!transferred) {
+      this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+        requestId,
+        status: 'unavailable',
+        playerName: holder?.username,
+        toolType: request.toolType
+      });
+      return true;
+    }
+
+    this.cancelImpostorGeneratorRepair(targetId);
+    this.cancelImpostorGeneratorRepair(request.requesterId);
+    this.recordPlayerActivity(targetId);
+    this.recordPlayerActivity(request.requesterId);
+    this.emitImpostorState();
+    this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+      requestId,
+      status: 'accepted',
+      playerName: holder?.username,
+      toolType: request.toolType
+    });
+    return true;
+  }
+
+  private arePlayersEligibleForToolTransfer(requesterId: string, targetId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' ||
+        this.isImpostorEmergencyMeetingActive() || requesterId === targetId ||
+        !this.playersList.includes(requesterId) || !this.playersList.includes(targetId)) return false;
+    const requester = this.getImpostorBoard().players.get(requesterId);
+    const target = this.getImpostorBoard().players.get(targetId);
+    if (!requester || !target || requester.isDead || target.isDead ||
+        requester.isInPrison || target.isInPrison ||
+        requester.hasImpostorEscaped || target.hasImpostorEscaped) return false;
+    return Math.max(Math.abs(requester.x - target.x), Math.abs(requester.y - target.y)) <= 1 &&
+      (requester.x !== target.x || requester.y !== target.y);
+  }
+
+  private clearImpostorToolRequest(requestId: string): void {
+    const request = this.impostorToolRequests.get(requestId);
+    if (!request) return;
+    clearTimeout(request.timeout);
+    this.impostorToolRequests.delete(requestId);
+  }
+
+  private clearImpostorToolRequests(): void {
+    for (const requestId of this.impostorToolRequests.keys()) {
+      this.clearImpostorToolRequest(requestId);
+    }
+  }
+
+  public damageImpostorGenerator(playerId: string, generatorId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        playerId !== this.impostorId) return false;
+    const player = this.board.players.get(playerId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        this.getImpostorGeneratorSabotageCooldownSeconds() > 0) return false;
+    const generator = this.getImpostorBoard().damageGenerator(generatorId);
+    if (!generator) return false;
+    this.impostorGeneratorSabotageCooldownUntil = Date.now() + IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS;
+    this.recordPlayerActivity(playerId);
+    this.emitImpostorPublicEvent('generator_sabotaged', {
+      generatorSector: generator.sector,
+      playerName: player.username
+    });
+    this.emitImpostorState();
+    return true;
+  }
+
+  public beginImpostorGeneratorRepair(playerId: string, generatorId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive()) return false;
+    const player = this.board.players.get(playerId);
+    const generator = this.getImpostorBoard().generators.find(item => item.id === generatorId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        player.impostorTool !== 'wrench' || !generator?.isDamaged ||
+        !this.getImpostorBoard().isAdjacentToGenerator(generator, player.x, player.y) ||
+        this.impostorGeneratorRepairTimers.has(playerId)) return false;
+    this.recordPlayerActivity(playerId);
+    const timer = setTimeout(() => {
+      this.impostorGeneratorRepairTimers.delete(playerId);
+      this.onPrivateStateChange(playerId, 'impostorGeneratorRepairEnded', {});
+      const currentPlayer = this.board.players.get(playerId);
+      const currentGenerator = this.getImpostorBoard().generators.find(item => item.id === generatorId);
+      if (this.state !== 'playing' || !currentPlayer || currentPlayer.impostorTool !== 'wrench' ||
+          currentPlayer.isDead || currentPlayer.isInPrison || currentPlayer.hasImpostorEscaped ||
+          !currentGenerator?.isDamaged ||
+          !this.getImpostorBoard().isAdjacentToGenerator(currentGenerator, currentPlayer.x, currentPlayer.y)) {
+        return;
+      }
+      const repaired = this.getImpostorBoard().repairGenerator(generatorId);
+      if (!repaired) return;
+      this.emitImpostorPublicEvent('generator_repaired', {
+        generatorSector: repaired.sector,
+        playerName: currentPlayer.username
+      });
+      this.emitImpostorState();
+    }, IMPOSTOR_GENERATOR_REPAIR_DURATION_MS);
+    timer.unref();
+    this.impostorGeneratorRepairTimers.set(playerId, timer);
+    this.onPrivateStateChange(playerId, 'impostorGeneratorRepairStarted', {
+      generatorId,
+      generatorSector: generator.sector,
+      durationMs: IMPOSTOR_GENERATOR_REPAIR_DURATION_MS,
+      endsAt: Date.now() + IMPOSTOR_GENERATOR_REPAIR_DURATION_MS
+    });
+    return true;
+  }
+
+  private cancelImpostorGeneratorRepair(playerId: string): void {
+    const timer = this.impostorGeneratorRepairTimers.get(playerId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.impostorGeneratorRepairTimers.delete(playerId);
+    this.onPrivateStateChange(playerId, 'impostorGeneratorRepairEnded', {});
+  }
+
+  private emitImpostorState(): void {
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+  }
+
+  private triggerImpostorTrap(playerId: string, x: number, y: number): boolean {
+    const player = this.board.players.get(playerId);
+    const impostorBoard = this.getImpostorBoard();
+    if (!player || (this.mode === 'impostor' && playerId === this.impostorId) ||
         (this.mode === 'infection' && !this.isInfected(playerId))) return false;
-    const trap = mazeBoard.removeTrapAt(x, y);
+    const trap = impostorBoard.removeTrapAt(x, y);
     if (!trap) return false;
 
-    const shielded = player.mazeShieldActive &&
-      (this.mode !== 'infection' || player.mazeShieldExpiresAt > Date.now());
-    if (player.mazeShieldActive && !shielded) {
-      player.mazeShieldActive = false;
-      player.mazeShieldExpiresAt = 0;
+    const shielded = player.impostorShieldActive &&
+      (this.mode !== 'infection' || player.impostorShieldExpiresAt > Date.now());
+    if (player.impostorShieldActive && !shielded) {
+      player.impostorShieldActive = false;
+      player.impostorShieldExpiresAt = 0;
     }
     if (shielded) {
-      player.mazeShieldActive = false;
-      player.mazeShieldExpiresAt = 0;
+      player.impostorShieldActive = false;
+      player.impostorShieldExpiresAt = 0;
     }
     if (!shielded && trap.type === 'ice') {
       const freezeDuration = this.mode === 'infection'
         ? INFECTION_ICE_TRAP_DURATION_MS
-        : LABYRINTH_ICE_TRAP_DURATION_MS;
-      player.mazeFrozenUntil = Date.now() + freezeDuration;
+        : IMPOSTOR_ICE_TRAP_DURATION_MS;
+      player.impostorFrozenUntil = Date.now() + freezeDuration;
     } else if (!shielded && trap.type === 'teleport') {
       const fromX = player.x;
       const fromY = player.y;
-      const destination = mazeBoard.teleportPlayerToRandomBorder(playerId);
+      const destination = impostorBoard.teleportPlayerToRandomBorder(playerId);
       if (destination) {
-        player.mazeTeleportingUntil = Date.now() + LABYRINTH_TELEPORT_ANIMATION_MS;
-        this.mazeMoveAt.set(playerId, Date.now());
-        const newlyCaptured = this.updateMazePrisons();
-        this.emitMazeCaptureEvents(this.getMazeCaptureOwner(newlyCaptured), newlyCaptured);
+        player.impostorTeleportingUntil = Date.now() + IMPOSTOR_TELEPORT_ANIMATION_MS;
+        this.impostorMoveAt.set(playerId, Date.now());
+        const newlyCaptured = this.updateImpostorPrisons();
+        this.emitImpostorCaptureEvents(this.getImpostorCaptureOwner(newlyCaptured), newlyCaptured);
         this.onStateChange('playerMoved', {
           playerId,
           fromX,
@@ -964,61 +1437,91 @@ export class GameInstance {
         });
       }
     }
-    this.onStateChange('mazeTrapTriggered', {
+    this.onStateChange('impostorTrapTriggered', {
       playerId,
       type: trap.type,
       shielded
     });
     if (this.mode === 'infection') {
-      this.emitMazePublicEvent('infection_trap_triggered', {
+      this.emitImpostorPublicEvent('infection_trap_triggered', {
+        playerId,
+        playerName: player.username,
+        trapType: trap.type,
+        shielded
+      });
+    } else {
+      this.emitImpostorPublicEvent('impostor_trap_triggered', {
         playerId,
         playerName: player.username,
         trapType: trap.type,
         shielded
       });
     }
-    this.emitPrivateMazeTrapState();
+    this.emitPrivateImpostorTrapState();
     return true;
   }
 
-  public changeMazeLayout(playerId: string, random: () => number = Math.random): boolean {
+  public beginImpostorLayoutChange(playerId: string): boolean {
+    if (this.impostorLayoutChangeInProgress || !this.canChangeImpostorLayout(playerId)) return false;
+    this.impostorLayoutChangeInProgress = true;
+    return true;
+  }
+
+  public completeImpostorLayoutChange(playerId: string, random: () => number = Math.random): boolean {
+    if (!this.impostorLayoutChangeInProgress) return false;
+    try {
+      if (!this.canChangeImpostorLayout(playerId)) return false;
+      const impostorBoard = this.getImpostorBoard();
+      impostorBoard.reshuffleImpostor(random, true, this.mode === 'impostor');
+      if (this.mode === 'infection') {
+        this.getInfectionBoard().respawnInfectionPowerups(
+          INFECTION_GHOST_PICKUP_COUNT,
+          INFECTION_INVISIBLE_PICKUP_COUNT,
+          INFECTION_SHIELD_PICKUP_COUNT,
+          random
+        );
+      }
+      if (this.mode === 'impostor' && this.impostorId) {
+        this.onPrivateStateChange(this.impostorId, 'impostorRole', this.getPrivateImpostorRole(this.impostorId));
+      }
+      if (this.mode === 'infection') this.emitPrivateImpostorActionStates();
+      this.updateImpostorPrisons();
+      this.impostorLayoutChangedAt = Date.now();
+      this.recordPlayerActivity(playerId);
+      const player = this.board.players.get(playerId);
+      this.emitImpostorPublicEvent('impostor_changed', {
+        playerId,
+        playerName: player?.username
+      });
+      this.onStateChange('impostorStateChanged', {
+        ...this.getImpostorStateData(),
+        impostorSecondsUntilChange: this.getImpostorSecondsUntilChange()
+      });
+      if (this.mode === 'infection') this.emitImpostorGhostPickups();
+      return true;
+    } finally {
+      this.impostorLayoutChangeInProgress = false;
+    }
+  }
+
+  public changeImpostorLayout(playerId: string, random: () => number = Math.random): boolean {
+    if (this.isImpostorEmergencyMeetingActive()) return false;
+    if (!this.beginImpostorLayoutChange(playerId)) return false;
+    return this.completeImpostorLayoutChange(playerId, random);
+  }
+
+  private canChangeImpostorLayout(playerId: string): boolean {
     const player = this.board.players.get(playerId);
-    const canChange = this.mode === 'labyrinth'
+    const canChange = this.mode === 'impostor'
       ? playerId === this.impostorId
       : this.mode === 'infection' && this.isLastInfectionSurvivor(playerId);
-    if (!this.isMazeBoardMode() || this.state !== 'playing' ||
-        !canChange || !player || player.isDead ||
-        player.isInPrison || player.hasMazeEscaped ||
-        this.getMazeSecondsUntilChange() > 0) return false;
-    const mazeBoard = this.getMazeBoard();
-    mazeBoard.reshuffleMaze(random, true);
-    if (this.mode === 'infection') {
-      this.getInfectionBoard().respawnInfectionPowerups(
-        INFECTION_GHOST_PICKUP_COUNT,
-        INFECTION_INVISIBLE_PICKUP_COUNT,
-        INFECTION_SHIELD_PICKUP_COUNT,
-        random
-      );
-    }
-    if (this.mode === 'labyrinth' && this.impostorId) {
-      this.onPrivateStateChange(this.impostorId, 'mazeRole', this.getPrivateMazeRole(this.impostorId));
-    }
-    if (this.mode === 'infection') this.emitPrivateMazeActionStates();
-    this.updateMazePrisons();
-    this.mazeLayoutChangedAt = Date.now();
-    this.recordPlayerActivity(playerId);
-    this.emitMazePublicEvent('maze_changed');
-    if (this.mode === 'labyrinth') mazeBoard.spawnGhostPickups(this.mazeGhostPickupCount, random);
-    this.onStateChange('mazeStateChanged', {
-      ...this.getMazeStateData(),
-      mazeSecondsUntilChange: this.getMazeSecondsUntilChange()
-    });
-    this.emitMazeGhostPickups();
-    return true;
+    return this.isImpostorBoardMode() && this.state === 'playing' && !this.isInfectionBurning() &&
+      canChange && !!player && !player.isDead && !player.isInPrison && !player.hasImpostorEscaped &&
+      this.getImpostorSecondsUntilChange() === 0;
   }
 
   private handleTimeout() {
-    if (this.isMazeBoardMode()) return;
+    if (this.isImpostorBoardMode()) return;
     if (this.pendingBoostDecision) return;
     const pId = this.getCurrentPlayer();
     const player = this.board.players.get(pId);
@@ -1038,7 +1541,7 @@ export class GameInstance {
   }
 
   public nextTurn() {
-    if (this.isMazeBoardMode() || this.playersList.length === 0 ||
+    if (this.isImpostorBoardMode() || this.playersList.length === 0 ||
         this.pendingBoostDecision || this.state !== 'playing') return;
 
     let attempts = 0;
@@ -1078,79 +1581,77 @@ export class GameInstance {
   }
 
   public getCurrentPlayer() {
-    return this.isMazeBoardMode() ? '' : this.playersList[this.currentTurnIndex];
+    return this.isImpostorBoardMode() ? '' : this.playersList[this.currentTurnIndex];
   }
 
-  public getPrivateMazeRole(playerId: string): {
+  public getPrivateImpostorRole(playerId: string): {
     role: 'impostor' | 'good' | 'infected';
     canBreakBlock: boolean;
     canPlaceWall: boolean;
     canRescue: boolean;
     exitSealCooldownUntil: number;
     wallPlacementCooldownUntil: number;
-    wallBreakCooldownUntil: number;
   } | null {
-    if (!this.isMazeBoardMode() || !this.playersList.includes(playerId) || playerId.startsWith('bot_')) {
+    if (!this.isImpostorBoardMode() || !this.playersList.includes(playerId) || playerId.startsWith('bot_')) {
       return null;
     }
     const isInfection = this.mode === 'infection';
     const isImpostor = !isInfection && playerId === this.impostorId;
     const isInfected = isInfection && this.isInfected(playerId);
     const player = this.board.players.get(playerId);
-    const canAct = !!player && !player.isDead && !player.hasMazeEscaped && !player.isInPrison;
-    const wallPlacementCooldownUntil = this.mazeWallPlacementCooldownUntil.get(playerId) ?? 0;
-    const wallBreakCooldownUntil = isInfected
-      ? this.infectionWallBreakCooldownUntil.get(playerId) ?? 0
-      : 0;
+    const canAct = !!player && !player.isDead && !player.hasImpostorEscaped && !player.isInPrison;
+    const wallPlacementCooldownUntil = this.impostorWallPlacementCooldownUntil.get(playerId) ?? 0;
     return {
       role: isInfection ? (isInfected ? 'infected' : 'good') : (isImpostor ? 'impostor' : 'good'),
-      canBreakBlock: canAct,
-      canPlaceWall: canAct && (!isInfection || (!isInfected && !this.isLastInfectionSurvivor(playerId))) &&
+      canBreakBlock: canAct && (isInfection || player?.impostorTool === 'hammer'),
+      canPlaceWall: canAct && (isInfection
+        ? !isInfected && !this.isLastInfectionSurvivor(playerId)
+        : isImpostor) &&
         wallPlacementCooldownUntil <= Date.now(),
       canRescue: canAct && !isInfection,
-      exitSealCooldownUntil: isImpostor ? this.mazeExitSealCooldownUntil : 0,
-      wallPlacementCooldownUntil,
-      wallBreakCooldownUntil
+      exitSealCooldownUntil: isImpostor ? this.impostorExitSealCooldownUntil : 0,
+      wallPlacementCooldownUntil
     };
   }
 
-  public getMazeRescueStatus(): { capturedPlayers: string[]; availableRescuers: number } {
+  public getImpostorRescueStatus(): { capturedPlayers: string[]; availableRescuers: number } {
     const humanPlayers = this.playersList
       .filter(id => !id.startsWith('bot_'))
       .map(id => this.board.players.get(id))
-      .filter((player): player is Player => !!player && !player.isDead && !player.hasMazeEscaped);
+      .filter((player): player is Player => !!player && !player.isDead && !player.hasImpostorEscaped);
     return {
       capturedPlayers: humanPlayers.filter(player => player.isInPrison).map(player => player.id),
       availableRescuers: humanPlayers.filter(player => !player.isInPrison).length
     };
   }
 
-  public getMazePublicActionCounts(): Record<string, number> {
+  public getImpostorPublicActionCounts(): Record<string, number> {
     return Object.fromEntries(this.playersList
       .filter(playerId => !playerId.startsWith('bot_'))
-      .map(playerId => [playerId, this.mazeActionsUsed.get(playerId) || 0]));
+      .map(playerId => [playerId, this.impostorActionsUsed.get(playerId) || 0]));
   }
 
-  public getMazePublicEvents(): typeof this.mazePublicEvents {
-    return this.mazePublicEvents.map(event => ({ ...event }));
+  public getImpostorPublicEvents(): typeof this.impostorPublicEvents {
+    return this.impostorPublicEvents.map(event => ({ ...event }));
   }
 
-  public getMazeAuditSnapshot(): Record<string, unknown> {
-    if (this.mode !== 'labyrinth' || !(this.board instanceof MazeBoard)) {
-      throw new Error('Maze audit snapshots are only available for labyrinth games.');
+  public getImpostorAuditSnapshot(): Record<string, unknown> {
+    if (this.mode !== 'impostor' || !(this.board instanceof ImpostorBoard)) {
+      throw new Error('Impostor audit snapshots are only available for impostor games.');
     }
+    const impostorBoard = this.board;
     return {
       matchId: this.id,
       mode: this.mode,
       state: this.state,
       winner: this.winner,
       impostorId: this.impostorId,
-      endReason: this.mazeEndReason,
+      endReason: this.impostorEndReason,
       startedAt: this.startTime ?? null,
       capturedAt: Date.now(),
       players: this.playersList.map(playerId => {
-        const player = this.board.players.get(playerId);
-        if (!player) throw new Error(`Maze audit player ${playerId} is missing from the board.`);
+        const player = impostorBoard.players.get(playerId);
+        if (!player) throw new Error(`Impostor audit player ${playerId} is missing from the board.`);
         return {
           id: player.id,
           username: player.username,
@@ -1162,16 +1663,15 @@ export class GameInstance {
           skinItemId: player.skinItemId ?? null,
           skinIcon: player.skinIcon ?? null,
           isInPrison: player.isInPrison,
-          hasMazeKey: player.hasMazeKey,
-          hasMazeKeyDelivered: player.hasMazeKeyDelivered,
-          hasMazeEscaped: player.hasMazeEscaped,
+          hasImpostorKey: player.hasImpostorKey,
+          hasImpostorKeyDelivered: player.hasImpostorKeyDelivered,
+          hasImpostorEscaped: player.hasImpostorEscaped,
           ghostModeExpiresAt: player.ghostModeExpiresAt
         };
       }),
       board: {
-        size: this.board.size,
-        extraction: this.board.extraction,
-        walls: this.board.walls.map(wall => ({
+        size: impostorBoard.size,
+        walls: impostorBoard.walls.map(wall => ({
           id: wall.id,
           ownerId: wall.ownerId,
           x: wall.x,
@@ -1181,48 +1681,64 @@ export class GameInstance {
           isSabotageWall: wall.isSabotageWall,
           isRescueWall: wall.isRescueWall
         })),
-        keys: this.board.keys.map(key => ({ ...key })),
-        exits: this.board.exits.map(exit => ({ ...exit })),
-        teleports: this.board.teleports.map(teleport => ({ ...teleport }))
+        keys: impostorBoard.keys.map(key => ({ ...key })),
+        exits: impostorBoard.exits.map(exit => ({ ...exit })),
+        teleports: impostorBoard.teleports.map(teleport => ({ ...teleport })),
+        generators: impostorBoard.generators.map(generator => ({ ...generator })),
+        tools: impostorBoard.tools.map(tool => ({ ...tool })),
+        traps: impostorBoard.traps.map(trap => ({ ...trap }))
       },
-      publicEvents: this.getMazePublicEvents(),
-      publicActionCounts: this.getMazePublicActionCounts(),
+      publicEvents: this.getImpostorPublicEvents(),
+      publicActionCounts: this.getImpostorPublicActionCounts(),
     };
   }
 
-  private recordMazeAction(playerId: string): void {
-    this.mazeActionsUsed.set(playerId, (this.mazeActionsUsed.get(playerId) || 0) + 1);
+  private recordImpostorAction(playerId: string): void {
+    this.impostorActionsUsed.set(playerId, (this.impostorActionsUsed.get(playerId) || 0) + 1);
   }
 
-  private getMazeStateData(): {
-    board: ReturnType<MazeBoard['toDTO']>;
-    rescueStatus: ReturnType<GameInstance['getMazeRescueStatus']>;
+  private getImpostorStateData(): {
+    board: ReturnType<ImpostorBoard['toDTO']>;
+    rescueStatus: ReturnType<GameInstance['getImpostorRescueStatus']>;
     publicActionCounts: Record<string, number>;
-    mazeSecondsUntilChange: number;
-    mazeExitOpenUsedBy: string[];
-    mazeKeysDelivered: number;
+    impostorSecondsUntilChange: number;
+    impostorGeneratorSabotageSecondsRemaining: number;
+    impostorExitOpenUsedBy: string[];
+    impostorGoodPlayersReturned: number;
+    impostorGoodPlayersTotal: number;
+    impostorEmergencyMeeting: ImpostorEmergencyMeeting | null;
+    impostorEmergencyMeetingSecondsRemaining: number;
   } {
     return {
-      board: this.getMazeBoard().toDTO(),
-      rescueStatus: this.getMazeRescueStatus(),
-      publicActionCounts: this.getMazePublicActionCounts(),
-      mazeSecondsUntilChange: this.getMazeSecondsUntilChange(),
-      mazeExitOpenUsedBy: [...this.mazeExitOpenUsed],
-      mazeKeysDelivered: this.mazeKeysDelivered
+      board: this.getImpostorBoard().toDTO(),
+      rescueStatus: this.getImpostorRescueStatus(),
+      publicActionCounts: this.getImpostorPublicActionCounts(),
+      impostorSecondsUntilChange: this.getImpostorSecondsUntilChange(),
+      impostorGeneratorSabotageSecondsRemaining: this.getImpostorGeneratorSabotageCooldownSeconds(),
+      impostorEmergencyMeeting: this.getImpostorEmergencyMeetingState(),
+      impostorEmergencyMeetingSecondsRemaining: this.getImpostorEmergencyMeetingSecondsRemaining(),
+      impostorExitOpenUsedBy: [...this.impostorExitOpenUsed],
+      impostorGoodPlayersReturned: this.impostorGoodPlayersReturned +
+        Number(this.impostorId
+          ? this.board.players.get(this.impostorId)?.hasImpostorKeyDelivered === true
+          : false),
+      impostorGoodPlayersTotal: this.playersList.filter(id =>
+        !id.startsWith('bot_') && id !== this.impostorId
+      ).length
     };
   }
 
-  private emitMazePublicEvent(
+  private emitImpostorPublicEvent(
     type: string,
-    data: Omit<(typeof this.mazePublicEvents)[number], 'id' | 'type'> = {}
+    data: Omit<(typeof this.impostorPublicEvents)[number], 'id' | 'type'> = {}
   ): void {
     const event = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
       type,
       ...data
     };
-    this.mazePublicEvents.push(event);
-    this.onStateChange('mazePublicEvent', event);
+    this.impostorPublicEvents.push(event);
+    this.onStateChange('impostorPublicEvent', event);
   }
 
   public getRemainingTurnSeconds(): number {
@@ -1273,7 +1789,7 @@ export class GameInstance {
         playerId,
         reason,
         board: this.board.toDTO(currentTurn),
-        ...(!this.isMazeBoardMode()
+        ...(!this.isImpostorBoardMode()
           ? { currentTurn, turnSecondsRemaining: this.getRemainingTurnSeconds() }
           : {})
       });
@@ -1283,11 +1799,11 @@ export class GameInstance {
   public recordPlayerActivity(playerId: string): void {
     if (this.state !== 'playing' || playerId.startsWith('bot_') ||
         !this.playersList.includes(playerId) ||
-        (!this.isMazeBoardMode() && this.board.players.get(playerId)?.isDead)) return;
+        (!this.isImpostorBoardMode() && this.board.players.get(playerId)?.isDead)) return;
 
     this.playerLastActivityAt.set(playerId, Date.now());
-    if (this.isMazeBoardMode()) {
-      this.scheduleMazeInactivityTimer();
+    if (this.isImpostorBoardMode()) {
+      this.scheduleImpostorInactivityTimer();
       return;
     }
     this.schedulePlayerInactivityCheck(playerId);
@@ -1337,7 +1853,7 @@ export class GameInstance {
   }
 
   public executeMove(playerId: string, newX: number, newY: number): boolean {
-    if (this.isMazeBoardMode()) return this.executeMazeMove(playerId, newX, newY);
+    if (this.isImpostorBoardMode()) return this.executeImpostorMove(playerId, newX, newY);
     const p = this.board.players.get(playerId);
     if (this.state !== 'playing' || this.pendingBoostDecision ||
         playerId !== this.getCurrentPlayer() || !p || p.isDead || p.hasReachedGoal) return false;
@@ -1380,7 +1896,9 @@ export class GameInstance {
         newX: p.x,
         newY: p.y,
         movementTrailId: p.movementTrailId,
-        movementTrailIcon: p.movementTrailIcon
+        movementTrailIcon: p.movementTrailIcon,
+        boostType: landedBoost?.type,
+        teleported: landedBoost?.type === 'portal'
       });
       this.botReactionManager.onPlayerMoved(playerId, newX, newY);
       this.checkWinCondition(playerId);
@@ -1397,12 +1915,15 @@ export class GameInstance {
     return success;
   }
 
-  private executeMazeMove(playerId: string, newX: number, newY: number): boolean {
+  private executeImpostorMove(playerId: string, newX: number, newY: number): boolean {
         const player = this.board.players.get(playerId);
         const now = Date.now();
-        const previousMoveAt = this.mazeMoveAt.get(playerId) ?? 0;
+        const previousMoveAt = this.impostorMoveAt.get(playerId) ?? 0;
         if (
           this.state !== 'playing' ||
+          this.isImpostorEmergencyMeetingActive() ||
+          this.impostorLayoutChangeInProgress ||
+          this.isInfectionBurning(now) ||
           playerId.startsWith('bot_') ||
           !player ||
           player.isDead ||
@@ -1414,6 +1935,7 @@ export class GameInstance {
             : 120)
         ) return false;
 
+        this.cancelImpostorGeneratorRepair(playerId);
         const fromX = player.x;
         const fromY = player.y;
         const infectionBoard = this.mode === 'infection' ? this.getInfectionBoard() : null;
@@ -1422,16 +1944,16 @@ export class GameInstance {
         if (infectionBoard && movesIntoSafeZone &&
             (this.isInfected(playerId) ||
              (this.infectionSafeZoneCooldownUntil.get(playerId) ?? 0) > now)) return false;
-        if (!this.getMazeBoard().moveMazePlayer(playerId, newX, newY)) return false;
+        if (!this.getImpostorBoard().moveImpostorPlayer(playerId, newX, newY)) return false;
         this.trackInfectionSafeZoneTransition(
           playerId,
           wasInSafeZone,
           infectionBoard?.isSafeZoneCell(newX, newY) === true,
           now
         );
-        this.mazeMoveAt.set(playerId, now);
+        this.impostorMoveAt.set(playerId, now);
         this.recordPlayerActivity(playerId);
-        this.updateMazePrisons();
+        this.updateImpostorPrisons();
         this.onStateChange('playerMoved', {
           playerId,
           fromX,
@@ -1441,85 +1963,97 @@ export class GameInstance {
           movementTrailId: player.movementTrailId,
           movementTrailIcon: player.movementTrailIcon
         });
-        const key = this.mode === 'labyrinth'
-          ? this.getMazeBoard().collectKey(playerId, newX, newY)
+        const key = this.mode === 'impostor'
+          ? this.getImpostorBoard().collectKey(playerId, newX, newY, playerId === this.impostorId)
           : null;
         if (key) {
-          player.hasMazeKey = true;
-          this.emitMazePublicEvent('key_collected', { playerName: player.username });
+          player.hasImpostorKey = true;
+          this.onPrivateStateChange(playerId, 'boostCollected', { playerId, type: 'key' });
+          this.emitImpostorPublicEvent('key_collected', { playerName: player.username });
         }
-        if (this.mode === 'labyrinth' && playerId !== this.impostorId &&
-            !player.mazeShieldActive &&
-            this.getMazeBoard().collectShieldPickupAt(player.x, player.y)) {
-          player.mazeShieldActive = true;
-          this.scheduleMazeShieldRespawn();
+        if (this.mode === 'impostor' && playerId !== this.impostorId &&
+            !player.impostorShieldActive &&
+            this.getImpostorBoard().collectShieldPickupAt(player.x, player.y)) {
+          player.impostorShieldActive = true;
+          this.scheduleImpostorShieldRespawn();
+          this.onPrivateStateChange(playerId, 'boostCollected', { playerId, type: 'shield' });
         }
-        if (this.mode === 'labyrinth' && playerId !== this.impostorId &&
-            this.getMazeBoard().collectGhostPickupAt(player.x, player.y)) {
-          player.ghostModeExpiresAt = Date.now() + LABYRINTH_GHOST_DURATION_MS;
+        if (this.mode === 'impostor' && playerId !== this.impostorId &&
+            this.getImpostorBoard().collectGhostPickupAt(player.x, player.y)) {
+          player.ghostModeExpiresAt = Date.now() + IMPOSTOR_GHOST_DURATION_MS;
           player.isInPrison = false;
-          this.updateMazePrisons();
-          this.emitMazePublicEvent('maze_ghost_activated', { playerName: player.username });
+          this.updateImpostorPrisons();
+          this.emitImpostorPublicEvent('impostor_ghost_activated', { playerId, playerName: player.username });
         }
-        this.triggerMazeTrap(playerId, player.x, player.y);
+        this.triggerImpostorTrap(playerId, player.x, player.y);
         if (this.mode === 'infection' && !this.isInfected(playerId) &&
             !this.isLastInfectionSurvivor(playerId)) {
           const now = Date.now();
           const hasActivePowerup =
             player.ghostModeExpiresAt > now ||
             player.invisibleUntil > now ||
-            (player.mazeShieldActive && player.mazeShieldExpiresAt > now);
+            (player.impostorShieldActive && player.impostorShieldExpiresAt > now);
           const powerup = this.getInfectionBoard().collectInfectionPowerupAt(
             player.x, player.y, Math.random, hasActivePowerup
           );
           if (powerup === 'ghost') {
             player.ghostModeExpiresAt = Date.now() + INFECTION_GHOST_DURATION_MS;
-            this.updateMazePrisons();
+            this.updateImpostorPrisons();
           } else if (powerup === 'invisible') {
             player.invisibleUntil = Date.now() + INFECTION_INVISIBLE_DURATION_MS;
           } else if (powerup === 'shield') {
-            player.mazeShieldActive = true;
-            player.mazeShieldExpiresAt = Date.now() + INFECTION_SHIELD_DURATION_MS;
+            player.impostorShieldActive = true;
+            player.impostorShieldExpiresAt = Date.now() + INFECTION_SHIELD_DURATION_MS;
           }
-          if (powerup) this.emitMazeGhostPickups();
+          if (powerup) {
+            this.onPrivateStateChange(playerId, 'boostCollected', { playerId, type: powerup });
+            this.emitImpostorGhostPickups();
+          }
         }
-        const extraction = this.getMazeBoard().extraction;
-        if (this.mode === 'labyrinth' && player.x === extraction.x && player.y === extraction.y &&
-            this.getMazeBoard().deliverMazeKey(playerId)) {
-          this.mazeKeysDelivered++;
-          if (playerId !== this.impostorId) this.mazeGoodKeysDelivered++;
-          this.emitMazePublicEvent('player_reached_extraction', { playerName: player.username });
-          const goodPlayers = this.playersList.filter(id =>
-            !id.startsWith('bot_') && id !== this.impostorId
-          );
-          if (goodPlayers.length > 0 && this.mazeGoodKeysDelivered >= goodPlayers.length) {
-            this.finishMazeGame('good', 'escape');
+        if (this.mode === 'impostor' && player.hasImpostorKey && !player.hasImpostorKeyDelivered &&
+            this.getImpostorBoard().isSafeZoneCell(player.x, player.y)) {
+          const isImpostor = playerId === this.impostorId;
+          player.hasImpostorKey = false;
+          player.hasImpostorKeyDelivered = true;
+          if (!isImpostor) {
+            this.impostorGoodPlayersReturned++;
+            player.hasImpostorEscaped = true;
+          }
+          this.emitImpostorPublicEvent('player_reached_extraction', { playerName: player.username });
+          if (!isImpostor) {
+            const goodPlayers = this.playersList.filter(id =>
+              !id.startsWith('bot_') && id !== this.impostorId
+            );
+            if (goodPlayers.length > 0 && goodPlayers.every(id =>
+              this.board.players.get(id)?.hasImpostorEscaped
+            )) {
+              this.finishImpostorGame('good', 'escape');
+            }
           }
         }
         if (this.mode === 'infection') this.resolveInfectionContact();
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
         if (this.mode === 'infection') this.emitInfectionState();
-        if (this.mode === 'labyrinth') this.emitMazeGhostPickups();
         return true;
       }
 
   private resolveInfectionContact(): void {
-    if (this.mode !== 'infection' || this.state !== 'playing') return;
-    const mazeBoard = this.getMazeBoard();
+    if (this.mode !== 'infection' || this.state !== 'playing' || this.isInfectionBurning()) return;
+    const impostorBoard = this.getImpostorBoard();
     const newlyInfected: Player[] = [];
     const infectedPlayers = [...this.infectedPlayerIds]
       .map(playerId => this.board.players.get(playerId))
       .filter((player): player is Player =>
-        !!player && !player.isDead && player.mazeFrozenUntil <= Date.now()
+        !!player && !player.isDead && player.impostorFrozenUntil <= Date.now()
       );
     for (const playerId of this.getInfectionSurvivorIds()) {
       const player = this.board.players.get(playerId);
-      if (!player || player.isDead ||
-          (player.mazeShieldActive && player.mazeShieldExpiresAt > Date.now()) ||
-          mazeBoard.isSafeZoneCell(player.x, player.y)) continue;
+      if (!player || player.isDead || player.invisibleUntil > Date.now() ||
+          (player.impostorShieldActive && player.impostorShieldExpiresAt > Date.now()) ||
+          impostorBoard.isSafeZoneCell(player.x, player.y)) continue;
       const isAdjacentToInfected = infectedPlayers.some(infected =>
         Math.abs(infected.x - player.x) + Math.abs(infected.y - player.y) === 1 &&
-        !mazeBoard.isSeparatedByWall(infected.x, infected.y, player.x, player.y)
+        !impostorBoard.isSeparatedByWall(infected.x, infected.y, player.x, player.y)
       );
       if (!isAdjacentToInfected) continue;
       player.isInfected = true;
@@ -1529,28 +2063,28 @@ export class GameInstance {
       newlyInfected.push(player);
     }
     for (const player of newlyInfected) {
-      this.onPrivateStateChange(player.id, 'mazeRole', this.getPrivateMazeRole(player.id));
-      this.onPrivateStateChange(player.id, 'mazeActionState', {
+      this.onPrivateStateChange(player.id, 'impostorRole', this.getPrivateImpostorRole(player.id));
+      this.onPrivateStateChange(player.id, 'impostorActionState', {
         canBreakBlock: false,
         canPlaceWall: false,
         canRescue: false,
         isInPrison: player.isInPrison,
-        wallPlacementCooldownUntil: this.mazeWallPlacementCooldownUntil.get(player.id) ?? 0
+        wallPlacementCooldownUntil: this.impostorWallPlacementCooldownUntil.get(player.id) ?? 0
       });
-      this.onPrivateStateChange(player.id, 'mazeTrapState', {
+      this.onPrivateStateChange(player.id, 'impostorTrapState', {
         traps: [],
-        cooldowns: this.getMazeTrapCooldowns(player.id)
+        cooldowns: this.getImpostorTrapCooldowns(player.id)
       });
-      this.emitMazePublicEvent('player_infected', { playerId: player.id, playerName: player.username });
+      this.emitImpostorPublicEvent('player_infected', { playerId: player.id, playerName: player.username });
     }
     if (newlyInfected.length) {
-      this.emitPrivateMazeTrapState();
-      this.emitPrivateMazeActionStates();
-      this.emitMazeGhostPickups();
+      this.emitPrivateImpostorTrapState();
+      this.emitPrivateImpostorActionStates();
+      this.emitImpostorGhostPickups();
       this.announceInfectionLastSurvivor();
       this.emitInfectionState();
       if (this.getInfectionSurvivorIds().length === 0) {
-        this.finishMazeGame('infected', 'infection');
+        this.beginInfectionBurnSequence();
       }
     }
   }
@@ -1564,28 +2098,28 @@ export class GameInstance {
     this.infectionLastSurvivorCountdownUntil = Date.now() + INFECTION_LAST_SURVIVOR_HUNT_COUNTDOWN_MS;
     for (const infectedId of this.getActiveInfectionIds()) {
       const infected = this.board.players.get(infectedId);
-      if (infected) infected.mazeFrozenUntil = this.infectionLastSurvivorCountdownUntil;
+      if (infected) infected.impostorFrozenUntil = this.infectionLastSurvivorCountdownUntil;
     }
     const survivorId = survivors[0];
     const survivor = this.board.players.get(survivorId);
     if (!survivor) return;
-    this.emitMazePublicEvent('infection_last_survivor', {
+    this.emitImpostorPublicEvent('infection_last_survivor', {
       playerId: survivor.id,
       playerName: survivor.username
     });
     if (!survivorId.startsWith('bot_')) {
       this.onPrivateStateChange(survivorId, 'infectionLastSurvivor', { playerId: survivorId });
     }
-    this.emitPrivateMazeActionStates();
-    this.emitPrivateMazeTrapState();
-    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    this.emitPrivateImpostorActionStates();
+    this.emitPrivateImpostorTrapState();
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
     this.emitInfectionState();
   }
 
-  public getMazeGhostPickupsForPlayer(playerId: string): { id: string; x: number; y: number }[] {
-    if (this.mode === 'labyrinth') {
+  public getImpostorGhostPickupsForPlayer(playerId: string): { id: string; x: number; y: number }[] {
+    if (this.mode === 'impostor') {
       if (playerId === this.impostorId) return [];
-      return this.getMazeBoard().ghostPickups.map(pickup => ({ ...pickup }));
+      return this.getImpostorBoard().ghostPickups.map(pickup => ({ ...pickup }));
     }
     if (this.mode !== 'infection' || this.isInfected(playerId)) return [];
     return this.getInfectionBoard().ghostPickups.map(pickup => ({ ...pickup }));
@@ -1605,8 +2139,8 @@ export class GameInstance {
     return !this.isInfectionPlayerInvisible(targetId) || !this.isInfected(viewerId);
   }
 
-  public getMazeStateDataForPlayer(playerId: string) {
-    const state = this.getMazeStateData();
+  public getImpostorStateDataForPlayer(playerId: string) {
+    const state = this.getImpostorStateData();
     const hiddenPlayerIds = this.mode === 'infection' && this.isInfected(playerId)
       ? new Set(this.playersList.filter(id => this.isInfectionPlayerInvisible(id)))
       : null;
@@ -1618,19 +2152,19 @@ export class GameInstance {
             capturedPlayers: state.rescueStatus.capturedPlayers.filter(id => !hiddenPlayerIds.has(id))
           }
         : state.rescueStatus,
-      board: this.getMazeBoard().toDTO(playerId)
+      board: this.getImpostorBoard().toDTO(playerId, playerId === this.impostorId)
     };
   }
 
-  private emitMazeGhostPickups(): void {
-    if (this.mode !== 'labyrinth' && this.mode !== 'infection') return;
+  private emitImpostorGhostPickups(): void {
+    if (this.mode !== 'impostor' && this.mode !== 'infection') return;
     for (const playerId of this.playersList) {
       if (playerId.startsWith('bot_')) continue;
-      if (this.mode !== 'labyrinth' || playerId !== this.impostorId) {
+      if (this.mode !== 'impostor' || playerId !== this.impostorId) {
         this.onPrivateStateChange(
           playerId,
-          'mazeGhostPickups',
-          this.getMazeGhostPickupsForPlayer(playerId)
+          'impostorGhostPickups',
+          this.getImpostorGhostPickupsForPlayer(playerId)
         );
       }
       if (this.mode === 'infection') {
@@ -1643,27 +2177,28 @@ export class GameInstance {
     }
   }
 
-  public teleportMazePlayer(playerId: string, teleportId: string): boolean {
+  public teleportImpostorPlayer(playerId: string, teleportId: string): boolean {
     const player = this.board.players.get(playerId);
-    if (!this.isMazeBoardMode() || this.state !== 'playing' || !player ||
+    if (!this.isImpostorBoardMode() || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        this.isInfectionBurning() || !player ||
         playerId.startsWith('bot_') || player.isDead || player.isInPrison ||
-        player.hasMazeEscaped || player.mazeFrozenUntil > Date.now() ||
-        player.mazeTeleportingUntil > Date.now() ||
+        player.hasImpostorEscaped || player.impostorFrozenUntil > Date.now() ||
+        player.impostorTeleportingUntil > Date.now() ||
         (this.mode === 'infection' && this.isInfected(playerId))) return false;
         const fromX = player.x;
         const fromY = player.y;
-        const destination = this.getMazeBoard().teleportPlayer(playerId, teleportId);
+        const destination = this.getImpostorBoard().teleportPlayer(playerId, teleportId);
         if (!destination) return false;
         if (this.mode === 'infection') {
-          const teleports = this.getMazeBoard().teleports;
+          const teleports = this.getImpostorBoard().teleports;
           const previousPositions = teleports.map(({ x, y }) => ({ x, y }));
           const pairCount = new Set(teleports.map(({ pairId }) => pairId)).size;
-          this.getMazeBoard().spawnTeleports(Math.random, previousPositions, pairCount);
+          this.getImpostorBoard().spawnTeleports(Math.random, previousPositions, pairCount);
         }
-        player.mazeTeleportingUntil = Date.now() + LABYRINTH_TELEPORT_ANIMATION_MS;
+        player.impostorTeleportingUntil = Date.now() + IMPOSTOR_TELEPORT_ANIMATION_MS;
         this.recordPlayerActivity(playerId);
-        this.mazeMoveAt.set(playerId, Date.now());
-        const newlyCaptured = this.updateMazePrisons();
+        this.impostorMoveAt.set(playerId, Date.now());
+        const newlyCaptured = this.updateImpostorPrisons();
         this.onStateChange('playerMoved', {
           playerId,
           fromX,
@@ -1674,8 +2209,8 @@ export class GameInstance {
           movementTrailIcon: player.movementTrailIcon,
           teleported: true
         });
-        this.emitMazeCaptureEvents(this.getMazeCaptureOwner(newlyCaptured), newlyCaptured);
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        this.emitImpostorCaptureEvents(this.getImpostorCaptureOwner(newlyCaptured), newlyCaptured);
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
         return true;
       }
 
@@ -1693,13 +2228,13 @@ export class GameInstance {
   ): boolean {
     const player = this.board.players.get(playerId);
     const now = Date.now();
-    if (this.mode !== 'infection' || this.state !== 'playing' || !player ||
+    if (this.mode !== 'infection' || this.state !== 'playing' || this.isInfectionBurning(now) || !player ||
         playerId.startsWith('bot_') || player.isDead || player.isInPrison ||
-        player.mazeFrozenUntil > now || player.mazeTeleportingUntil > now ||
+        player.impostorFrozenUntil > now || player.impostorTeleportingUntil > now ||
         !this.isLastInfectionSurvivor(playerId)) return false;
     const hasActivePower = player.ghostModeExpiresAt > now ||
       player.invisibleUntil > now ||
-      (player.mazeShieldActive && player.mazeShieldExpiresAt > now);
+      (player.impostorShieldActive && player.impostorShieldExpiresAt > now);
     if (hasActivePower) return false;
     const cooldowns = this.infectionLastSurvivorPowerCooldownUntil.get(playerId) ?? {
       ghost: 0,
@@ -1712,17 +2247,17 @@ export class GameInstance {
     let teleport: ReturnType<InfectionBoard['teleportPlayerToOppositeEdge']> = null;
     if (power === 'ghost') {
       player.ghostModeExpiresAt = now + INFECTION_GHOST_DURATION_MS;
-      this.updateMazePrisons();
+      this.updateImpostorPrisons();
     } else if (power === 'shield') {
-      player.mazeShieldActive = true;
-      player.mazeShieldExpiresAt = now + INFECTION_SHIELD_DURATION_MS;
+      player.impostorShieldActive = true;
+      player.impostorShieldExpiresAt = now + INFECTION_SHIELD_DURATION_MS;
     } else if (power === 'invisible') {
       player.invisibleUntil = now + INFECTION_INVISIBLE_DURATION_MS;
     } else {
       teleport = this.getInfectionBoard().teleportPlayerToOppositeEdge(playerId, random);
       if (!teleport) return false;
-      player.mazeTeleportingUntil = now + LABYRINTH_TELEPORT_ANIMATION_MS;
-      this.mazeMoveAt.set(playerId, now);
+      player.impostorTeleportingUntil = now + IMPOSTOR_TELEPORT_ANIMATION_MS;
+      this.impostorMoveAt.set(playerId, now);
     }
 
     this.infectionLastSurvivorPowerCooldownUntil.set(playerId, {
@@ -1743,57 +2278,33 @@ export class GameInstance {
       });
       this.resolveInfectionContact();
     }
-    this.emitMazePublicEvent('infection_last_survivor_power_used', {
+    this.emitImpostorPublicEvent('infection_last_survivor_power_used', {
       playerId,
       playerName: player.username,
       power
     });
-    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
     this.emitInfectionState();
     return true;
   }
 
-      public sealMazeExit(playerId: string, exitId: string): boolean {
-        const player = this.board.players.get(playerId);
-        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
-            playerId !== this.impostorId || !player || player.isInPrison ||
-            player.isDead || player.hasMazeEscaped || playerId.startsWith('bot_') ||
-            this.mazeExitSealCooldownUntil > Date.now()) return false;
-        const exitNumber = this.getMazeBoard().sealMazeExit(exitId);
-        if (exitNumber === null) return false;
-        this.mazeExitSealCooldownUntil = Date.now() + LABYRINTH_EXIT_SEAL_COOLDOWN_MS;
-        this.recordMazeAction(playerId);
-        this.recordPlayerActivity(playerId);
-        this.onPrivateStateChange(playerId, 'mazeRole', this.getPrivateMazeRole(playerId));
-        this.emitMazePublicEvent('impostor_exit_sealed', { exitNumber });
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
-        return true;
+      public sealImpostorExit(_playerId: string, _exitId: string): boolean {
+        return false;
       }
 
-      public openMazeExit(playerId: string, exitId: string): boolean {
-        const player = this.board.players.get(playerId);
-        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
-            !player || playerId.startsWith('bot_') ||
-            player.isDead || player.hasMazeEscaped || player.isInPrison ||
-            this.mazeExitOpenUsed.has(playerId)) return false;
-        const mazeBoard = this.getMazeBoard();
-        if (!mazeBoard.canOpenMazeExitFrom(exitId, player.x, player.y)) return false;
-        const exitNumber = mazeBoard.openMazeExit(exitId);
-        if (exitNumber === null) return false;
-        this.mazeExitOpenUsed.add(playerId);
-        this.recordPlayerActivity(playerId);
-        this.emitMazePublicEvent('maze_exit_opened', { exitNumber });
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
-        return true;
+      public openImpostorExit(_playerId: string, _exitId: string): boolean {
+        return false;
       }
 
-      public placeMazeWall(playerId: string, x: number, y: number, isHorizontal: boolean, wallId: string): boolean {
+      public placeImpostorWall(playerId: string, x: number, y: number, isHorizontal: boolean, wallId: string): boolean {
         const player = this.board.players.get(playerId);
-        if (!this.isMazeBoardMode() || this.state !== 'playing' || !player ||
-            playerId.startsWith('bot_') || player.isDead || player.hasMazeEscaped ||
+        if (!this.isImpostorBoardMode() || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+            this.isInfectionBurning() || !player ||
+            playerId.startsWith('bot_') || player.isDead || player.hasImpostorEscaped ||
             player.isInPrison || (this.mode === 'infection' && this.isLastInfectionSurvivor(playerId)) ||
-            !this.getPrivateMazeRole(playerId)?.canPlaceWall) return false;
-        const isImpostor = this.mode === 'labyrinth' && playerId === this.impostorId;
+            (this.mode === 'impostor' && playerId !== this.impostorId) ||
+            !this.getPrivateImpostorRole(playerId)?.canPlaceWall) return false;
+        const isImpostor = this.mode === 'impostor' && playerId === this.impostorId;
 
         const wall = new Wall(
           wallId,
@@ -1806,48 +2317,45 @@ export class GameInstance {
           false,
           isImpostor
         );
-        const mazeBoard = this.getMazeBoard();
-        if (mazeBoard.wouldMakeUncollectedKeyUnreachable(wall)) return false;
-        if (!mazeBoard.placeMazeWall(wall)) return false;
-        this.mazeWallPlacementCooldownUntil.set(playerId, Date.now() + LABYRINTH_WALL_PLACEMENT_COOLDOWN_MS);
+        const impostorBoard = this.getImpostorBoard();
+        if (impostorBoard.wouldMakeUncollectedKeyUnreachable(wall)) return false;
+        if (!impostorBoard.placeImpostorWall(wall)) return false;
+        const wallCooldown = this.mode === 'infection'
+          ? INFECTION_WALL_PLACEMENT_COOLDOWN_MS
+          : IMPOSTOR_WALL_PLACEMENT_COOLDOWN_MS;
+        this.impostorWallPlacementCooldownUntil.set(playerId, Date.now() + wallCooldown);
         this.recordPlayerActivity(playerId);
 
-        const newlyCaptured = this.updateMazePrisons();
-        this.emitPrivateMazeActionStates();
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
-        this.emitMazeCaptureEvents(playerId, newlyCaptured);
+        const newlyCaptured = this.updateImpostorPrisons();
+        this.emitPrivateImpostorActionStates();
+        this.onStateChange('wallPlaced', { playerId, x, y, isHorizontal, wall });
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
+        this.emitImpostorCaptureEvents(playerId, newlyCaptured);
         return true;
       }
 
-      public breakMazeBlock(playerId: string, wallId: string): boolean {
+      public breakImpostorBlock(playerId: string, wallId: string): boolean {
         const player = this.board.players.get(playerId);
-        if (!this.isMazeBoardMode() || this.state !== 'playing' || !player ||
-            playerId.startsWith('bot_') || player.isDead || player.hasMazeEscaped ||
+        if (!this.isImpostorBoardMode() || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+            this.isInfectionBurning() || !player ||
+            playerId.startsWith('bot_') || player.isDead || player.hasImpostorEscaped ||
             player.isInPrison ||
+            (this.mode === 'impostor' && player.impostorTool !== 'hammer') ||
             (this.mode === 'infection' && this.isInfected(playerId) &&
-              player.mazeFrozenUntil > Date.now())) return false;
-        const isInfected = this.mode === 'infection' && this.isInfected(playerId);
-        if (isInfected &&
-            (this.infectionWallBreakCooldownUntil.get(playerId) ?? 0) > Date.now()) return false;
-        const mazeBoard = this.getMazeBoard();
-        const wall = mazeBoard.walls.find(candidate =>
+              player.impostorFrozenUntil > Date.now())) return false;
+        const impostorBoard = this.getImpostorBoard();
+        const wall = impostorBoard.walls.find(candidate =>
           candidate.id === wallId &&
-          mazeBoard.isPlayerPlacedMazeWall(candidate) &&
-          mazeBoard.isPlayerAdjacentToWall(playerId, candidate)
+          impostorBoard.isPlayerPlacedImpostorWall(candidate) &&
+          impostorBoard.isPlayerAdjacentToWall(playerId, candidate)
         );
         if (!wall) return false;
-        const removedWall = mazeBoard.removeWallById(wallId);
+        const removedWall = impostorBoard.removeWallById(wallId);
         if (!removedWall) return false;
-        if (isInfected) {
-          this.infectionWallBreakCooldownUntil.set(
-            playerId,
-            Date.now() + INFECTION_WALL_BREAK_COOLDOWN_MS
-          );
-        }
         this.recordPlayerActivity(playerId);
-        this.updateMazePrisons();
+        this.updateImpostorPrisons();
         if (!this.isInfectionPlayerInvisible(playerId)) {
-          this.emitMazePublicEvent(this.mode === 'infection'
+          this.emitImpostorPublicEvent(this.mode === 'infection'
             ? 'player_broke_wall'
             : 'player_broke_prison_wall', {
             playerId,
@@ -1857,55 +2365,55 @@ export class GameInstance {
             wallIsHorizontal: wall.isHorizontal
           });
         }
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
         return true;
       }
 
-      public rescueMazePlayer(rescuerId: string, targetId: string): boolean {
+      public rescueImpostorPlayer(rescuerId: string, targetId: string): boolean {
         const rescuer = this.board.players.get(rescuerId);
         const target = this.board.players.get(targetId);
-        if (this.mode !== 'labyrinth' || this.state !== 'playing' ||
+        if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
             !rescuer || !target ||
-            rescuerId.startsWith('bot_') || rescuer.isDead || rescuer.hasMazeEscaped || rescuer.isInPrison ||
-            target.isDead || target.hasMazeEscaped || !target.isInPrison ||
+            rescuerId.startsWith('bot_') || rescuer.isDead || rescuer.hasImpostorEscaped || rescuer.isInPrison ||
+            target.isDead || target.hasImpostorEscaped || !target.isInPrison ||
             Math.abs(target.x - rescuer.x) + Math.abs(target.y - rescuer.y) > 1) return false;
 
-        const mazeBoard = this.getMazeBoard();
-        const removedWall = mazeBoard.getMazeReleaseWalls(targetId)[0];
-        if (removedWall) mazeBoard.removeWallById(removedWall.id);
+        const impostorBoard = this.getImpostorBoard();
+        const removedWall = impostorBoard.getImpostorReleaseWalls(targetId)[0];
+        if (removedWall) impostorBoard.removeWallById(removedWall.id);
         if (!removedWall) return false;
 
         this.recordPlayerActivity(rescuerId);
-        this.updateMazePrisons();
-        this.emitMazePublicEvent('player_rescued', { rescuerName: rescuer.username, playerName: target.username });
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        this.updateImpostorPrisons();
+        this.emitImpostorPublicEvent('player_rescued', { rescuerName: rescuer.username, playerName: target.username });
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
         return true;
       }
 
-  private expireMazeGhostModes(now: number = Date.now()): void {
+  private expireImpostorGhostModes(now: number = Date.now()): void {
     const expired = [...this.board.players.values()].filter(player =>
       player.ghostModeExpiresAt > 0 && player.ghostModeExpiresAt <= now
     );
     if (!expired.length) return;
     for (const player of expired) player.ghostModeExpiresAt = 0;
-    const newlyCaptured = this.updateMazePrisons();
+    const newlyCaptured = this.updateImpostorPrisons();
     for (const player of expired) {
       if (!this.isInfectionPlayerInvisible(player.id)) {
-        this.emitMazePublicEvent('maze_ghost_ended', { playerName: player.username });
+        this.emitImpostorPublicEvent('impostor_ghost_ended', { playerName: player.username });
       }
     }
-    this.emitMazeCaptureEvents(this.getMazeCaptureOwner(newlyCaptured), newlyCaptured);
-    this.onStateChange('mazeStateChanged', this.getMazeStateData());
+    this.emitImpostorCaptureEvents(this.getImpostorCaptureOwner(newlyCaptured), newlyCaptured);
+    this.onStateChange('impostorStateChanged', this.getImpostorStateData());
   }
 
-  private getMazeCaptureOwner(capturedIds: string[]): string {
-    const mazeBoard = this.getMazeBoard();
+  private getImpostorCaptureOwner(capturedIds: string[]): string {
+    const impostorBoard = this.getImpostorBoard();
     return capturedIds.some(playerId =>
-      mazeBoard.getMazeCageWalls(playerId).some(wall => wall.isSabotageWall)
+      impostorBoard.getImpostorCageWalls(playerId).some(wall => wall.isSabotageWall)
     ) ? this.impostorId || '' : '';
   }
 
-  private emitMazeCaptureEvents(placerId: string, capturedIds: string[]): void {
+  private emitImpostorCaptureEvents(placerId: string, capturedIds: string[]): void {
     const capturedHumanIds = capturedIds.filter(id => !id.startsWith('bot_'));
     for (const capturedId of capturedHumanIds) {
       if (this.isInfectionPlayerInvisible(capturedId)) continue;
@@ -1913,12 +2421,12 @@ export class GameInstance {
       const eventType = capturedId === this.impostorId
         ? 'player_captured_impostor'
         : placerId === this.impostorId ? 'impostor_captured_player' : 'player_captured_player';
-      this.emitMazePublicEvent(eventType, { playerName: capturedPlayer?.username || capturedId });
+      this.emitImpostorPublicEvent(eventType, { playerName: capturedPlayer?.username || capturedId });
     }
-    if (capturedHumanIds.length > 0) this.resolveMazeCapture(capturedHumanIds);
+    if (capturedHumanIds.length > 0) this.resolveImpostorCapture(capturedHumanIds);
   }
 
-  private updateMazePrisons(): string[] {
+  private updateImpostorPrisons(): string[] {
         const previouslyCaptured = new Set(
           [...this.board.players.values()].filter(player => player.isInPrison).map(player => player.id)
         );
@@ -1929,13 +2437,13 @@ export class GameInstance {
             player.isInPrison = false;
             continue;
           }
-          const mazeBoard = this.getMazeBoard();
-          player.isInPrison = player.hasMazeEscaped || player.ghostModeExpiresAt > Date.now()
+          const impostorBoard = this.getImpostorBoard();
+          player.isInPrison = player.hasImpostorEscaped || player.ghostModeExpiresAt > Date.now()
             ? false
-            : mazeBoard.isMazePlayerEnclosed(player.id);
+            : impostorBoard.isImpostorPlayerEnclosed(player.id);
           if (player.isInPrison !== previouslyCaptured.has(player.id)) {
-            const role = this.getPrivateMazeRole(player.id);
-            this.onPrivateStateChange(player.id, 'mazeActionState', {
+            const role = this.getPrivateImpostorRole(player.id);
+            this.onPrivateStateChange(player.id, 'impostorActionState', {
               canBreakBlock: role?.canBreakBlock === true,
               canPlaceWall: role?.canPlaceWall === true,
               canRescue: role?.canRescue === true,
@@ -1943,8 +2451,8 @@ export class GameInstance {
             });
           }
           if (player.isInPrison) {
-            for (const wall of mazeBoard.getMazeCageWalls(player.id)) wall.isPrisonBlock = true;
-            for (const wall of mazeBoard.getMazeReleaseWalls(player.id)) wall.isRescueWall = true;
+            for (const wall of impostorBoard.getImpostorCageWalls(player.id)) wall.isPrisonBlock = true;
+            for (const wall of impostorBoard.getImpostorReleaseWalls(player.id)) wall.isRescueWall = true;
           }
         }
         return [...this.board.players.values()]
@@ -1952,16 +2460,13 @@ export class GameInstance {
           .map(player => player.id);
       }
 
-      private resolveMazeCapture(capturedIds: string[]): void {
-            if (this.mode !== 'labyrinth') return;
+      private resolveImpostorCapture(capturedIds: string[]): void {
+            if (this.mode !== 'impostor') return;
         if (this.state !== 'playing') return;
-        if (capturedIds.includes(this.impostorId || '')) {
-          this.finishMazeGame('good', 'capture');
-          return;
-        }
+        if (capturedIds.includes(this.impostorId || '')) return;
         if (capturedIds.length === 0) return;
         const newlyCapturedByImpostor = capturedIds.some(playerId =>
-          this.getMazeBoard().getMazeCageWalls(playerId).some(wall => wall.isSabotageWall)
+          this.getImpostorBoard().getImpostorCageWalls(playerId).some(wall => wall.isSabotageWall)
         );
         if (!newlyCapturedByImpostor) return;
 
@@ -1970,19 +2475,20 @@ export class GameInstance {
           .map(playerId => this.board.players.get(playerId));
         if (goodPlayers.length > 0 && goodPlayers.every(player =>
           !!player?.isInPrison &&
-          this.getMazeBoard().getMazeCageWalls(player.id).some(wall => wall.isSabotageWall)
+          this.getImpostorBoard().getImpostorCageWalls(player.id).some(wall => wall.isSabotageWall)
         )) {
-          this.finishMazeGame(this.impostorId, 'capture');
+          this.finishImpostorGame(this.impostorId, 'capture');
         }
       }
 
-  private finishMazeGame(winner: string | null, reason: MazeEndReason): void {
+  private finishImpostorGame(winner: string | null, reason: ImpostorEndReason): void {
+    if (this.isInfectionBurning()) return;
     if (this.mode === 'infection') {
       for (const player of this.board.players.values()) player.invisibleUntil = 0;
-      this.onStateChange('mazeStateChanged', this.getMazeStateData());
+      this.onStateChange('impostorStateChanged', this.getImpostorStateData());
     }
     this.winner = winner;
-    this.mazeEndReason = reason;
+    this.impostorEndReason = reason;
     this.endGame();
   }
 
@@ -2289,7 +2795,8 @@ export class GameInstance {
   }
 
   public surrender(surrenderingUserId: string): boolean {
-    if (this.state !== 'playing' || this.pendingBoostDecision) return false;
+    if (this.state !== 'playing' || this.pendingBoostDecision || this.isInfectionBurning() ||
+        this.isImpostorEmergencyMeetingActive()) return false;
 
     const surrenderingPlayer = this.board.players.get(surrenderingUserId);
     if (!surrenderingPlayer || surrenderingPlayer.isDead) return false;
@@ -2298,19 +2805,37 @@ export class GameInstance {
 
     const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
 
-    if (this.isMazeBoardMode()) {
+    if (this.isImpostorBoardMode()) {
       if (this.mode === 'infection') {
+        const infectionBoard = this.getImpostorBoard();
+        const playerCell = infectionBoard.grid[surrenderingPlayer.y]?.[surrenderingPlayer.x];
+        if (playerCell?.hasPlayer === surrenderingUserId) playerCell.hasPlayer = null;
+        const playerIndex = this.playersList.indexOf(surrenderingUserId);
+        if (playerIndex >= 0) this.playersList.splice(playerIndex, 1);
+        infectionBoard.players.delete(surrenderingUserId);
+        this.impostorMoveAt.delete(surrenderingUserId);
+        this.impostorActionsUsed.delete(surrenderingUserId);
+        this.impostorWallPlacementCooldownUntil.delete(surrenderingUserId);
+        this.infectionTrapCooldownUntil.delete(surrenderingUserId);
+        this.infectionLastSurvivorPowerCooldownUntil.delete(surrenderingUserId);
+        this.infectionSafeZoneEnteredAt.delete(surrenderingUserId);
+        this.infectionSafeZoneCooldownUntil.delete(surrenderingUserId);
+        this.clearInfectionSafeZoneExpiry(surrenderingUserId);
+        this.emitImpostorPublicEvent('player_left', {
+          playerId: surrenderingUserId,
+          playerName: surrenderingPlayer.username
+        });
         this.emitInfectionState();
-        this.onStateChange('mazeStateChanged', this.getMazeStateData());
+        this.onStateChange('impostorStateChanged', this.getImpostorStateData());
         this.announceInfectionLastSurvivor();
         if (this.getInfectionSurvivorIds().length === 0) {
-          this.finishMazeGame('infected', 'surrender');
+          this.finishImpostorGame('infected', 'surrender');
         } else if (this.getActiveInfectionIds().length === 0) {
-          this.finishMazeGame('survivors', 'surrender');
+          this.finishImpostorGame('survivors', 'surrender');
         }
         return true;
       }
-      this.finishMazeGame(
+      this.finishImpostorGame(
         surrenderingUserId === this.impostorId ? 'good' : this.impostorId,
         'surrender'
       );
@@ -2338,27 +2863,30 @@ export class GameInstance {
   }
 
   public abandon() {
-    if (this.state !== 'playing' || this.pendingBoostDecision) return;
+    if (this.state !== 'playing' || this.isInfectionBurning() || this.isImpostorEmergencyMeetingActive()) return;
     this.endGame(true);
   }
 
   private endGame(abandoned: boolean = false) {
     this.state = 'finished';
+    if (this.infectionBurnTimer) clearTimeout(this.infectionBurnTimer);
+    this.infectionBurnTimer = null;
     this.stopTurnTimer();
     this.clearPendingBoostDecision();
     this.clearPlayerInactivityTimers();
     this.clearTimedBoostTimers();
-    this.clearMazeTimers();
+    this.clearImpostorTimers();
+    this.clearImpostorToolRequests();
     if (abandoned) this.winner = null;
     const durationSeconds = this.startTime ? Math.max(1, Math.round((Date.now() - this.startTime) / 1000)) : 0;
     this.onStateChange('gameFinished', {
       winner: this.winner,
       durationSeconds,
       abandoned,
-      ...(this.mode === 'labyrinth'
+      ...(this.mode === 'impostor'
         ? {
-            mazeRevealedImpostorId: this.impostorId,
-            mazeEndReason: this.mazeEndReason
+            impostorRevealedImpostorId: this.impostorId,
+            impostorEndReason: this.impostorEndReason
           }
         : this.mode === 'infection'
           ? {
@@ -2367,6 +2895,6 @@ export class GameInstance {
             }
         : {})
     });
-    if (!abandoned && !this.isMazeBoardMode()) this.botReactionManager.onGameFinished(this.winner);
+    if (!abandoned && !this.isImpostorBoardMode()) this.botReactionManager.onGameFinished(this.winner);
   }
 }

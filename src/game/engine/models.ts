@@ -3,6 +3,8 @@ export interface Coordinate {
   y: number;
 }
 
+export type ImpostorToolType = 'radar' | 'hammer' | 'wrench';
+
 export class Cell {
   constructor(
     public x: number,
@@ -37,13 +39,14 @@ export class Player {
   public ghostTurnsRemaining: number = 0;
   public ghostModeExpiresAt: number = 0;
   public isInPrison: boolean = false;
-  public hasMazeKey: boolean = false;
-  public hasMazeKeyDelivered: boolean = false;
-  public hasMazeEscaped: boolean = false;
-  public mazeFrozenUntil: number = 0;
-  public mazeTeleportingUntil: number = 0;
-  public mazeShieldActive: boolean = false;
-  public mazeShieldExpiresAt: number = 0;
+  public hasImpostorKey: boolean = false;
+  public hasImpostorKeyDelivered: boolean = false;
+  public hasImpostorEscaped: boolean = false;
+  public impostorTool: ImpostorToolType | null = null;
+  public impostorFrozenUntil: number = 0;
+  public impostorTeleportingUntil: number = 0;
+  public impostorShieldActive: boolean = false;
+  public impostorShieldExpiresAt: number = 0;
   public isInfected: boolean = false;
   public invisibleUntil: number = 0;
 

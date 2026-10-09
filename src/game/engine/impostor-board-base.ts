@@ -1,13 +1,29 @@
 import { Board } from './board.js';
-import { Wall, type Coordinate, type Player } from './models.js';
+import { Wall, type Coordinate, type ImpostorToolType, type Player } from './models.js';
 
-export interface IMazeKey {
+export interface IImpostorKey {
   id: string;
+  ownerId?: string;
   x: number;
   y: number;
 }
 
-export interface IMazeExit {
+export type ImpostorGeneratorSector = 'northwest' | 'northeast' | 'southwest' | 'southeast';
+
+export interface IImpostorGenerator extends Coordinate {
+  id: string;
+  sector: ImpostorGeneratorSector;
+  isDamaged: boolean;
+}
+
+export interface IImpostorTool extends Coordinate {
+  id: string;
+  type: ImpostorToolType;
+  slot: number;
+  carriedBy?: string;
+}
+
+export interface IImpostorExit {
   id: string;
   x: number;
   y: number;
@@ -15,55 +31,56 @@ export interface IMazeExit {
   isSealed?: boolean;
 }
 
-export interface IMazeTeleport {
+export interface IImpostorTeleport {
   id: string;
   pairId: string;
   x: number;
   y: number;
 }
 
-export type MazeTrapType = 'ice' | 'teleport';
+export type ImpostorTrapType = 'ice' | 'teleport';
 
-export interface IMazeTrap extends Coordinate {
+export interface IImpostorTrap extends Coordinate {
   id: string;
-  type: MazeTrapType;
+  type: ImpostorTrapType;
 }
 
-export interface IMazeShieldPickup extends Coordinate {
-  id: string;
-}
-
-export interface IMazeGhostPickup extends Coordinate {
+export interface IImpostorShieldPickup extends Coordinate {
   id: string;
 }
 
-export class MazeBoard extends Board {
-  public keys: IMazeKey[] = [];
-  public exits: IMazeExit[] = [];
-  public teleports: IMazeTeleport[] = [];
-  public traps: IMazeTrap[] = [];
-  public shieldPickups: IMazeShieldPickup[] = [];
-  public ghostPickups: IMazeGhostPickup[] = [];
+export interface IImpostorGhostPickup extends Coordinate {
+  id: string;
+}
 
-  public get extraction(): Coordinate {
-    const middle = Math.floor(this.size / 2);
-    return { x: middle, y: middle };
-  }
+export abstract class ImpostorBoardBase extends Board {
+  public keys: IImpostorKey[] = [];
+  public generators: IImpostorGenerator[] = [];
+  public tools: IImpostorTool[] = [];
+  public exits: IImpostorExit[] = [];
+  public teleports: IImpostorTeleport[] = [];
+  public traps: IImpostorTrap[] = [];
+  public shieldPickups: IImpostorShieldPickup[] = [];
+  public ghostPickups: IImpostorGhostPickup[] = [];
 
-  public generateRandomMazeWalls(
+  public generateRandomImpostorWalls(
     targetWallCount: number = Math.floor(this.size * this.size * 0.35),
     random: () => number = Math.random,
     _exitCount: number = this.players.size,
     prioritizeGateApproaches = false
   ): void {
     this.exits = this.createExits();
+    if (this.generators.length > 0) {
+      this.walls = this.walls.filter(wall => !this.wallPassagesTouchGenerator(wall));
+    }
     if (this.shouldAddCentralEntranceWalls()) this.addCentralEntranceWalls();
+    if (this.generators.length > 0) this.addGeneratorEnclosureWalls();
     const protectedPassages = this.getProtectedPassages();
     const candidates: Wall[] = [];
     for (let y = 0; y < this.size - 1; y++) {
       for (let x = 0; x < this.size - 1; x++) {
-        candidates.push(new Wall(`maze_h_${x}_${y}`, 'maze', x, y, true));
-        candidates.push(new Wall(`maze_v_${x}_${y}`, 'maze', x, y, false));
+        candidates.push(new Wall(`impostor_h_${x}_${y}`, 'board', x, y, true));
+        candidates.push(new Wall(`impostor_v_${x}_${y}`, 'board', x, y, false));
       }
     }
 
@@ -82,44 +99,192 @@ export class MazeBoard extends Board {
       );
     }
 
-    for (const wall of candidates) {
-      if (this.walls.length >= targetWallCount) break;
-      if (!super.canPlaceWall(wall)) continue;
+    const processedCandidates = new Set<Wall>();
+    const tryAddWall = (wall: Wall): boolean => {
+      if (this.walls.length >= targetWallCount) return false;
+      if (!super.canPlaceWall(wall) || this.wallPassagesTouchGenerator(wall)) return false;
       const passages = this.getWallPassages(wall);
       if (passages.some(passage =>
         protectedPassages.has(passage.key) || this.isPassageInsideCentralRoom(passage)
-      )) continue;
+      )) return false;
 
       this.walls.push(wall);
       const enclosesFreePlayer = [...this.players.values()].some(player =>
-        !player.isInPrison && this.isMazePlayerEnclosed(player.id)
+        !player.isInPrison && this.isImpostorPlayerEnclosed(player.id)
       );
-      if (!this.isBoardConnected() || enclosesFreePlayer) {
+      if (enclosesFreePlayer || !this.areGeneratorRepairApproachesOpen() ||
+          !this.isGeneratedImpostorLayoutPlayable()) {
         this.walls.pop();
+        return false;
+      }
+      return true;
+    };
+
+    if (this.generators.length > 0) {
+      for (let regionY = 0; regionY < this.size - 1; regionY += 4) {
+        for (let regionX = 0; regionX < this.size - 1; regionX += 4) {
+          const existingWallCount = this.walls.filter(wall =>
+            wall.x >= regionX && wall.x < regionX + 4 &&
+            wall.y >= regionY && wall.y < regionY + 4
+          ).length;
+          let regionWallCount = existingWallCount;
+          for (const wall of candidates) {
+            if (regionWallCount >= 3 || wall.x < regionX || wall.x >= regionX + 4 ||
+                wall.y < regionY || wall.y >= regionY + 4) continue;
+            processedCandidates.add(wall);
+            if (tryAddWall(wall)) regionWallCount++;
+          }
+        }
       }
     }
-  }
 
-  public reshuffleMaze(random: () => number = Math.random, prioritizeGateApproaches = false): void {
-    const previousTeleportPositions = this.teleports.map(({ x, y }) => ({ x, y }));
-    const previousExitSealStates = new Map(this.exits.map(exit => [exit.id, exit.isSealed === true]));
-    const capturedIds = [...this.players.values()]
-      .filter(player => player.isInPrison)
-      .map(player => player.id);
-    const preservedCageWalls = new Set<Wall>();
-    for (const playerId of capturedIds) {
-      for (const wall of this.getMazeCageWalls(playerId)) preservedCageWalls.add(wall);
+    for (const wall of candidates) {
+      if (this.walls.length >= targetWallCount) break;
+      if (processedCandidates.has(wall)) continue;
+      tryAddWall(wall);
     }
 
-    this.walls = [...preservedCageWalls];
-    this.generateRandomMazeWalls(undefined, random, this.players.size, prioritizeGateApproaches);
+  }
+
+  public reshuffleImpostor(
+    random: () => number = Math.random,
+    prioritizeGateApproaches = false,
+    removePlayerPlacedWalls = false
+  ): void {
+    const previousTeleportPositions = this.teleports.map(({ x, y }) => ({ x, y }));
+    const previousExitSealStates = new Map(this.exits.map(exit => [exit.id, exit.isSealed === true]));
+    const capturedIds = removePlayerPlacedWalls ? [] : [...this.players.values()]
+      .filter(player => player.isInPrison)
+      .map(player => player.id);
+    if (removePlayerPlacedWalls) {
+      for (const player of this.players.values()) player.isInPrison = false;
+    }
+    const preservedCageWalls = new Set<Wall>();
+    for (const playerId of capturedIds) {
+      for (const wall of this.getImpostorCageWalls(playerId)) preservedCageWalls.add(wall);
+    }
+
+    this.walls = removePlayerPlacedWalls ? [] : [...preservedCageWalls];
+    this.generateRandomImpostorWalls(undefined, random, this.players.size, prioritizeGateApproaches);
     this.exits = this.exits.map(exit => ({
       ...exit,
       isSealed: previousExitSealStates.get(exit.id) ?? false
     }));
     this.teleports = [];
-    this.relocateUncollectedKeys(random);
-    this.spawnTeleports(random, previousTeleportPositions);
+    if (previousTeleportPositions.length > 0) {
+      this.spawnTeleports(random, previousTeleportPositions);
+    }
+  }
+
+  public spawnGenerators(): void {
+    const last = this.size - 2;
+    this.generators = [
+      { id: 'generator_northwest', sector: 'northwest', x: 0, y: 0, isDamaged: false },
+      { id: 'generator_northeast', sector: 'northeast', x: last, y: 0, isDamaged: false },
+      { id: 'generator_southwest', sector: 'southwest', x: 0, y: last, isDamaged: false },
+      { id: 'generator_southeast', sector: 'southeast', x: last, y: last, isDamaged: false }
+    ];
+  }
+
+  public isGeneratorCell(x: number, y: number): boolean {
+    return this.generators.some(generator =>
+      x >= generator.x && x <= generator.x + 1 &&
+      y >= generator.y && y <= generator.y + 1
+    );
+  }
+
+  public spawnTools(): void {
+    const middle = Math.floor(this.size / 2);
+    this.tools = [
+      { id: 'radar_1', type: 'radar', slot: 1, x: middle - 1, y: middle - 1 },
+      { id: 'radar_2', type: 'radar', slot: 2, x: middle + 1, y: middle - 1 },
+      { id: 'hammer_1', type: 'hammer', slot: 1, x: middle - 1, y: middle + 1 },
+      { id: 'wrench_1', type: 'wrench', slot: 1, x: middle + 1, y: middle + 1 }
+    ];
+  }
+
+  public isToolTableCell(x: number, y: number): boolean {
+    if (this.tools.length === 0) return false;
+    const middle = Math.floor(this.size / 2);
+    return Math.abs(x - middle) <= 1 && Math.abs(y - middle) <= 1;
+  }
+
+  public getGeneratorSector(x: number, y: number): ImpostorGeneratorSector {
+    const north = y < Math.floor(this.size / 2);
+    const west = x < Math.floor(this.size / 2);
+    return `${north ? 'north' : 'south'}${west ? 'west' : 'east'}` as ImpostorGeneratorSector;
+  }
+
+  public getGeneratorAt(x: number, y: number): IImpostorGenerator | null {
+    return this.generators.find(generator => generator.sector === this.getGeneratorSector(x, y)) ?? null;
+  }
+
+  public isCellPowered(x: number, y: number): boolean {
+    return this.getGeneratorAt(x, y)?.isDamaged !== true;
+  }
+
+  public damageGenerator(generatorId: string): IImpostorGenerator | null {
+    const generator = this.generators.find(item => item.id === generatorId);
+    if (!generator || generator.isDamaged) return null;
+    generator.isDamaged = true;
+    return generator;
+  }
+
+  public repairGenerator(generatorId: string): IImpostorGenerator | null {
+    const generator = this.generators.find(item => item.id === generatorId);
+    if (!generator || !generator.isDamaged) return null;
+    generator.isDamaged = false;
+    return generator;
+  }
+
+  public takeTool(playerId: string, toolId: string): boolean {
+    const player = this.players.get(playerId);
+    const tool = this.tools.find(item => item.id === toolId);
+    if (!player || !tool || tool.carriedBy) return false;
+    if (!this.isSafeZoneCell(player.x, player.y) ||
+        !this.isSafeZoneCell(tool.x, tool.y) ||
+        Math.abs(player.x - tool.x) > 1 ||
+        Math.abs(player.y - tool.y) > 1 ||
+        Math.abs(player.x - tool.x) + Math.abs(player.y - tool.y) === 0 ||
+        player.impostorTool === tool.type) return false;
+    const previousTool = player.impostorTool;
+    if (previousTool) {
+      const previousSlot = this.tools.find(item =>
+        item.type === previousTool && item.carriedBy === playerId
+      );
+      if (previousSlot) delete previousSlot.carriedBy;
+    }
+    tool.carriedBy = playerId;
+    player.impostorTool = tool.type;
+    return true;
+  }
+
+  public dropTool(playerId: string): boolean {
+    const player = this.players.get(playerId);
+    if (!player?.impostorTool || !this.isSafeZoneCell(player.x, player.y)) return false;
+    const tool = this.tools.find(item => item.carriedBy === playerId);
+    if (!tool) throw new Error(`Carried Impostor tool slot missing for player ${playerId}.`);
+    delete tool.carriedBy;
+    player.impostorTool = null;
+    return true;
+  }
+
+  public transferTool(holderId: string, requesterId: string): boolean {
+    const holder = this.players.get(holderId);
+    const requester = this.players.get(requesterId);
+    const heldTool = this.tools.find(item => item.carriedBy === holderId);
+    if (!holder?.impostorTool || !requester || !heldTool || heldTool.type !== holder.impostorTool) return false;
+
+    const requesterTool = this.tools.find(item => item.carriedBy === requesterId);
+    heldTool.carriedBy = requesterId;
+    requester.impostorTool = heldTool.type;
+    if (requesterTool) {
+      requesterTool.carriedBy = holderId;
+      holder.impostorTool = requesterTool.type;
+    } else {
+      holder.impostorTool = null;
+    }
+    return true;
   }
 
   public spawnTeleports(
@@ -154,7 +319,7 @@ export class MazeBoard extends Board {
 
     this.teleports = [];
     for (let pairIndex = 0; pairIndex * 2 + 1 < selected.length; pairIndex++) {
-      const pairId = `maze_teleport_pair_${pairIndex + 1}`;
+      const pairId = `impostor_teleport_pair_${pairIndex + 1}`;
       this.teleports.push(
         { id: `${pairId}_a`, pairId, ...selected[pairIndex * 2] },
         { id: `${pairId}_b`, pairId, ...selected[pairIndex * 2 + 1] }
@@ -173,7 +338,7 @@ export class MazeBoard extends Board {
       const position = available.find(candidate =>
         isAvailable(candidate) && (candidate.x !== key.x || candidate.y !== key.y)
       ) ?? available.find(isAvailable);
-      if (!position) throw new Error('Labyrinth could not relocate all uncollected keys.');
+      if (!position) throw new Error('Impostor could not relocate all uncollected keys.');
       occupiedKeys.add(`${position.x},${position.y}`);
       return { ...key, x: position.x, y: position.y };
     });
@@ -182,8 +347,8 @@ export class MazeBoard extends Board {
   public teleportPlayer(playerId: string, teleportId: string): Coordinate | null {
     const player = this.players.get(playerId);
     const source = this.teleports.find(teleport => teleport.id === teleportId);
-    if (!player || player.isDead || player.isInPrison || player.hasMazeEscaped ||
-        player.mazeFrozenUntil > Date.now() || player.mazeTeleportingUntil > Date.now() || !source ||
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        player.impostorFrozenUntil > Date.now() || player.impostorTeleportingUntil > Date.now() || !source ||
         source.x !== player.x || source.y !== player.y) return null;
     const destination = this.teleports.find(teleport =>
       teleport.pairId === source.pairId && teleport.id !== source.id
@@ -196,21 +361,21 @@ export class MazeBoard extends Board {
     return { x: player.x, y: player.y };
   }
 
-  public sealMazeExit(exitId: string): number | null {
+  public sealImpostorExit(exitId: string): number | null {
     const exit = this.exits.find(candidate => candidate.id === exitId);
     if (!exit || exit.isSealed) return null;
     exit.isSealed = true;
     return this.exits.indexOf(exit) + 1;
   }
 
-  public openMazeExit(exitId: string): number | null {
+  public openImpostorExit(exitId: string): number | null {
     const exit = this.exits.find(candidate => candidate.id === exitId);
     if (!exit?.isSealed) return null;
     exit.isSealed = false;
     return this.exits.indexOf(exit) + 1;
   }
 
-  public canOpenMazeExitFrom(exitId: string, playerX: number, playerY: number): boolean {
+  public canOpenImpostorExitFrom(exitId: string, playerX: number, playerY: number): boolean {
     const exit = this.exits.find(candidate => candidate.id === exitId);
     if (!exit?.isSealed) return false;
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
@@ -218,11 +383,11 @@ export class MazeBoard extends Board {
     return isInsideRoom && Math.abs(exit.x - playerX) + Math.abs(exit.y - playerY) === 1;
   }
 
-  public getMazeValidMoves(playerId: string): Coordinate[] {
+  public getImpostorValidMoves(playerId: string): Coordinate[] {
     const player = this.players.get(playerId);
     const isGhost = !!player && player.ghostModeExpiresAt > Date.now();
-    if (!player || player.isDead || player.hasMazeEscaped ||
-        player.mazeFrozenUntil > Date.now() || player.mazeTeleportingUntil > Date.now() ||
+    if (!player || player.isDead || player.hasImpostorEscaped ||
+        player.impostorFrozenUntil > Date.now() || player.impostorTeleportingUntil > Date.now() ||
         (player.isInPrison && !isGhost)) return [];
     const validMoves: Coordinate[] = [];
     const directions = [
@@ -244,6 +409,8 @@ export class MazeBoard extends Board {
       const adjacentX = player.x + dx;
       const adjacentY = player.y + dy;
       if (!this.isInsideBoard(adjacentX, adjacentY) ||
+          this.isGeneratorCell(adjacentX, adjacentY) ||
+          this.isToolTableCell(adjacentX, adjacentY) ||
           this.isSealedCentralGateBlocking(player.x, player.y, adjacentX, adjacentY) ||
           (!isGhost && this.isWallBlocking(player.x, player.y, adjacentX, adjacentY))) continue;
 
@@ -256,6 +423,8 @@ export class MazeBoard extends Board {
       const jumpY = adjacentY + dy;
       if (dx !== 0 && dy !== 0) {
         if (this.isInsideBoard(jumpX, jumpY) &&
+            !this.isGeneratorCell(jumpX, jumpY) &&
+            !this.isToolTableCell(jumpX, jumpY) &&
             !this.isSealedCentralGateBlocking(adjacentX, adjacentY, jumpX, jumpY) &&
             !this.grid[jumpY][jumpX].hasPlayer) {
           validMoves.push({ x: jumpX, y: jumpY });
@@ -263,6 +432,8 @@ export class MazeBoard extends Board {
         continue;
       }
       if (this.isInsideBoard(jumpX, jumpY) &&
+          !this.isGeneratorCell(jumpX, jumpY) &&
+          !this.isToolTableCell(jumpX, jumpY) &&
           !this.isSealedCentralGateBlocking(adjacentX, adjacentY, jumpX, jumpY) &&
           (isGhost || !this.isWallBlocking(adjacentX, adjacentY, jumpX, jumpY)) &&
           !this.grid[jumpY][jumpX].hasPlayer) {
@@ -277,6 +448,8 @@ export class MazeBoard extends Board {
         const sideX = adjacentX + sideDirection.dx;
         const sideY = adjacentY + sideDirection.dy;
         if (this.isInsideBoard(sideX, sideY) &&
+            !this.isGeneratorCell(sideX, sideY) &&
+            !this.isToolTableCell(sideX, sideY) &&
             !this.isSealedCentralGateBlocking(adjacentX, adjacentY, sideX, sideY) &&
             (isGhost || !this.isWallBlocking(adjacentX, adjacentY, sideX, sideY)) &&
             !this.grid[sideY][sideX].hasPlayer) {
@@ -288,9 +461,15 @@ export class MazeBoard extends Board {
     return validMoves;
   }
 
-  public moveMazePlayer(playerId: string, newX: number, newY: number): boolean {
+  public isAdjacentToGenerator(generator: IImpostorGenerator, x: number, y: number): boolean {
+    const distanceX = Math.max(generator.x - x, 0, x - (generator.x + 1));
+    const distanceY = Math.max(generator.y - y, 0, y - (generator.y + 1));
+    return !this.isGeneratorCell(x, y) && distanceX + distanceY === 1;
+  }
+
+  public moveImpostorPlayer(playerId: string, newX: number, newY: number): boolean {
     const player = this.players.get(playerId);
-    if (!player || !this.getMazeValidMoves(playerId).some(move => move.x === newX && move.y === newY)) {
+    if (!player || !this.getImpostorValidMoves(playerId).some(move => move.x === newX && move.y === newY)) {
       return false;
     }
     this.grid[player.y][player.x].hasPlayer = null;
@@ -352,10 +531,15 @@ export class MazeBoard extends Board {
     return true;
   }
 
+  protected isGeneratedImpostorLayoutPlayable(): boolean {
+    return this.isBoardConnected();
+  }
+
   public canPlaceTrap(x: number, y: number, allowPlayerId?: string): boolean {
     return Number.isInteger(x) && Number.isInteger(y) &&
       this.isInsideBoard(x, y) &&
       !this.isSafeZoneCell(x, y) &&
+      !this.isGeneratorCell(x, y) &&
       (!this.grid[y][x].hasPlayer || this.grid[y][x].hasPlayer === allowPlayerId) &&
       !this.keys.some(key => key.x === x && key.y === y) &&
       !this.exits.some(exit => exit.x === x && exit.y === y) &&
@@ -364,13 +548,13 @@ export class MazeBoard extends Board {
       !this.traps.some(trap => trap.x === x && trap.y === y);
   }
 
-  public placeTrap(trap: IMazeTrap, allowPlayerId?: string): boolean {
+  public placeTrap(trap: IImpostorTrap, allowPlayerId?: string): boolean {
     if (!this.canPlaceTrap(trap.x, trap.y, allowPlayerId)) return false;
     this.traps.push({ ...trap });
     return true;
   }
 
-  public removeTrapAt(x: number, y: number): IMazeTrap | null {
+  public removeTrapAt(x: number, y: number): IImpostorTrap | null {
     const index = this.traps.findIndex(trap => trap.x === x && trap.y === y);
     return index < 0 ? null : this.traps.splice(index, 1)[0];
   }
@@ -380,6 +564,7 @@ export class MazeBoard extends Board {
     for (let y = 1; y < this.size - 1; y++) {
       for (let x = 1; x < this.size - 1; x++) {
         if (!this.isSafeZoneCell(x, y) &&
+            !this.isGeneratorCell(x, y) &&
             !this.grid[y][x].hasPlayer &&
             !this.keys.some(key => key.x === x && key.y === y) &&
             !this.exits.some(exit => exit.x === x && exit.y === y) &&
@@ -394,13 +579,13 @@ export class MazeBoard extends Board {
     while (this.shieldPickups.length < targetCount && candidates.length > 0) {
       const position = candidates.pop()!;
       this.shieldPickups.push({
-        id: `maze_shield_${Date.now()}_${this.shieldPickups.length}`,
+        id: `impostor_shield_${Date.now()}_${this.shieldPickups.length}`,
         ...position
       });
     }
   }
 
-  public collectShieldPickupAt(x: number, y: number): IMazeShieldPickup | null {
+  public collectShieldPickupAt(x: number, y: number): IImpostorShieldPickup | null {
     const index = this.shieldPickups.findIndex(pickup => pickup.x === x && pickup.y === y);
     return index < 0 ? null : this.shieldPickups.splice(index, 1)[0];
   }
@@ -425,13 +610,13 @@ export class MazeBoard extends Board {
     while (this.ghostPickups.length < targetCount && candidates.length > 0) {
       const position = candidates.pop()!;
       this.ghostPickups.push({
-        id: `maze_ghost_${Date.now()}_${this.ghostPickups.length}`,
+        id: `impostor_ghost_${Date.now()}_${this.ghostPickups.length}`,
         ...position
       });
     }
   }
 
-  public collectGhostPickupAt(x: number, y: number): IMazeGhostPickup | null {
+  public collectGhostPickupAt(x: number, y: number): IImpostorGhostPickup | null {
     const index = this.ghostPickups.findIndex(pickup => pickup.x === x && pickup.y === y);
     return index < 0 ? null : this.ghostPickups.splice(index, 1)[0];
   }
@@ -443,7 +628,8 @@ export class MazeBoard extends Board {
     for (let y = 0; y < this.size; y++) {
       for (let x = 0; x < this.size; x++) {
         if ((x === 0 || y === 0 || x === this.size - 1 || y === this.size - 1) &&
-            !this.grid[y][x].hasPlayer &&
+              !this.isGeneratorCell(x, y) &&
+              !this.grid[y][x].hasPlayer &&
             !this.traps.some(trap => trap.x === x && trap.y === y)) candidates.push({ x, y });
       }
     }
@@ -457,7 +643,7 @@ export class MazeBoard extends Board {
     return { ...destination };
   }
 
-  public placeMazeWall(wall: Wall): boolean {
+  public placeImpostorWall(wall: Wall): boolean {
     if (!this.canPlaceWall(wall)) return false;
     this.walls.push(wall);
     return true;
@@ -465,16 +651,46 @@ export class MazeBoard extends Board {
 
   public override canPlaceWall(wall: Wall): boolean {
     if (!super.canPlaceWall(wall)) return false;
+    if (this.wallPassagesTouchGenerator(wall)) return false;
     return !this.getWallPassages(wall).some(passage =>
-      this.isPassageInsideProtectedCentralZone(passage)
+      this.isPassageInsideProtectedCentralZone(passage) ||
+      this.isPassageInsideGeneratorAccess(passage)
     );
+  }
+
+  private wallPassagesTouchGenerator(wall: Wall): boolean {
+    return this.getWallPassages(wall).some(passage =>
+      this.isGeneratorCell(passage.x1, passage.y1) ||
+      this.isGeneratorCell(passage.x2, passage.y2)
+    );
+  }
+
+  private areGeneratorRepairApproachesOpen(): boolean {
+    return this.generators.every(generator => {
+      const adjacentCells = [
+        { x: generator.x - 1, y: generator.y },
+        { x: generator.x - 1, y: generator.y + 1 },
+        { x: generator.x + 2, y: generator.y },
+        { x: generator.x + 2, y: generator.y + 1 },
+        { x: generator.x, y: generator.y - 1 },
+        { x: generator.x + 1, y: generator.y - 1 },
+        { x: generator.x, y: generator.y + 2 },
+        { x: generator.x + 1, y: generator.y + 2 }
+      ];
+      return adjacentCells.some(({ x, y }) =>
+        this.isInsideBoard(x, y) &&
+        !this.isGeneratorCell(x, y) &&
+        !this.isWallBlocking(x, y, x < generator.x ? x + 1 : x > generator.x + 1 ? x - 1 : x,
+          y < generator.y ? y + 1 : y > generator.y + 1 ? y - 1 : y)
+      );
+    });
   }
 
   public wouldEnclosePlayerWithWall(wall: Wall, playerId: string): boolean {
     if (!this.canPlaceWall(wall)) return false;
     this.walls.push(wall);
     try {
-      return this.isMazePlayerEnclosed(playerId);
+      return this.isImpostorPlayerEnclosed(playerId);
     } finally {
       this.walls.pop();
     }
@@ -490,7 +706,7 @@ export class MazeBoard extends Board {
       for (let second = first + 1; second < players.length; second++) {
         const playerA = players[first];
         const playerB = players[second];
-        if (this.isMazeCellReachable(playerA.x, playerA.y, playerB.x, playerB.y)) {
+        if (this.isImpostorCellReachable(playerA.x, playerA.y, playerB.x, playerB.y)) {
           connectedPairs.push([playerA, playerB]);
         }
       }
@@ -499,7 +715,7 @@ export class MazeBoard extends Board {
     this.walls.push(wall);
     try {
       return connectedPairs.some(([playerA, playerB]) =>
-        !this.isMazeCellReachable(playerA.x, playerA.y, playerB.x, playerB.y)
+        !this.isImpostorCellReachable(playerA.x, playerA.y, playerB.x, playerB.y)
       );
     } finally {
       this.walls.pop();
@@ -508,14 +724,17 @@ export class MazeBoard extends Board {
 
   public wouldMakeUncollectedKeyUnreachable(wall: Wall): boolean {
     if (!this.canPlaceWall(wall)) return false;
+    const getEligibleOwners = (key: IImpostorKey) => [...this.players.values()].filter(player =>
+      !player.id.startsWith('bot_') && !player.isDead &&
+      !player.hasImpostorKey && !player.hasImpostorKeyDelivered &&
+      (!key.ownerId || key.ownerId === player.id)
+    );
     const keysReachableBefore = this.keys.map(key => {
-      const candidates = [...this.players.values()].filter(player =>
-        !player.id.startsWith('bot_') && !player.isDead && !player.hasMazeKey
-      );
+      const candidates = getEligibleOwners(key);
       return {
         key,
         wasReachable: candidates.some(player =>
-          this.isMazeCellReachable(player.x, player.y, key.x, key.y)
+          this.isImpostorCellReachable(player.x, player.y, key.x, key.y)
         )
       };
     });
@@ -524,11 +743,9 @@ export class MazeBoard extends Board {
     try {
       return keysReachableBefore.some(({ key, wasReachable }) => {
         if (!wasReachable) return false;
-        const candidates = [...this.players.values()].filter(player =>
-          !player.id.startsWith('bot_') && !player.isDead && !player.hasMazeKey
-        );
+        const candidates = getEligibleOwners(key);
         return !candidates.some(player =>
-          this.isMazeCellReachable(player.x, player.y, key.x, key.y)
+          this.isImpostorCellReachable(player.x, player.y, key.x, key.y)
         );
       });
     } finally {
@@ -536,8 +753,9 @@ export class MazeBoard extends Board {
     }
   }
 
-  public isMazeCellReachable(startX: number, startY: number, targetX: number, targetY: number): boolean {
-    if (!this.isInsideBoard(startX, startY) || !this.isInsideBoard(targetX, targetY)) return false;
+  public isImpostorCellReachable(startX: number, startY: number, targetX: number, targetY: number): boolean {
+    if (!this.isInsideBoard(startX, startY) || !this.isInsideBoard(targetX, targetY) ||
+        this.isGeneratorCell(startX, startY) || this.isGeneratorCell(targetX, targetY)) return false;
     const queue: Coordinate[] = [{ x: startX, y: startY }];
     const visited = new Set([`${startX},${startY}`]);
     for (let index = 0; index < queue.length; index++) {
@@ -550,7 +768,7 @@ export class MazeBoard extends Board {
         { x: current.x + 1, y: current.y }
       ]) {
         const key = `${next.x},${next.y}`;
-        if (!this.isInsideBoard(next.x, next.y) || visited.has(key) ||
+        if (!this.isInsideBoard(next.x, next.y) || visited.has(key) || this.isGeneratorCell(next.x, next.y) ||
             this.isWallBlocking(current.x, current.y, next.x, next.y) ||
             this.isSealedCentralGateBlocking(current.x, current.y, next.x, next.y)) continue;
         visited.add(key);
@@ -566,11 +784,11 @@ export class MazeBoard extends Board {
     return this.walls.splice(wallIndex, 1)[0];
   }
 
-  public isPlayerPlacedMazeWall(wall: Wall): boolean {
-    return wall.ownerId !== 'maze';
+  public isPlayerPlacedImpostorWall(wall: Wall): boolean {
+    return wall.ownerId !== 'board';
   }
 
-  public isMazePlayerEnclosed(playerId: string): boolean {
+  public isImpostorPlayerEnclosed(playerId: string): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
     const exits = [
@@ -587,7 +805,7 @@ export class MazeBoard extends Board {
     );
   }
 
-  public getMazeCageWalls(playerId: string): Wall[] {
+  public getImpostorCageWalls(playerId: string): Wall[] {
     const player = this.players.get(playerId);
     if (!player) return [];
     const adjacent = [
@@ -614,13 +832,13 @@ export class MazeBoard extends Board {
     return [...cageWalls];
   }
 
-  public getMazeReleaseWalls(playerId: string): Wall[] {
-    return this.getMazeCageWalls(playerId).filter(wall => {
-      if (!this.isPlayerPlacedMazeWall(wall)) return false;
+  public getImpostorReleaseWalls(playerId: string): Wall[] {
+    return this.getImpostorCageWalls(playerId).filter(wall => {
+      if (!this.isPlayerPlacedImpostorWall(wall)) return false;
       const wallIndex = this.walls.indexOf(wall);
       if (wallIndex < 0) return false;
       const [removed] = this.walls.splice(wallIndex, 1);
-      const releasesPlayer = !this.isMazePlayerEnclosed(playerId);
+      const releasesPlayer = !this.isImpostorPlayerEnclosed(playerId);
       this.walls.splice(wallIndex, 0, removed);
       return releasesPlayer;
     });
@@ -639,15 +857,17 @@ export class MazeBoard extends Board {
     return this.isWallBlocking(x1, y1, x2, y2);
   }
 
-  public spawnKeys(count: number, random: () => number = Math.random): void {
+  public spawnKeys(countOrOwners: number | string[], random: () => number = Math.random): void {
+    const owners = Array.isArray(countOrOwners) ? countOrOwners : [];
+    const count = Array.isArray(countOrOwners) ? owners.length : countOrOwners;
     if (!Number.isInteger(count) || count < 1) {
-      throw new Error('Labyrinth must spawn at least one key.');
+      throw new Error('Impostor must spawn at least one key.');
     }
 
     const candidates = this.getAvailableKeyCells();
     const capturable = this.shuffle(candidates.filter(({ x, y }) => this.isCellCapturable(x, y)), random);
     if (capturable.length === 0) {
-      throw new Error('Labyrinth could not place a key in a capturable location.');
+      throw new Error('Impostor could not place a key in a capturable location.');
     }
 
     const selected = [capturable[0]];
@@ -656,30 +876,29 @@ export class MazeBoard extends Board {
     ), random);
     selected.push(...remaining.slice(0, Math.max(0, count - 1)));
     this.keys = selected.map((position, index) => ({
-      id: `maze_key_${index + 1}`,
+      id: `impostor_key_${index + 1}`,
+      ...(owners[index] ? { ownerId: owners[index] } : {}),
       ...position
     }));
   }
 
-  public collectKey(playerId: string, x: number, y: number): IMazeKey | null {
+  public collectKey(
+    playerId: string,
+    x: number,
+    y: number,
+    isImpostor = false
+  ): IImpostorKey | null {
     const player = this.players.get(playerId);
-    if (!player || player.hasMazeKey || player.hasMazeEscaped) return null;
+    if (!player || player.hasImpostorKey || player.hasImpostorKeyDelivered ||
+        player.hasImpostorEscaped ||
+        (!isImpostor && (player.impostorTool !== 'radar' || !this.isCellPowered(x, y)))) return null;
     const keyIndex = this.keys.findIndex(key =>
-      key.x === x && key.y === y
+      key.x === x && key.y === y &&
+      (isImpostor ? key.ownerId === playerId : !key.ownerId || key.ownerId === playerId)
     );
     if (keyIndex < 0) return null;
     const [key] = this.keys.splice(keyIndex, 1);
     return key;
-  }
-
-  public deliverMazeKey(playerId: string): boolean {
-    const player = this.players.get(playerId);
-    const extraction = this.extraction;
-    if (!player || !player.hasMazeKey || player.hasMazeEscaped ||
-        player.x !== extraction.x || player.y !== extraction.y) return false;
-    player.hasMazeKeyDelivered = true;
-    player.hasMazeKey = false;
-    return true;
   }
 
   public isCellCapturable(x: number, y: number): boolean {
@@ -688,29 +907,29 @@ export class MazeBoard extends Board {
       {
         blocked: { x, y: y - 1 },
         candidates: [
-          new Wall('maze_test_north_a', 'maze', x - 1, y - 1, true),
-          new Wall('maze_test_north_b', 'maze', x, y - 1, true)
+          new Wall('impostor_test_north_a', 'board', x - 1, y - 1, true),
+          new Wall('impostor_test_north_b', 'board', x, y - 1, true)
         ]
       },
       {
         blocked: { x, y: y + 1 },
         candidates: [
-          new Wall('maze_test_south_a', 'maze', x - 1, y, true),
-          new Wall('maze_test_south_b', 'maze', x, y, true)
+          new Wall('impostor_test_south_a', 'board', x - 1, y, true),
+          new Wall('impostor_test_south_b', 'board', x, y, true)
         ]
       },
       {
         blocked: { x: x - 1, y },
         candidates: [
-          new Wall('maze_test_west_a', 'maze', x - 1, y - 1, false),
-          new Wall('maze_test_west_b', 'maze', x - 1, y, false)
+          new Wall('impostor_test_west_a', 'board', x - 1, y - 1, false),
+          new Wall('impostor_test_west_b', 'board', x - 1, y, false)
         ]
       },
       {
         blocked: { x: x + 1, y },
         candidates: [
-          new Wall('maze_test_east_a', 'maze', x, y - 1, false),
-          new Wall('maze_test_east_b', 'maze', x, y, false)
+          new Wall('impostor_test_east_a', 'board', x, y - 1, false),
+          new Wall('impostor_test_east_b', 'board', x, y, false)
         ]
       }
     ].filter(side => !this.isWallBlocking(x, y, side.blocked.x, side.blocked.y));
@@ -729,20 +948,21 @@ export class MazeBoard extends Board {
     return addWallsRecursively(0);
   }
 
-  public override toDTO(forPlayerId?: string) {
+  public override toDTO(forPlayerId?: string, isImpostorViewer = false) {
     const board = super.toDTO(forPlayerId);
     const players = { ...board.players };
     for (const [playerId, player] of this.players) {
       players[playerId] = {
         ...players[playerId],
-        hasMazeKey: player.hasMazeKey,
-        hasMazeKeyDelivered: player.hasMazeKeyDelivered,
-        hasMazeEscaped: player.hasMazeEscaped,
+        hasImpostorKey: player.hasImpostorKey,
+        hasImpostorKeyDelivered: player.hasImpostorKeyDelivered,
+        hasImpostorEscaped: player.hasImpostorEscaped,
+        impostorTool: player.impostorTool,
         ghostModeExpiresAt: player.ghostModeExpiresAt,
-        mazeFrozenUntil: player.mazeFrozenUntil,
-        mazeTeleportingUntil: player.mazeTeleportingUntil,
-        mazeShieldActive: player.mazeShieldActive,
-        mazeShieldExpiresAt: player.mazeShieldExpiresAt
+        impostorFrozenUntil: player.impostorFrozenUntil,
+        impostorTeleportingUntil: player.impostorTeleportingUntil,
+        impostorShieldActive: player.impostorShieldActive,
+        impostorShieldExpiresAt: player.impostorShieldExpiresAt
       };
     }
     return {
@@ -750,8 +970,8 @@ export class MazeBoard extends Board {
       players,
       walls: this.walls.map(wall => ({
         id: wall.id,
-        ownerId: 'maze',
-        isPlayerPlaced: wall.ownerId !== 'maze',
+        ownerId: 'impostor',
+        isPlayerPlaced: wall.ownerId !== 'board',
         x: wall.x,
         y: wall.y,
         isHorizontal: wall.isHorizontal,
@@ -759,9 +979,20 @@ export class MazeBoard extends Board {
         isSabotageWall: wall.isSabotageWall,
         isRescueWall: wall.isRescueWall
       })),
-      validMoves: forPlayerId ? this.getMazeValidMoves(forPlayerId) : [],
-      extraction: this.extraction,
-      keys: this.keys.map(key => ({ ...key })),
+      validMoves: forPlayerId ? this.getImpostorValidMoves(forPlayerId) : [],
+      keys: forPlayerId
+        ? this.keys.filter(key => {
+            const player = this.players.get(forPlayerId);
+            if (isImpostorViewer) return true;
+            const hasRadar = player?.impostorTool === 'radar';
+            const generator = this.getGeneratorAt(key.x, key.y);
+            return key.ownerId === forPlayerId && !player?.hasImpostorKey &&
+              hasRadar && generator?.isDamaged !== true &&
+              Math.max(Math.abs(player.x - key.x), Math.abs(player.y - key.y)) <= 3;
+          }).map(key => ({ ...key }))
+        : [],
+      generators: this.generators.map(generator => ({ ...generator })),
+      tools: this.tools.filter(tool => !tool.carriedBy).map(tool => ({ ...tool })),
       shieldPickups: this.shieldPickups.map(pickup => ({ ...pickup })),
       exits: this.exits.map(exit => ({ ...exit })),
       teleports: this.teleports.map(teleport => ({ ...teleport }))
@@ -782,6 +1013,7 @@ export class MazeBoard extends Board {
         const distanceFromCenter = Math.max(Math.abs(x - middle), Math.abs(y - middle));
         if (!inCentralRoom && distanceFromCenter >= minDistanceFromCenter &&
             !occupiedPositions.has(`${x},${y}`) &&
+            !this.isSafeZoneCell(x, y) &&
             !this.exits.some(exit => exit.x === x && exit.y === y) &&
             !this.teleports.some(teleport => teleport.x === x && teleport.y === y) &&
             !this.shieldPickups.some(pickup => pickup.x === x && pickup.y === y) &&
@@ -822,7 +1054,7 @@ export class MazeBoard extends Board {
     return cells;
   }
 
-  private createExits(): IMazeExit[] {
+  private createExits(): IImpostorExit[] {
     const players = [...this.players.values()].filter(player => !player.id.startsWith('bot_'));
     const middle = Math.floor(this.size / 2);
     const radius = this.getCentralRoomRadius();
@@ -834,7 +1066,7 @@ export class MazeBoard extends Board {
     ];
 
     return exitRows.map((position, index) => ({
-        id: `maze_exit_${index + 1}`,
+        id: `impostor_exit_${index + 1}`,
         ...position,
         playerId: players[index % players.length]?.id ?? ''
       }));
@@ -852,13 +1084,13 @@ export class MazeBoard extends Board {
       if (min + offset === gateSegmentStart) continue;
       const x = min + offset;
       this.walls.push(
-        new Wall(`maze_center_n_${northSouthIndex}`, 'maze', x, min - 1, true),
-        new Wall(`maze_center_s_${northSouthIndex}`, 'maze', x, max, true)
+        new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, min - 1, true),
+        new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, max, true)
       );
       northSouthIndex++;
       this.walls.push(
-        new Wall(`maze_center_w_${eastWestIndex}`, 'maze', min - 1, x, false),
-        new Wall(`maze_center_e_${eastWestIndex}`, 'maze', max, x, false)
+        new Wall(`impostor_center_w_${eastWestIndex}`, 'board', min - 1, x, false),
+        new Wall(`impostor_center_e_${eastWestIndex}`, 'board', max, x, false)
       );
       eastWestIndex++;
     }
@@ -880,6 +1112,28 @@ export class MazeBoard extends Board {
       addGatePassages(min - 1, gateStart + offset, min, gateStart + offset);
       addGatePassages(max, gateStart + offset, max + 1, gateStart + offset);
     }
+    for (const generator of this.generators) {
+      const { x, y } = generator;
+      for (const [outside, inside] of this.getGeneratorEntrancePassages(generator)) {
+        addGatePassages(outside.x, outside.y, inside.x, inside.y);
+      }
+      const minX = Math.max(0, x - 1);
+      const maxX = Math.min(this.size - 1, x + 2);
+      const minY = Math.max(0, y - 1);
+      const maxY = Math.min(this.size - 1, y + 2);
+      for (let ringY = minY; ringY <= maxY; ringY++) {
+        for (let ringX = minX; ringX <= maxX; ringX++) {
+          if (this.isGeneratorCell(ringX, ringY)) continue;
+          for (const { dx, dy } of [{ dx: 1, dy: 0 }, { dx: 0, dy: 1 }]) {
+            const nextX = ringX + dx;
+            const nextY = ringY + dy;
+            if (nextX <= maxX && nextY <= maxY && !this.isGeneratorCell(nextX, nextY)) {
+              addGatePassages(ringX, ringY, nextX, nextY);
+            }
+          }
+        }
+      }
+    }
 
     const routes = [
       this.createRoute({ x: middle, y: middle - radius }, { x: middle, y: 0 }),
@@ -894,6 +1148,107 @@ export class MazeBoard extends Board {
       }
     }
     return protectedPassages;
+  }
+
+  private getGeneratorEntrancePassages(
+    generator: IImpostorGenerator
+  ): Array<[Coordinate, Coordinate]> {
+    const { x, y } = generator;
+    switch (generator.sector) {
+      case 'northwest':
+        return [
+          [{ x: x + 2, y }, { x: x + 3, y }],
+          [{ x: x + 2, y: y + 1 }, { x: x + 3, y: y + 1 }],
+          [{ x, y: y + 2 }, { x, y: y + 3 }],
+          [{ x: x + 1, y: y + 2 }, { x: x + 1, y: y + 3 }],
+          [{ x: x + 3, y }, { x: x + 4, y }],
+          [{ x: x + 3, y: y + 1 }, { x: x + 4, y: y + 1 }],
+          [{ x, y: y + 3 }, { x, y: y + 4 }],
+          [{ x: x + 1, y: y + 3 }, { x: x + 1, y: y + 4 }]
+        ];
+      case 'northeast':
+        return [
+          [{ x: x - 2, y }, { x: x - 1, y }],
+          [{ x: x - 2, y: y + 1 }, { x: x - 1, y: y + 1 }],
+          [{ x, y: y + 2 }, { x, y: y + 3 }],
+          [{ x: x + 1, y: y + 2 }, { x: x + 1, y: y + 3 }],
+          [{ x, y: y + 3 }, { x, y: y + 4 }],
+          [{ x: x + 1, y: y + 3 }, { x: x + 1, y: y + 4 }]
+        ];
+      case 'southwest':
+        return [
+          [{ x: x + 2, y }, { x: x + 3, y }],
+          [{ x: x + 2, y: y + 1 }, { x: x + 3, y: y + 1 }],
+          [{ x: x + 3, y }, { x: x + 4, y }],
+          [{ x: x + 3, y: y + 1 }, { x: x + 4, y: y + 1 }],
+          [{ x, y: y - 2 }, { x, y: y - 1 }],
+          [{ x: x + 1, y: y - 2 }, { x: x + 1, y: y - 1 }]
+        ];
+      case 'southeast':
+        return [
+          [{ x: x - 2, y }, { x: x - 1, y }],
+          [{ x: x - 2, y: y + 1 }, { x: x - 1, y: y + 1 }],
+          [{ x, y: y - 2 }, { x, y: y - 1 }],
+          [{ x: x + 1, y: y - 2 }, { x: x + 1, y: y - 1 }]
+        ];
+    }
+  }
+
+  private isPassageInsideGeneratorAccess(passage: { x1: number; y1: number; x2: number; y2: number }): boolean {
+    const passageKey = this.getPassageKey(
+      { x: passage.x1, y: passage.y1 },
+      { x: passage.x2, y: passage.y2 }
+    );
+    return this.generators.some(generator => {
+      const { x, y } = generator;
+      const entranceKeys = this.getGeneratorEntrancePassages(generator)
+        .map(([first, second]) => this.getPassageKey(first, second));
+      if (entranceKeys.includes(passageKey)) return true;
+
+      const minX = Math.max(0, x - 1);
+      const maxX = Math.min(this.size - 1, x + 2);
+      const minY = Math.max(0, y - 1);
+      const maxY = Math.min(this.size - 1, y + 2);
+      const isWalkableRingCell = (cellX: number, cellY: number): boolean =>
+        cellX >= minX && cellX <= maxX && cellY >= minY && cellY <= maxY &&
+        !this.isGeneratorCell(cellX, cellY);
+      return isWalkableRingCell(passage.x1, passage.y1) &&
+        isWalkableRingCell(passage.x2, passage.y2);
+    });
+  }
+
+  private addGeneratorEnclosureWalls(): void {
+    for (const generator of this.generators) {
+      const { x, y } = generator;
+      const fenceWalls: Wall[] = [];
+      switch (generator.sector) {
+        case 'northwest':
+          fenceWalls.push(
+            new Wall(`${generator.id}_east_fence`, 'board', x + 3, y + 2, false),
+            new Wall(`${generator.id}_south_fence`, 'board', x + 2, y + 3, true)
+          );
+          break;
+        case 'northeast':
+          fenceWalls.push(
+            new Wall(`${generator.id}_west_fence`, 'board', x - 2, y + 2, false),
+            new Wall(`${generator.id}_south_fence`, 'board', x - 2, y + 3, true)
+          );
+          break;
+        case 'southwest':
+          fenceWalls.push(
+            new Wall(`${generator.id}_east_fence`, 'board', x + 3, y - 2, false),
+            new Wall(`${generator.id}_north_fence`, 'board', x + 2, y - 2, true)
+          );
+          break;
+        case 'southeast':
+          fenceWalls.push(
+            new Wall(`${generator.id}_west_fence`, 'board', x - 2, y - 2, false),
+            new Wall(`${generator.id}_north_fence`, 'board', x - 2, y - 2, true)
+          );
+          break;
+      }
+      this.walls.push(...fenceWalls);
+    }
   }
 
   private createRoute(start: Coordinate, end: Coordinate): Coordinate[] {
@@ -964,8 +1319,21 @@ export class MazeBoard extends Board {
   private isBoardConnected(): boolean {
     const totalCells = this.size * this.size;
     const excludedCells = new Uint8Array(totalCells);
+    const blockedPassages = new Set<number>();
+    for (const wall of this.walls) {
+      for (const passage of this.getWallPassages(wall)) {
+        blockedPassages.add(passage.key);
+      }
+    }
     for (const player of this.players.values()) {
       if (player.isInPrison) excludedCells[player.y * this.size + player.x] = 1;
+    }
+    for (const generator of this.generators) {
+      for (let y = generator.y; y <= generator.y + 1; y++) {
+        for (let x = generator.x; x <= generator.x + 1; x++) {
+          excludedCells[y * this.size + x] = 1;
+        }
+      }
     }
     const visited = new Uint8Array(totalCells);
     const queue = new Int32Array(totalCells);
@@ -981,10 +1349,10 @@ export class MazeBoard extends Board {
       const currentIndex = queue[readIndex++];
       const x = currentIndex % this.size;
       const y = Math.floor(currentIndex / this.size);
-      if (y > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - this.size, excludedCells, visited, queue, writeIndex);
-      if (y < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + this.size, excludedCells, visited, queue, writeIndex);
-      if (x > 0) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex - 1, excludedCells, visited, queue, writeIndex);
-      if (x < this.size - 1) writeIndex = this.enqueueMazeCell(currentIndex, currentIndex + 1, excludedCells, visited, queue, writeIndex);
+      if (y > 0) writeIndex = this.enqueueImpostorCell(currentIndex, currentIndex - this.size, excludedCells, visited, blockedPassages, queue, writeIndex);
+      if (y < this.size - 1) writeIndex = this.enqueueImpostorCell(currentIndex, currentIndex + this.size, excludedCells, visited, blockedPassages, queue, writeIndex);
+      if (x > 0) writeIndex = this.enqueueImpostorCell(currentIndex, currentIndex - 1, excludedCells, visited, blockedPassages, queue, writeIndex);
+      if (x < this.size - 1) writeIndex = this.enqueueImpostorCell(currentIndex, currentIndex + 1, excludedCells, visited, blockedPassages, queue, writeIndex);
     }
     for (let index = 0; index < totalCells; index++) {
       if (!excludedCells[index] && !visited[index]) return false;
@@ -992,20 +1360,19 @@ export class MazeBoard extends Board {
     return true;
   }
 
-  private enqueueMazeCell(
+  private enqueueImpostorCell(
     currentIndex: number,
     nextIndex: number,
     excludedCells: Uint8Array,
     visited: Uint8Array,
+    blockedPassages: Set<number>,
     queue: Int32Array,
     writeIndex: number
   ): number {
     if (visited[nextIndex] || excludedCells[nextIndex]) return writeIndex;
-    const currentX = currentIndex % this.size;
-    const currentY = Math.floor(currentIndex / this.size);
-    const nextX = nextIndex % this.size;
-    const nextY = Math.floor(nextIndex / this.size);
-    if (this.isWallBlocking(currentX, currentY, nextX, nextY)) return writeIndex;
+    const passageKey = Math.min(currentIndex, nextIndex) * this.size * this.size +
+      Math.max(currentIndex, nextIndex);
+    if (blockedPassages.has(passageKey)) return writeIndex;
     visited[nextIndex] = 1;
     queue[writeIndex++] = nextIndex;
     return writeIndex;
@@ -1017,7 +1384,7 @@ export class MazeBoard extends Board {
 
   private getGateApproachWallPriority(wall: Wall): number {
     const activePlayers = [...this.players.values()].filter(player =>
-      !player.isInPrison && !player.hasMazeEscaped && !player.isDead
+      !player.isInPrison && !player.hasImpostorEscaped && !player.isDead
     );
     const passages = this.getWallPassages(wall);
     let priority = Number.POSITIVE_INFINITY;
@@ -1052,7 +1419,7 @@ export class MazeBoard extends Board {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const gateStart = middle - 1;
     const gateEnd = middle;
-    const crossesGate = (exit: IMazeExit): boolean => {
+    const crossesGate = (exit: IImpostorExit): boolean => {
       if (!exit.isSealed) return false;
       if (exit.x === middle && exit.y === minY) {
         return fromY !== toY && Math.min(fromY, toY) === minY - 1 &&

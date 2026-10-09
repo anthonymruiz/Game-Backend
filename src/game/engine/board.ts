@@ -1,5 +1,7 @@
 import { Cell, Player, Wall, Boost, Coordinate } from './models.js';
 
+const MIN_BOOST_PLAYER_DISTANCE = 3;
+
 export class Board {
   public grid: Cell[][] = [];
   public walls: Wall[] = [];
@@ -275,13 +277,22 @@ export class Board {
 
   public spawnRandomBoost() {
     const mid = Math.floor(this.size / 2);
-    const x = Math.floor(Math.random() * this.size);
-    const y = Math.floor(Math.random() * this.size);
-    if (!(x === mid && y === mid) && !this.grid[y][x].hasPlayer && !this.grid[y][x].hasBoost) {
-      const boost = new Boost(Math.random().toString(), 'extra_wall', x, y);
-      this.boosts.push(boost);
-      this.grid[y][x].hasBoost = boost.id;
+    const candidates: Coordinate[] = [];
+    for (let y = 0; y < this.size; y++) {
+      for (let x = 0; x < this.size; x++) {
+        if (!(x === mid && y === mid) &&
+            !this.grid[y][x].hasPlayer &&
+            !this.grid[y][x].hasBoost &&
+            !this.isTooCloseToPlayer(x, y)) {
+          candidates.push({ x, y });
+        }
+      }
     }
+    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+    if (!chosen) return;
+    const boost = new Boost(Math.random().toString(), 'extra_wall', chosen.x, chosen.y);
+    this.boosts.push(boost);
+    this.grid[chosen.y][chosen.x].hasBoost = boost.id;
   }
 
   public findShortestPathToGoal(
@@ -1017,7 +1028,7 @@ export class Board {
       for (let x = 0; x < this.size; x++) {
         const cell = this.grid[y][x];
         const isCenter = (x === mid && y === mid);
-        if (!cell.hasPlayer && !isCenter) {
+        if (!cell.hasPlayer && !isCenter && !this.isTooCloseToPlayer(x, y)) {
           emptyCells.push({ x, y });
         }
       }
@@ -1183,12 +1194,20 @@ export class Board {
     for (let y = 0; y < this.size; y++) {
       for (let x = 0; x < this.size; x++) {
         const cell = this.grid[y][x];
-        if (!cell.hasPlayer && !cell.hasBoost && !(x === mid && y === mid) && reachable.has(`${x},${y}`)) {
+        if (!cell.hasPlayer && !cell.hasBoost && !(x === mid && y === mid) &&
+            !this.isTooCloseToPlayer(x, y) && reachable.has(`${x},${y}`)) {
           emptyCells.push({ x, y });
         }
       }
     }
     return emptyCells;
+  }
+
+  private isTooCloseToPlayer(x: number, y: number): boolean {
+    return [...this.players.values()].some(player =>
+      !player.isDead &&
+      Math.abs(player.x - x) + Math.abs(player.y - y) < MIN_BOOST_PLAYER_DISTANCE
+    );
   }
 
   public toDTO(forPlayerId?: string) {

@@ -7,9 +7,9 @@ import { getDefaultBadges } from '../seeds/badges.seed.js';
 describe('Default badge catalog', () => {
   const badges = getDefaultBadges();
 
-  it('contains exactly 100 uniquely coded definitions', () => {
-    assert.equal(badges.length, 100);
-    assert.equal(new Set(badges.map(badge => badge.code)).size, 100);
+  it('contains exactly 109 uniquely coded definitions', () => {
+    assert.equal(badges.length, 109);
+    assert.equal(new Set(badges.map(badge => badge.code)).size, 109);
   });
 
   it('uses only valid category-rule pairs and positive targets', () => {
@@ -61,6 +61,9 @@ describe('Default badge catalog', () => {
     assert.deepEqual(targetsFor('win_2v2'), [1, 10, 50, 100]);
     assert.deepEqual(targetsFor('win_4ffa'), [1, 10, 50, 100, 150, 200]);
     assert.deepEqual(targetsFor('win_6ffa'), [1, 10, 50, 100]);
+    assert.deepEqual(targetsFor('impostor_win'), [1, 5, 20]);
+    assert.deepEqual(targetsFor('infection_survivor_win'), [1, 5, 20]);
+    assert.deepEqual(targetsFor('infection_infector_win'), [1, 5, 20]);
     assert.deepEqual(targetsFor('win_streak'), [2, 3, 5, 8, 12]);
     assert.deepEqual(targetsFor('wall_placed'), [1, 10, 50, 100, 200, 500, 1000, 1500, 2000]);
     assert.deepEqual(targetsFor('move_completed'), [500, 5000]);

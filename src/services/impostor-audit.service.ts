@@ -1,6 +1,6 @@
 import { singleton } from 'tsyringe';
 import { AppDataSource } from '../config/database.config.js';
-import { MazeMatchAuditState } from '../models/maze-match-audit-state.entity.js';
+import { ImpostorMatchAuditState } from '../models/impostor-match-audit-state.entity.js';
 
 function isDuplicateSequenceError(error: unknown): boolean {
   const isSequenceConstraintViolation = (candidate: unknown): boolean => {
@@ -11,7 +11,7 @@ function isDuplicateSequenceError(error: unknown): boolean {
       : 'message' in candidate && typeof candidate.message === 'string'
         ? candidate.message
         : '';
-    return message.includes('IDX_maze_audit_match_sequence');
+    return message.includes('IDX_impostor_audit_match_sequence');
   };
 
   return isSequenceConstraintViolation(error) ||
@@ -20,14 +20,14 @@ function isDuplicateSequenceError(error: unknown): boolean {
 }
 
 @singleton()
-export class MazeAuditService {
+export class ImpostorAuditService {
   private readonly nextSequenceByMatch = new Map<string, number>();
   private readonly writeQueues = new Map<string, Promise<void>>();
 
   public recordState(matchId: string, event: string, snapshot: Record<string, unknown>): Promise<void> {
     const previousWrite = this.writeQueues.get(matchId) ?? Promise.resolve();
     const write = previousWrite.then(async () => {
-      const repository = AppDataSource.getRepository(MazeMatchAuditState);
+      const repository = AppDataSource.getRepository(ImpostorMatchAuditState);
       while (true) {
         const latest = await repository.createQueryBuilder('state')
           .select('MAX(state.sequence)', 'sequence')
@@ -56,15 +56,15 @@ export class MazeAuditService {
     this.nextSequenceByMatch.delete(matchId);
   }
 
-  public async getLatestMatchStates(): Promise<MazeMatchAuditState[]> {
+  public async getLatestMatchStates(): Promise<ImpostorMatchAuditState[]> {
     await Promise.all(this.writeQueues.values());
-    return AppDataSource.getRepository(MazeMatchAuditState)
+    return AppDataSource.getRepository(ImpostorMatchAuditState)
       .createQueryBuilder('audit')
       .innerJoin(
         queryBuilder => queryBuilder
           .select('MAX(state.sequence)', 'sequence')
           .addSelect('state.matchId', 'matchId')
-          .from(MazeMatchAuditState, 'state')
+          .from(ImpostorMatchAuditState, 'state')
           .groupBy('state.matchId'),
         'latest',
         'latest.matchId = audit.matchId AND latest.sequence = audit.sequence'
@@ -74,7 +74,7 @@ export class MazeAuditService {
 
   public async countFinishedMatches(): Promise<number> {
     await Promise.all(this.writeQueues.values());
-    const row = await AppDataSource.getRepository(MazeMatchAuditState)
+    const row = await AppDataSource.getRepository(ImpostorMatchAuditState)
       .createQueryBuilder('audit')
       .select('COUNT(DISTINCT audit.matchId)', 'count')
       .where('audit.event = :event', { event: 'game_finished' })

@@ -1,12 +1,13 @@
 import { singleton, inject, container } from 'tsyringe';
-import { GameInstance, LABYRINTH_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
+import { GameInstance, IMPOSTOR_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
 import { BadgeService } from './badge.service.js';
 import { GameMode, GROUP_GAME_MODES } from './matchmaking.service.js';
+import type { BadgeEvent } from '../models/badge.enum.js';
 import { IRoomPlayer } from './room.service.js';
 import { Server } from 'socket.io';
 import { GameLogService, hasBotPlayers } from './game-log.service.js';
 import { SystemSettingsService } from './system-settings.service.js';
-import { MazeAuditService } from './maze-audit.service.js';
+import { ImpostorAuditService } from './impostor-audit.service.js';
 
 @singleton()
 export class GameService {
@@ -16,7 +17,7 @@ export class GameService {
   constructor(
     @inject(GameLogService) private gameLogService: GameLogService,
     @inject(SystemSettingsService) private systemSettingsService: SystemSettingsService,
-    @inject(MazeAuditService) private mazeAuditService: MazeAuditService
+    @inject(ImpostorAuditService) private impostorAuditService: ImpostorAuditService
   ) {}
 
   public setSocketServer(io: Server) {
@@ -33,8 +34,8 @@ export class GameService {
     startImmediately: boolean = true
   ) {
     const humanPlayerCount = roomPlayers.filter(player => !player.id.startsWith('bot_')).length;
-    if (mode === 'labyrinth' && humanPlayerCount < LABYRINTH_MIN_HUMAN_PLAYERS) {
-      throw new Error(`Labyrinth requires at least ${LABYRINTH_MIN_HUMAN_PLAYERS} human players.`);
+    if (mode === 'impostor' && humanPlayerCount < IMPOSTOR_MIN_HUMAN_PLAYERS) {
+      throw new Error(`Impostor requires at least ${IMPOSTOR_MIN_HUMAN_PLAYERS} human players.`);
     }
     if (mode === 'infection' && roomPlayers.length < 3) {
       throw new Error('Infection requires at least three participants.');
@@ -51,15 +52,32 @@ export class GameService {
           void this.handleGameFinished(matchId, mode, roomPlayers, playerIds, isPrivate, roomName, isRanked, game, data)
             .catch(error => console.error(`Failed to finish match ${matchId}:`, error));
         } else {
-          if (mode === 'infection' && (event === 'gameStarted' || event === 'mazeStateChanged')) {
+          if (mode === 'infection' && (event === 'gameStarted' || event === 'impostorStateChanged')) {
             const namespace = this.io.of('/game');
             const hiddenViewPlayerId = game.playersList.find(playerId =>
               game.board.players.get(playerId)?.isInfected
             ) || '';
             const personalizedData = (playerId: string) => event === 'gameStarted'
               ? { ...data, board: game.board.toDTO(playerId) }
-              : game.getMazeStateDataForPlayer(playerId);
+              : game.getImpostorStateDataForPlayer(playerId);
             namespace.to(matchId).except(game.playersList).emit(event, personalizedData(hiddenViewPlayerId));
+            for (const playerId of game.playersList) {
+              if (playerId.startsWith('bot_')) continue;
+              namespace.to(playerId).emit(event, personalizedData(playerId));
+            }
+            return;
+          }
+          if (mode === 'impostor' && (event === 'gameStarted' || event === 'impostorStateChanged')) {
+            void this.impostorAuditService.recordState(matchId, event, game.getImpostorAuditSnapshot())
+              .catch(error => console.error(`Failed to save Impostor audit state for ${matchId}:`, error));
+            const namespace = this.io.of('/game');
+            const personalizedData = (playerId: string) => event === 'gameStarted'
+              ? {
+                  ...data,
+                  board: game.board.toDTO(playerId, playerId === game.impostorId)
+                }
+              : game.getImpostorStateDataForPlayer(playerId);
+            namespace.to(matchId).except(game.playersList).emit(event, personalizedData(''));
             for (const playerId of game.playersList) {
               if (playerId.startsWith('bot_')) continue;
               namespace.to(playerId).emit(event, personalizedData(playerId));
@@ -75,9 +93,9 @@ export class GameService {
             }
             return;
           }
-          if (mode === 'labyrinth' && (event === 'gameStarted' || event === 'mazeStateChanged')) {
-            void this.mazeAuditService.recordState(matchId, event, game.getMazeAuditSnapshot())
-              .catch(error => console.error(`Failed to save Maze audit state for ${matchId}:`, error));
+          if (mode === 'impostor' && (event === 'gameStarted' || event === 'impostorStateChanged')) {
+            void this.impostorAuditService.recordState(matchId, event, game.getImpostorAuditSnapshot())
+              .catch(error => console.error(`Failed to save Impostor audit state for ${matchId}:`, error));
           }
           this.io.of('/game').to(matchId).emit(event, data);
         }
@@ -102,9 +120,9 @@ export class GameService {
     };
 
     this.activeGames.set(matchId, game);
-    if (mode === 'labyrinth') {
-      void this.mazeAuditService.recordState(matchId, 'game_created', game.getMazeAuditSnapshot())
-        .catch(error => console.error(`Failed to save initial Maze audit state for ${matchId}:`, error));
+    if (mode === 'impostor') {
+      void this.impostorAuditService.recordState(matchId, 'game_created', game.getImpostorAuditSnapshot())
+        .catch(error => console.error(`Failed to save initial Impostor audit state for ${matchId}:`, error));
     }
     if (startImmediately) await this.startGame(matchId);
   }
@@ -120,7 +138,7 @@ export class GameService {
     } catch (error) {
       this.activeGames.delete(matchId);
       game.destroy();
-      if (game.mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
+      if (game.mode === 'impostor') await this.impostorAuditService.releaseMatch(matchId);
       throw error;
     }
   }
@@ -130,7 +148,7 @@ export class GameService {
     if (!game || game.state !== 'waiting') return;
     this.activeGames.delete(matchId);
     game.destroy();
-    if (game.mode === 'labyrinth') await this.mazeAuditService.releaseMatch(matchId);
+    if (game.mode === 'impostor') await this.impostorAuditService.releaseMatch(matchId);
   }
 
   private async handleGameFinished(
@@ -144,18 +162,23 @@ export class GameService {
     game: GameInstance,
     data: any
   ): Promise<void> {
-    if (mode === 'labyrinth') {
-      await this.mazeAuditService.recordState(matchId, 'game_finished', game.getMazeAuditSnapshot())
-        .catch(error => console.error(`Failed to save final Maze audit state for ${matchId}:`, error));
-      await this.mazeAuditService.releaseMatch(matchId);
+    await this.recordModeBadgeProgress(matchId, mode, game, data);
+    if (mode === 'impostor') {
+      await this.impostorAuditService.recordState(matchId, 'game_finished', game.getImpostorAuditSnapshot())
+        .catch(error => console.error(`Failed to save final Impostor audit state for ${matchId}:`, error));
+      await this.impostorAuditService.releaseMatch(matchId)
+        .catch(error => console.error(`Failed to release Impostor audit state for ${matchId}:`, error));
     }
-    this.activeGames.delete(matchId);
     data.isRanked = isRanked;
     const matchIncludesBots = hasBotPlayers(roomPlayers);
-    if (mode === 'labyrinth' || mode === 'infection') {
+    let persistAiRewardsInBackground = false;
+    if (mode === 'impostor' || mode === 'infection') {
       data.rewardsByPlayer = {};
     } else if (data.abandoned && !matchIncludesBots) {
       data.rewardsByPlayer = {};
+    } else if (mode === 'vs_ai' && data.abandoned) {
+      data.rewardsByPlayer = {};
+      persistAiRewardsInBackground = true;
     } else {
       try {
         data.rewardsByPlayer = await this.gameLogService.logGameEnd(
@@ -184,10 +207,10 @@ export class GameService {
       const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
       const humanPlayers = roomPlayers.filter(player => player?.id && !player.id.startsWith('bot_'));
       const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' ||
-        mode === 'labyrinth' || mode === 'infection';
+        mode === 'impostor' || mode === 'infection';
       const matchmakingNamespace = this.io.of('/matchmaking');
 
-      if ((!data.abandoned || mode === 'labyrinth' || mode === 'infection') &&
+      if ((!data.abandoned || mode === 'impostor' || mode === 'infection') &&
           isGroupMode && roomIsPrivate && humanPlayers.length >= 2) {
         const previousRoom: any = oldRoom || {
           id: matchId,
@@ -197,7 +220,7 @@ export class GameService {
           isPrivate: roomIsPrivate,
           hostId: playerIds[0],
           players: roomPlayers,
-          maxPlayers: mode === '6-FFA' || mode === 'labyrinth' || mode === 'infection' ? 6 : 4,
+          maxPlayers: mode === '6-FFA' || mode === 'impostor' || mode === 'infection' ? 6 : 4,
           status: 'WAITING',
           createdAt: new Date()
         };
@@ -240,6 +263,19 @@ export class GameService {
     }
 
     this.io.of('/game').to(matchId).emit('gameFinished', data);
+    this.activeGames.delete(matchId);
+
+    if (persistAiRewardsInBackground) {
+      void this.gameLogService.logGameEnd(
+        matchId,
+        data.winner,
+        roomPlayers,
+        mode,
+        data.durationSeconds,
+        isRanked,
+        Boolean(data.abandoned)
+      ).catch(error => console.error(`Failed to persist AI match rewards for ${matchId}:`, error));
+    }
 
     try {
       const [{ AppDataSource }, { User }, { PresenceStatus }] = await Promise.all([
@@ -253,6 +289,49 @@ export class GameService {
     } catch (error) {
       console.error('Error updating player presence after gameFinished:', error);
     }
+  }
+
+  private async recordModeBadgeProgress(
+    matchId: string,
+    mode: GameMode,
+    game: GameInstance,
+    data: { winner?: string | null; abandoned?: boolean }
+  ): Promise<void> {
+    if (data.abandoned) return;
+    const awards: Array<{ playerId: string; event: BadgeEvent }> = [];
+    const isEligibleUser = (playerId: string | null | undefined): playerId is string =>
+      !!playerId && !playerId.startsWith('bot_') && !playerId.startsWith('guest_');
+
+    if (mode === 'impostor' && data.winner === game.impostorId &&
+        isEligibleUser(game.impostorId)) {
+      awards.push({ playerId: game.impostorId, event: 'impostor_win' });
+    } else if (mode === 'infection' && data.winner === 'survivors') {
+      for (const playerId of game.playersList) {
+        const player = game.board.players.get(playerId);
+        if (isEligibleUser(playerId) && player && !player.isDead && !player.isInfected) {
+          awards.push({ playerId, event: 'infection_survivor_win' });
+        }
+      }
+    } else if (mode === 'infection' && data.winner === 'infected' &&
+        isEligibleUser(game.impostorId)) {
+      awards.push({ playerId: game.impostorId, event: 'infection_infector_win' });
+    }
+
+    if (!awards.length) return;
+    let badgeService: BadgeService;
+    try {
+      badgeService = container.resolve(BadgeService);
+    } catch (error) {
+      console.error(`Could not initialize badge tracking for match ${matchId}:`, error);
+      return;
+    }
+    await Promise.all(awards.map(async ({ playerId, event }) => {
+      try {
+        await badgeService.recordEventOnce(playerId, event, matchId);
+      } catch (error) {
+        console.error(`Failed to record ${event} badge event for ${playerId} in match ${matchId}:`, error);
+      }
+    }));
   }
 
   public getGame(matchId: string): GameInstance | undefined {

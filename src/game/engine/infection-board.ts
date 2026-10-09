@@ -1,22 +1,22 @@
-import { MazeBoard, type IMazeGhostPickup } from './maze-board.js';
+import { ImpostorBoardBase, type IImpostorGhostPickup } from './impostor-board-base.js';
 import type { Coordinate } from './models.js';
 
 export interface IInfectionInvisiblePickup extends Coordinate {
   id: string;
 }
 
-export class InfectionBoard extends MazeBoard {
+export class InfectionBoard extends ImpostorBoardBase {
   public invisiblePickups: IInfectionInvisiblePickup[] = [];
   private ghostPickupSequence = 0;
   private infectionPickupSequence = 0;
 
-  public override reshuffleMaze(
+  public override reshuffleImpostor(
     random: () => number = Math.random,
     prioritizeGateApproaches = false
   ): void {
-    this.walls = this.walls.filter(wall => wall.ownerId === 'maze');
+    this.walls = this.walls.filter(wall => wall.ownerId === 'board');
     for (const player of this.players.values()) player.isInPrison = false;
-    super.reshuffleMaze(random, prioritizeGateApproaches);
+    super.reshuffleImpostor(random, prioritizeGateApproaches);
   }
 
   protected override getProtectedCentralZoneBounds(): {
@@ -182,7 +182,7 @@ export class InfectionBoard extends MazeBoard {
     const requiredCount = ghostCount + invisibleCount + shieldCount;
     if (candidates.length < requiredCount) {
       throw new Error(
-        `Infection could not relocate all power-ups after maze reshuffle (expected ${requiredCount}, found ${candidates.length}).`
+        `Infection could not relocate all power-ups after impostor reshuffle (expected ${requiredCount}, found ${candidates.length}).`
       );
     }
 
@@ -224,7 +224,7 @@ export class InfectionBoard extends MazeBoard {
           : cell
       )),
       teleports: viewerIsInfected ? [] : dto.teleports,
-      ghostPickups: viewerIsInfected ? [] : this.ghostPickups.map((pickup: IMazeGhostPickup) => ({ ...pickup })),
+      ghostPickups: viewerIsInfected ? [] : this.ghostPickups.map((pickup: IImpostorGhostPickup) => ({ ...pickup })),
       invisiblePickups: viewerIsInfected ? [] : this.invisiblePickups.map(pickup => ({ ...pickup })),
       shieldPickups: viewerIsInfected ? [] : dto.shieldPickups
     };

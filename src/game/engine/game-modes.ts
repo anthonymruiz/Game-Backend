@@ -154,8 +154,8 @@ export class SixPlayerFfaRules implements IGameModeRules {
   }
 }
 
-export class LabyrinthRules implements IGameModeRules {
-  public mode: GameMode = 'labyrinth';
+export class ImpostorRules implements IGameModeRules {
+  public mode: GameMode = 'impostor';
   public boardSize = 40;
   public maxPlayers = 6;
   public wallsPerPlayer = 0;
@@ -164,12 +164,12 @@ export class LabyrinthRules implements IGameModeRules {
   public getPlayerStartConfig(index: number, totalPlayers: number, size: number): IPlayerStartConfig {
     const mid = Math.floor(size / 2);
     const centralSpawnOffsets = [
-      { x: 0, y: 0 },
-      { x: -1, y: 0 },
-      { x: 1, y: 0 },
-      { x: 0, y: -1 },
-      { x: 0, y: 1 },
-      { x: -1, y: -1 }
+      { x: -2, y: -2 },
+      { x: 0, y: -2 },
+      { x: 2, y: -2 },
+      { x: -2, y: 0 },
+      { x: 2, y: 0 },
+      { x: 0, y: 2 }
     ];
     const offset = centralSpawnOffsets[index % centralSpawnOffsets.length];
     return { startX: mid + offset.x, startY: mid + offset.y };
@@ -180,8 +180,22 @@ export class LabyrinthRules implements IGameModeRules {
   }
 }
 
-export class InfectionRules extends LabyrinthRules {
+export class InfectionRules extends ImpostorRules {
   public override mode: GameMode = 'infection';
+
+  public override getPlayerStartConfig(index: number, _totalPlayers: number, size: number): IPlayerStartConfig {
+    const middle = Math.floor(size / 2);
+    const centralSpawnOffsets = [
+      { x: 0, y: 0 },
+      { x: -1, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: -1 },
+      { x: 0, y: 1 },
+      { x: -1, y: -1 }
+    ];
+    const offset = centralSpawnOffsets[index % centralSpawnOffsets.length];
+    return { startX: middle + offset.x, startY: middle + offset.y };
+  }
 }
 
 // Registry to dynamically fetch mode rules
@@ -192,7 +206,7 @@ export class GameModeRegistry {
     ['4-FFA', new FourPlayerFfaRules()],
     ['2v2', new TwoVsTwoRules()],
     ['6-FFA', new SixPlayerFfaRules()],
-    ['labyrinth', new LabyrinthRules()],
+    ['impostor', new ImpostorRules()],
     ['infection', new InfectionRules()]
   ]);
 

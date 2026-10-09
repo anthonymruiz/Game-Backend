@@ -16,23 +16,23 @@ import { IRewardsSettings, RewardsSettingsService } from './rewards-settings.ser
 import { AppDataSource } from '../config/database.config.js';
 import { PointPackagePayment, PointPackagePaymentStatus } from '../models/point-package-payment.entity.js';
 import { GameService } from './game.service.js';
-import { MazeAuditService } from './maze-audit.service.js';
-import { MazeMatchAuditState } from '../models/maze-match-audit-state.entity.js';
+import { ImpostorAuditService } from './impostor-audit.service.js';
+import { ImpostorMatchAuditState } from '../models/impostor-match-audit-state.entity.js';
 import { RankTierService } from './rank-tier.service.js';
 import { AdminDashboardRepository } from '../repositories/admin-dashboard.repository.js';
 
-interface MazeAdminPlayer {
+interface ImpostorAdminPlayer {
   id: string;
   username: string;
   role: 'good' | 'impostor';
 }
 
-interface MazeAuditSnapshot {
+interface ImpostorAuditSnapshot {
   state?: string;
   winner?: string | null;
   startedAt?: number | null;
   capturedAt?: number;
-  players?: MazeAdminPlayer[];
+  players?: ImpostorAdminPlayer[];
 }
 
 @injectable()
@@ -41,7 +41,7 @@ export class AdminService {
   private matchRepository: MatchHistoryRepository;
   private reportRepository: ReportRepository;
   private gameService: GameService;
-  private mazeAuditService: MazeAuditService;
+  private impostorAuditService: ImpostorAuditService;
   private dashboardRepository: AdminDashboardRepository;
 
   constructor() {
@@ -49,7 +49,7 @@ export class AdminService {
     this.matchRepository = container.resolve(MatchHistoryRepository);
     this.reportRepository = container.resolve(ReportRepository);
     this.gameService = container.resolve(GameService);
-    this.mazeAuditService = container.resolve(MazeAuditService);
+    this.impostorAuditService = container.resolve(ImpostorAuditService);
     this.dashboardRepository = container.resolve(AdminDashboardRepository);
   }
 
@@ -131,26 +131,26 @@ export class AdminService {
   public async getMatches(
     modeFilter?: string,
     options?: IPaginationOptions
-  ): Promise<IPaginatedResult<MatchHistory & { status?: string; mazePlayers?: MazeAdminPlayer[]; mazeWinnerUsername?: string }>> {
+  ): Promise<IPaginatedResult<MatchHistory & { status?: string; impostorPlayers?: ImpostorAdminPlayer[]; impostorWinnerUsername?: string }>> {
     const page = Math.max(1, Number(options?.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(options?.limit) || 10));
-    if (modeFilter && modeFilter !== 'all' && modeFilter !== 'labyrinth') {
+    if (modeFilter && modeFilter !== 'all' && modeFilter !== 'impostor') {
       return this.matchRepository.getPaginatedMatches(modeFilter, options);
     }
 
-    const auditStates = await this.mazeAuditService.getLatestMatchStates();
-    const matchingMazeMatches = auditStates
-      .map(state => this.toMazeAdminMatch(state))
+    const auditStates = await this.impostorAuditService.getLatestMatchStates();
+    const matchingImpostorMatches = auditStates
+      .map(state => this.toImpostorAdminMatch(state))
       .filter(match =>
-        (!modeFilter || modeFilter === 'all' || modeFilter === 'labyrinth') &&
+        (!modeFilter || modeFilter === 'all' || modeFilter === 'impostor') &&
         (!options?.search || this.matchesSearch(match, options.search))
       );
 
     const start = (page - 1) * limit;
-    const normalStart = modeFilter === 'labyrinth'
+    const normalStart = modeFilter === 'impostor'
       ? 0
-      : Math.max(0, start - matchingMazeMatches.length);
-    const normalWindow = modeFilter === 'labyrinth'
+      : Math.max(0, start - matchingImpostorMatches.length);
+    const normalWindow = modeFilter === 'impostor'
       ? undefined
       : await this.matchRepository.getMatchesWindow(
         'all',
@@ -159,11 +159,11 @@ export class AdminService {
         start + limit - normalStart
       );
     const normalMatches = normalWindow?.data ?? [];
-    const combined = [...normalMatches, ...matchingMazeMatches]
+    const combined = [...normalMatches, ...matchingImpostorMatches]
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-    const totalItems = modeFilter === 'labyrinth'
-      ? matchingMazeMatches.length
-      : (normalWindow?.totalItems ?? 0) + matchingMazeMatches.length;
+    const totalItems = modeFilter === 'impostor'
+      ? matchingImpostorMatches.length
+      : (normalWindow?.totalItems ?? 0) + matchingImpostorMatches.length;
     const data = combined.slice(start - normalStart, start - normalStart + limit);
 
     return {
@@ -179,11 +179,11 @@ export class AdminService {
   }
 
   public async getMatchModeDistribution(): Promise<{ mode: string; count: number }[]> {
-    const [distribution, mazeMatchCount] = await Promise.all([
+    const [distribution, impostorMatchCount] = await Promise.all([
       this.matchRepository.getModeDistribution(),
-      this.mazeAuditService.countFinishedMatches()
+      this.impostorAuditService.countFinishedMatches()
     ]);
-    return [...distribution, ...(mazeMatchCount ? [{ mode: 'labyrinth', count: mazeMatchCount }] : [])];
+    return [...distribution, ...(impostorMatchCount ? [{ mode: 'impostor', count: impostorMatchCount }] : [])];
   }
 
   public async getDashboardAnalytics(range: string, mode: string): Promise<{
@@ -297,14 +297,14 @@ export class AdminService {
     matchesByMode: { mode: string; count: number }[];
     archivedMatchesByMode: { mode: string; count: number }[];
   }> {
-    const [storedMatchCount, storedMatchesByMode, finishedMazeMatchCount] = await Promise.all([
+    const [storedMatchCount, storedMatchesByMode, finishedImpostorMatchCount] = await Promise.all([
       this.matchRepository.getTotalDistinctMatchCount(),
       this.matchRepository.getModeDistribution(),
-      this.mazeAuditService.countFinishedMatches()
+      this.impostorAuditService.countFinishedMatches()
     ]);
     const archivedMatchesByMode = [
       ...storedMatchesByMode,
-      ...(finishedMazeMatchCount ? [{ mode: 'labyrinth', count: finishedMazeMatchCount }] : [])
+      ...(finishedImpostorMatchCount ? [{ mode: 'impostor', count: finishedImpostorMatchCount }] : [])
     ];
     const activeMatchesByMode = this.gameService.getActiveGameCountsByMode();
     const matchesByModeCounts = new Map(archivedMatchesByMode.map(({ mode, count }) => [mode, count]));
@@ -314,26 +314,26 @@ export class AdminService {
     const activeMatches = activeMatchesByMode.reduce((total, { count }) => total + count, 0);
 
     return {
-      totalMatches: storedMatchCount + finishedMazeMatchCount + activeMatches,
+      totalMatches: storedMatchCount + finishedImpostorMatchCount + activeMatches,
       activeMatches,
       matchesByMode: [...matchesByModeCounts].map(([mode, count]) => ({ mode, count })),
       archivedMatchesByMode
     };
   }
 
-  private async getFinishedMazeMatches(): Promise<(MatchHistory & { status?: string; mazePlayers?: MazeAdminPlayer[]; mazeWinnerUsername?: string })[]> {
-    const states = await this.mazeAuditService.getLatestMatchStates();
+  private async getFinishedImpostorMatches(): Promise<(MatchHistory & { status?: string; impostorPlayers?: ImpostorAdminPlayer[]; impostorWinnerUsername?: string })[]> {
+    const states = await this.impostorAuditService.getLatestMatchStates();
     return states
-      .map(state => this.toMazeAdminMatch(state))
+      .map(state => this.toImpostorAdminMatch(state))
       .filter(match => match.status === 'finished');
   }
 
-  private toMazeAdminMatch(state: MazeMatchAuditState): MatchHistory & {
+  private toImpostorAdminMatch(state: ImpostorMatchAuditState): MatchHistory & {
     status?: string;
-    mazePlayers?: MazeAdminPlayer[];
-    mazeWinnerUsername?: string;
+    impostorPlayers?: ImpostorAdminPlayer[];
+    impostorWinnerUsername?: string;
   } {
-    const snapshot = state.snapshot as MazeAuditSnapshot;
+    const snapshot = state.snapshot as ImpostorAuditSnapshot;
     const players = Array.isArray(snapshot.players) ? snapshot.players : [];
     const host = players[0];
     const winner = players.find(player => player.id === snapshot.winner);
@@ -341,7 +341,7 @@ export class AdminService {
     return Object.assign(new MatchHistory(), {
       id: state.id,
       matchId: state.matchId,
-      mode: 'labyrinth',
+      mode: 'impostor',
       result: snapshot.state === 'playing' ? 'active' : (snapshot.winner === host?.id ? 'win' : 'loss'),
       status: snapshot.state === 'playing' ? 'playing' : 'finished',
       userId: host?.id ?? '',
@@ -351,8 +351,8 @@ export class AdminService {
         ? Math.max(0, Math.round(((Number(snapshot.capturedAt) || createdAt.getTime()) - Number(snapshot.startedAt)) / 1000))
         : undefined,
       createdAt,
-      mazePlayers: players,
-      mazeWinnerUsername: winner?.username
+      impostorPlayers: players,
+      impostorWinnerUsername: winner?.username
     });
   }
 

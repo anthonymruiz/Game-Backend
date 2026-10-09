@@ -116,6 +116,30 @@ const EXTRA_GROUPS: IExtraBadgeGroup[] = [
     ]
   },
   {
+    category: 'MODE_IMPOSTOR', event: 'impostor_win', icon: '🕵️', targets: [1, 5, 20],
+    titles: [
+      { es: 'Primer golpe en las sombras', en: 'First Shadow Victory' },
+      { es: 'Maestro del engaño', en: 'Master of Deception' },
+      { es: 'Impostor imparable', en: 'Unstoppable Impostor' }
+    ]
+  },
+  {
+    category: 'MODE_INFECTION', event: 'infection_survivor_win', icon: '🛡️', targets: [1, 5, 20],
+    titles: [
+      { es: 'Último en pie', en: 'Last One Standing' },
+      { es: 'Superviviente tenaz', en: 'Tenacious Survivor' },
+      { es: 'Inquebrantable ante la infección', en: 'Unbroken by Infection' }
+    ]
+  },
+  {
+    category: 'MODE_INFECTION', event: 'infection_infector_win', icon: '🧟', targets: [1, 5, 20],
+    titles: [
+      { es: 'Paciente cero victorioso', en: 'Victorious Patient Zero' },
+      { es: 'Propagador imparable', en: 'Unstoppable Spreader' },
+      { es: 'Plaga suprema', en: 'Supreme Plague' }
+    ]
+  },
+  {
     category: 'MATCHES', event: 'match_win', icon: '🏆', targets: [20, 75, 150, 250],
     titles: [
       { es: 'Aspirante a campeón', en: 'Champion Contender' },
@@ -261,6 +285,9 @@ const LEGACY_TITLES: Record<string, { es: string; en: string }> = {
 };
 
 const EVENT_COPY: Record<BadgeEvent, { es: string; en: string; nameEs: string; nameEn: string }> = {
+  impostor_win: { es: 'Gana {target} partida(s) como impostor.', en: 'Win {target} match(es) as the impostor.', nameEs: 'Impostor victorioso', nameEn: 'Victorious impostor' },
+  infection_survivor_win: { es: 'Sobrevive hasta el final y gana {target} partida(s) de Infección.', en: 'Survive to the end and win {target} Infection match(es).', nameEs: 'Superviviente', nameEn: 'Survivor' },
+  infection_infector_win: { es: 'Gana {target} partida(s) de Infección como el infector inicial.', en: 'Win {target} Infection match(es) as the original infector.', nameEs: 'Infector inicial', nameEn: 'Original infector' },
   bot_win: { es: 'Gana {target} partida(s) en Juega con IA.', en: 'Win {target} match(es) in Play vs AI.', nameEs: 'Cazador de IA', nameEn: 'AI Hunter' },
   match_played: { es: 'Completa {target} partida(s) que no sean contra la IA.', en: 'Complete {target} matches against human opponents.', nameEs: 'Veterano', nameEn: 'Veteran' },
   match_win: { es: 'Gana {target} partida(s) que no sean contra la IA.', en: 'Win {target} matches against human opponents.', nameEs: 'Campeón', nameEn: 'Champion' },
@@ -343,8 +370,8 @@ export function getDefaultBadges(): Array<Pick<Badge, 'code' | 'category' | 'eve
   }));
 
   const allBadges = [...legacy, ...extra];
-  if (allBadges.length !== 100) {
-    throw new Error(`Expected exactly 100 default badges, got ${allBadges.length}`);
+  if (allBadges.length !== 109) {
+    throw new Error(`Expected exactly 109 default badges, got ${allBadges.length}`);
   }
   return allBadges;
 }

@@ -52,7 +52,7 @@ export class AdminController {
 
   public getDashboardAnalytics = async (req: Request, res: Response): Promise<void> => {
     const allowedRanges = new Set(['today', '7d', 'month', 'year']);
-    const allowedModes = new Set(['all', '1v1', '2v2', '4-FFA', '6-FFA', 'vs_ai', 'labyrinth']);
+    const allowedModes = new Set(['all', '1v1', '2v2', '4-FFA', '6-FFA', 'vs_ai', 'impostor']);
     if ((req.query.range !== undefined && typeof req.query.range !== 'string') ||
       (req.query.mode !== undefined && typeof req.query.mode !== 'string')) {
       res.status(400).json({ message: 'Dashboard filters must be single values.' });
