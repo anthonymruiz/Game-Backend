@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { injectable, container } from 'tsyringe';
 import { AuthService } from '../services/auth.service.js';
 import { UserService } from '../services/user.service.js';
+import { isValidEmailFormat, isValidUsernameFormat } from '../utils/regex.util.js';
+import { isReservedUsername } from '../utils/reserved-username.util.js';
 
 @injectable()
 export class AuthController {
@@ -265,16 +267,32 @@ export class AuthController {
   };
 
   public checkUsernameAvailability = async (req: Request, res: Response): Promise<void> => {
+    const username = typeof req.query.username === 'string' ? req.query.username : '';
+    if (!isValidUsernameFormat(username)) {
+      res.status(200).json({ available: false, reason: 'invalid', error: 'Username must be 3 to 20 alphanumeric characters with no spaces or special characters.' });
+      return;
+    }
     try {
-      const username = (req.query.username as string || '').trim();
-      if (!username || username.length < 3) {
-        res.status(400).json({ available: false, error: 'Username must be at least 3 characters' });
-        return;
-      }
       await this.userService.checkUsernameAvailability(username);
       res.status(200).json({ available: true, message: 'Username is available' });
     } catch (error: any) {
-      res.status(200).json({ available: false, error: error.message || 'Username is already taken' });
+      const reason = isReservedUsername(username) ? 'reserved' : 'taken';
+      res.status(200).json({ available: false, reason, error: error.message || 'Username is not available.' });
+    }
+  };
+
+  public checkEmailAvailability = async (req: Request, res: Response): Promise<void> => {
+    const email = typeof req.query.email === 'string' ? req.query.email : '';
+    if (!isValidEmailFormat(email)) {
+      res.status(200).json({ available: false, reason: 'invalid', error: 'Invalid email format.' });
+      return;
+    }
+
+    try {
+      await this.userService.checkEmailAvailability(email);
+      res.status(200).json({ available: true, message: 'Email is available' });
+    } catch (error: any) {
+      res.status(200).json({ available: false, reason: 'taken', error: error.message || 'Email is already in use.' });
     }
   };
 

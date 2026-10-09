@@ -68,6 +68,48 @@ describe('02 - SuperAdmin Default Login & User Registration Tests', () => {
     assert.ok(res.body.error);
   });
 
+  it('Should reject registration with usernames reserved by the system or profanity filter', async () => {
+    const res = await makeRequest(app, 'POST', '/api/auth/register', {
+      username: 'botadministrador',
+      email: `reserved${randNum}@example.com`,
+      password: 'Password123!'
+    });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /not available/i);
+  });
+
+  it('Should reject short passwords and emails containing spaces', async () => {
+    const shortPasswordResponse = await makeRequest(app, 'POST', '/api/auth/register', {
+      username: `short${randNum}`,
+      email: `short${randNum}@example.com`,
+      password: 'abcd'
+    });
+    const spacedEmailResponse = await makeRequest(app, 'POST', '/api/auth/register', {
+      username: `spaced${randNum}`,
+      email: `space ${randNum}@example.com`,
+      password: 'Password123!'
+    });
+
+    assert.equal(shortPasswordResponse.status, 400);
+    assert.equal(spacedEmailResponse.status, 400);
+  });
+
+  it('Should report duplicate email and username in availability checks', async () => {
+    const usernameResponse = await makeRequest(app, 'GET', `/api/auth/check-username?username=${validUsername}`);
+    const emailResponse = await makeRequest(app, 'GET', `/api/auth/check-email?email=${encodeURIComponent(validEmail)}`);
+    const reservedResponse = await makeRequest(app, 'GET', '/api/auth/check-username?username=admin');
+
+    assert.equal(usernameResponse.status, 200);
+    assert.equal(usernameResponse.body.available, false);
+    assert.equal(usernameResponse.body.reason, 'taken');
+    assert.equal(emailResponse.status, 200);
+    assert.equal(emailResponse.body.available, false);
+    assert.equal(emailResponse.body.reason, 'taken');
+    assert.equal(reservedResponse.body.available, false);
+    assert.equal(reservedResponse.body.reason, 'reserved');
+  });
+
   it('Should reject registration with duplicate username', async () => {
     const payload = {
       username: validUsername,

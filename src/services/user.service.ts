@@ -4,6 +4,7 @@ import { User } from '../models/user.entity.js';
 import { MatchHistory } from '../models/match-history.entity.js';
 import { AppDataSource } from '../config/database.config.js';
 import { isValidUsernameFormat, isValidEmailFormat } from '../utils/regex.util.js';
+import { isReservedUsername } from '../utils/reserved-username.util.js';
 import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
 import { RankTierService } from './rank-tier.service.js';
 import { getUtcWeekRange } from '../utils/utc-week.util.js';
@@ -21,6 +22,10 @@ export class UserService {
       throw new Error('Username must be 3 to 20 alphanumeric characters with no spaces or special characters.');
     }
 
+    if (isReservedUsername(username)) {
+      throw new Error('Username is not available.');
+    }
+
     const existingUser = await this.userRepository.findByUsername(username);
     if (existingUser) {
       throw new Error('Username is already taken.');
@@ -34,7 +39,7 @@ export class UserService {
       throw new Error('Invalid email format.');
     }
 
-    const existingUser = await this.userRepository.findByEmail(email);
+    const existingUser = await this.userRepository.findByEmail(email.toLowerCase());
     if (existingUser) {
       throw new Error('Email is already in use.');
     }

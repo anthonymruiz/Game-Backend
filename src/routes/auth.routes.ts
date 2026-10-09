@@ -17,6 +17,7 @@ authRouter.post('/guest', (req, res) => getController().guestLogin(req, res));
 authRouter.post('/logout', requireAuth, (req, res) => getController().logout(req, res));
 authRouter.post('/set-username', requireAuth, (req, res) => getController().setUsername(req, res));
 authRouter.get('/check-username', (req, res) => getController().checkUsernameAvailability(req, res));
+authRouter.get('/check-email', (req, res) => getController().checkEmailAvailability(req, res));
 authRouter.get('/google', (req, res) => getController().redirectToGoogle(req, res));
 authRouter.get('/google/callback', (req, res) => getController().googleCallback(req, res));
 authRouter.get('/facebook', (req, res) => getController().redirectToFacebook(req, res));

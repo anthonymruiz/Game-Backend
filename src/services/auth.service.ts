@@ -10,6 +10,7 @@ import { ENV } from '../config/env.config.js';
 import { Preferences } from '../models/preferences.entity.js';
 import { Stats } from '../models/stats.entity.js';
 import { UserRole } from '../models/user-role.enum.js';
+import { isValidEmailFormat, isValidUsernameFormat } from '../utils/regex.util.js';
 
 @injectable()
 export class AuthService {
@@ -35,6 +36,16 @@ export class AuthService {
     if (!email || !username || (!plainPassword && provider === 'local')) {
       throw new Error('Email, username, and password are required for registration.');
     }
+    if (!isValidEmailFormat(email)) {
+      throw new Error('Invalid email format.');
+    }
+    if (!isValidUsernameFormat(username)) {
+      throw new Error('Username must be 3 to 20 alphanumeric characters with no spaces or special characters.');
+    }
+    if (provider === 'local' && (!plainPassword || plainPassword.length < 5 || /\s/.test(plainPassword))) {
+      throw new Error('Password must be at least 5 characters long and contain no spaces.');
+    }
+
     await this.userService.checkEmailAvailability(email);
     await this.userService.checkUsernameAvailability(username);
 
@@ -45,9 +56,6 @@ export class AuthService {
     user.hasUsernameSet = true;
     
     if (plainPassword) {
-      if (plainPassword.length < 6) {
-        throw new Error('Password must be at least 6 characters long.');
-      }
       user.password = await bcrypt.hash(plainPassword, this.SALT_ROUNDS);
     }
 
@@ -58,9 +66,20 @@ export class AuthService {
   }
 
   public async login(emailOrUsername: string, plainPassword?: string): Promise<{ user: User; token: string }> {
-    let user = await this.userRepository.findByEmail(emailOrUsername.trim().toLowerCase());
+    const isEmail = typeof emailOrUsername === 'string' && emailOrUsername.includes('@');
+    if (
+      typeof emailOrUsername !== 'string' ||
+      !(isEmail ? isValidEmailFormat(emailOrUsername) : isValidUsernameFormat(emailOrUsername)) ||
+      typeof plainPassword !== 'string' ||
+      plainPassword.length < 5 ||
+      /\s/.test(plainPassword)
+    ) {
+      throw new Error('Invalid credentials.');
+    }
+
+    let user = await this.userRepository.findByEmail(emailOrUsername.toLowerCase());
     if (!user) {
-      user = await this.userRepository.findByUsername(emailOrUsername.trim());
+      user = await this.userRepository.findByUsername(emailOrUsername);
     }
 
     if (!user) {
@@ -71,13 +90,11 @@ export class AuthService {
       throw new Error('Your account has been banned. Please contact support.');
     }
 
-    if (user.provider === 'local' && plainPassword && user.password) {
+    if (user.provider === 'local' && user.password) {
       const isPasswordValid = await bcrypt.compare(plainPassword, user.password);
       if (!isPasswordValid) {
         throw new Error('Invalid credentials.');
       }
-    } else if (user.provider === 'local' && !plainPassword) {
-      throw new Error('Password is required for local login.');
     }
 
     const token = this.generateJwt(user);
