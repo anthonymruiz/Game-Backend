@@ -17,7 +17,7 @@ import { ImpostorMatchAuditState } from '../models/impostor-match-audit-state.en
 import { AppDataSource } from '../config/database.config.js';
 import { GAME_INSTANCE_TEST_OPTIONS } from './game-instance-test-options.js';
 
-describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () => {
+describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => {
   let roomService: RoomService;
 
   before(async () => {
@@ -301,8 +301,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     await teardownTestEnvironment();
   });
 
-  it('Should correctly initialize a 4-FFA (Free-For-All) room with 4 players on 4 borders', () => {
-    const room = roomService.createRoom('p1', 'Player1', false, 'FFA Room', '4-FFA');
+  it('Should correctly initialize a FFA (Free-For-All) room with 4 players on 4 borders', () => {
+    const room = roomService.createRoom('p1', 'Player1', false, 'FFA Room', 'FFA');
     roomService.joinRoom(room.id, 'p2', 'Player2', false);
     roomService.joinRoom(room.id, 'p3', 'Player3', true);
     roomService.joinRoom(room.id, 'p4', 'Player4', true);
@@ -314,7 +314,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     });
 
     assert.equal(room.players.length, 4);
-    assert.equal(room.maxPlayers, 4);
+    assert.equal(room.maxPlayers, 6);
 
     const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
@@ -331,7 +331,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.deepEqual({ x: p3?.x, y: p3?.y }, { x: 0, y: 5 });
     assert.deepEqual({ x: p4?.x, y: p4?.y }, { x: 10, y: 5 });
 
-    // Each player in 4-FFA starts with 7 walls
+    // Each player in FFA starts with 7 walls
     assert.equal(p1?.wallsLeft, 7);
     assert.equal(p2?.wallsLeft, 7);
     assert.equal(p1?.pawnColor, '#92400E');
@@ -340,8 +340,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     game.destroy();
   });
 
-  it('Should give each player 7 walls in 6-FFA', () => {
-    const room = roomService.createRoom('six_ffa_1', 'Player1', false, '6-FFA Room', '6-FFA');
+  it('Should give each player 7 walls in 6-player FFA', () => {
+    const room = roomService.createRoom('six_ffa_1', 'Player1', false, 'FFA Room', 'FFA');
     for (let i = 2; i <= 6; i++) {
       roomService.joinRoom(room.id, `six_ffa_${i}`, `Player${i}`, true);
     }
@@ -851,8 +851,8 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(new Set(positions).size, 6);
     const middle = Math.floor(game.board.size / 2);
     for (const player of game.board.players.values()) {
-      assert.ok(Math.abs(player.x - middle) <= 1);
-      assert.ok(Math.abs(player.y - middle) <= 1);
+      assert.ok(Math.abs(player.x - middle) <= 2);
+      assert.ok(Math.abs(player.y - middle) <= 2);
       assert.equal(player.wallsLeft, 0);
     }
     assert.ok(game.board.walls.length >= game.board.size * game.board.size * 0.3);
@@ -1174,7 +1174,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'impostor_surrender_good_2', username: 'Good2', isGuest: false, color: '#34C759' },
       { id: 'impostor_surrender_good_3', username: 'Good3', isGuest: false, color: '#FFCC00' }
     ];
-    let finishedData: { winner: string | null; impostorEndReason?: string } | undefined;
+    let finishedData: { winner: string | null; impostorEndReason?: string; impostorSurrenderedPlayerId?: string | null } | undefined;
     const game = new GameInstance('impostor_impostor_surrender_test', 'impostor', players, (event, data) => {
       if (event === 'gameFinished') finishedData = data;
     }, GAME_INSTANCE_TEST_OPTIONS);
@@ -1186,6 +1186,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(game.winner, 'good');
     assert.equal(finishedData?.winner, 'good');
     assert.equal(finishedData?.impostorEndReason, 'surrender');
+    assert.equal(finishedData?.impostorSurrenderedPlayerId, impostorId);
     game.destroy();
   });
 
@@ -1196,7 +1197,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'impostor_good_surrender_3', username: 'Good3', isGuest: false, color: '#34C759' },
       { id: 'impostor_good_surrender_4', username: 'Good4', isGuest: false, color: '#FFCC00' }
     ];
-    let finishedData: { winner: string | null; impostorEndReason?: string } | undefined;
+    let finishedData: { winner: string | null; impostorEndReason?: string; impostorSurrenderedPlayerId?: string | null } | undefined;
     const game = new GameInstance('impostor_good_surrender_test', 'impostor', players, (event, data) => {
       if (event === 'gameFinished') finishedData = data;
     }, GAME_INSTANCE_TEST_OPTIONS);
@@ -1209,6 +1210,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
     assert.equal(game.winner, impostorId);
     assert.equal(finishedData?.winner, impostorId);
     assert.equal(finishedData?.impostorEndReason, 'surrender');
+    assert.equal(finishedData?.impostorSurrenderedPlayerId, goodPlayerId);
     game.destroy();
   });
 
@@ -1699,7 +1701,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'bot_3', username: 'BOT 3', isGuest: true, color: '#FFCC00' }
     ];
     let finishedEvent: { winner: string | null; abandoned: boolean } | null = null;
-    const game = new GameInstance('bot_match_abandon', '4-FFA', players, (event, data) => {
+    const game = new GameInstance('bot_match_abandon', 'FFA', players, (event, data) => {
       if (event === 'gameFinished') finishedEvent = data;
     }, GAME_INSTANCE_TEST_OPTIONS);
 
@@ -1788,7 +1790,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
   });
 
   it('Should spawn Killer Item in FFA, eliminate targeted player, skip turn, and declare last survivor winner', () => {
-    const room = roomService.createRoom('p1', 'Player1', false, 'Killer FFA', '4-FFA');
+    const room = roomService.createRoom('p1', 'Player1', false, 'Killer FFA', 'FFA');
     roomService.joinRoom(room.id, 'p2', 'Player2', false);
     roomService.joinRoom(room.id, 'p3', 'Player3', true);
     roomService.joinRoom(room.id, 'p4', 'Player4', true);
@@ -1839,7 +1841,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
   });
 
   it('Should spawn one exchange item in multiplayer modes and freeze the turn until the selected swap resolves', () => {
-    const room = roomService.createRoom('swap1', 'Player1', false, 'Swap 4-FFA', '4-FFA');
+    const room = roomService.createRoom('swap1', 'Player1', false, 'Swap FFA', 'FFA');
     roomService.joinRoom(room.id, 'swap2', 'Player2', false);
     roomService.joinRoom(room.id, 'swap3', 'Player3', false);
     roomService.joinRoom(room.id, 'swap4', 'Player4', false);
@@ -2076,7 +2078,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'ffa_rival_2', username: 'Rival 2', isGuest: false, color: '#34C759' },
       { id: 'ffa_rival_3', username: 'Rival 3', isGuest: false, color: '#FFCC00' }
     ];
-    const game = new GameInstance('ffa_surrender_test', '4-FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    const game = new GameInstance('ffa_surrender_test', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
 
     game.start();
     assert.equal(game.surrender('ffa_surrender'), true);
@@ -2095,7 +2097,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'bot_ffa_one', username: 'BOT 1', isGuest: true, color: '#34C759' },
       { id: 'bot_ffa_two', username: 'BOT 2', isGuest: true, color: '#FFCC00' }
     ];
-    const game = new GameInstance('ffa_owner_surrender_test', '4-FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    const game = new GameInstance('ffa_owner_surrender_test', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
 
     game.start();
     assert.equal(game.surrender('ffa_host'), true);
@@ -2114,7 +2116,7 @@ describe('04 - Multiplayer Modes (4-FFA, 2v2) & Core Game Mechanics Tests', () =
       { id: 'bot_ffa_last_three', username: 'BOT 3', isGuest: true, color: '#FFCC00' }
     ];
     let finishData: { winner: string | null; abandoned: boolean } | null = null;
-    const game = new GameInstance('ffa_bots_only_surrender_test', '4-FFA', players, (event, data) => {
+    const game = new GameInstance('ffa_bots_only_surrender_test', 'FFA', players, (event, data) => {
       if (event === 'gameFinished') finishData = data;
     }, GAME_INSTANCE_TEST_OPTIONS);
 

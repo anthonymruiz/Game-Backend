@@ -50,13 +50,13 @@ describe('Badge administration and player progress', () => {
     await teardownTestEnvironment();
   });
 
-  it('seeds exactly 109 badges idempotently and serves the protected admin catalog', async () => {
+  it('seeds exactly 106 badges idempotently and serves the protected admin catalog', async () => {
     await seedBadges();
-    assert.equal(await AppDataSource.getRepository(Badge).count(), 109);
+    assert.equal(await AppDataSource.getRepository(Badge).count(), 106);
 
     const response = await makeRequest(app, 'GET', '/api/admin/badges', undefined, adminToken);
     assert.equal(response.status, 200, JSON.stringify(response.body));
-    assert.equal(response.body.badges.length, 109);
+    assert.equal(response.body.badges.length, 106);
   });
 
   it('unlocks every seeded badge at its own event threshold and not before it', async () => {
@@ -74,7 +74,7 @@ describe('Badge administration and player progress', () => {
     const seededBadges = await repository.find({
       where: definitions.map(({ code }) => ({ code }))
     });
-    assert.equal(seededBadges.length, 109);
+    assert.equal(seededBadges.length, 105);
     const previousActiveStates = new Map(seededBadges.map(badge => [badge.id, badge.isActive]));
     const seededByCode = new Map(seededBadges.map(badge => [badge.code, badge]));
     const definitionsByEvent = new Map<typeof definitions[number]['event'], typeof definitions>();
@@ -347,8 +347,7 @@ describe('Badge administration and player progress', () => {
     const modes = [
       { mode: '1v1', event: 'win_1v1', otherCount: 1 },
       { mode: '2v2', event: 'win_2v2', otherCount: 3 },
-      { mode: '4-FFA', event: 'win_4ffa', otherCount: 3 },
-      { mode: '6-FFA', event: 'win_6ffa', otherCount: 5 }
+      { mode: 'FFA', event: 'win_ffa', otherCount: 3 }
     ] as const;
     const gameLogService = container.resolve(GameLogService);
 

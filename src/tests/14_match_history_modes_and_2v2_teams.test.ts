@@ -53,9 +53,9 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     await teardownTestEnvironment();
   });
 
-  it('14.1 Should accurately record match mode, opponentUsername, and durationSeconds in 4-FFA match', async () => {
+  it('14.1 Should accurately record match mode, opponentUsername, and durationSeconds in FFA match', async () => {
     const gameLogService = container.resolve(GameLogService);
-    const matchId = `TEST_MATCH_4FFA_${Date.now()}`;
+    const matchId = `TEST_MATCH_FFA_${Date.now()}`;
     const userRepo = AppDataSource.getRepository(User);
     const userBefore = await userRepo.findOne({ where: { id: user1Id }, relations: { stats: true } });
 
@@ -66,13 +66,13 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
       { id: 'bot_2', username: 'Bot Shadow', isGuest: true, color: '#FFCC00' }
     ];
 
-    const rewards = await gameLogService.logGameEnd(matchId, user1Id, players, '4-FFA', 145);
+    const rewards = await gameLogService.logGameEnd(matchId, user1Id, players, 'FFA', 145);
 
     const historyRepo = AppDataSource.getRepository(MatchHistory);
     const h1 = await historyRepo.findOne({ where: { matchId, userId: user1Id } });
 
     assert.ok(h1, 'Match history for user 1 should exist');
-    assert.strictEqual(h1.mode, '4-FFA');
+    assert.strictEqual(h1.mode, 'FFA');
     assert.strictEqual(h1.result, 'win');
     assert.strictEqual(h1.durationSeconds, 145);
     assert.ok(h1.opponentUsername?.includes(user2Name));
@@ -142,7 +142,7 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     assert.strictEqual(u2.stats.xp, previousXp);
   });
 
-  it('14.3 Mode distribution aggregates all stored modes including 6-FFA', async () => {
+  it('14.3 Mode distribution aggregates all stored modes including FFA', async () => {
     const gameLogService = container.resolve(GameLogService);
     const matchId = `TEST_MATCH_6FFA_${Date.now()}`;
     const userRepo = AppDataSource.getRepository(User);
@@ -153,7 +153,7 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     const rewards = await gameLogService.logGameEnd(matchId, user1Id, [
       { id: user1Id, username: user1Name, isGuest: false, color: '#FF3B30' },
       { id: user2Id, username: user2Name, isGuest: false, color: '#007AFF' }
-    ], '6-FFA', 180);
+    ], 'FFA', 180);
 
     const user1After = await userRepo.findOne({ where: { id: user1Id }, relations: { stats: true } });
     const user2After = await userRepo.findOne({ where: { id: user2Id }, relations: { stats: true } });
@@ -180,8 +180,8 @@ describe('14 - Match History Modes, 2v2 Team Wins & Duration Logging', () => {
     assert.strictEqual(user2After?.stats?.xp, user2Before?.stats?.xp ?? 0);
 
     const distribution = await container.resolve(MatchHistoryRepository).getModeDistribution();
-    assert.ok(distribution.some(row => row.mode === '6-FFA' && row.count > 0));
-    const filteredMatches = await container.resolve(MatchHistoryRepository).getPaginatedMatches('6-FFA', { limit: 100 });
+    assert.ok(distribution.some(row => row.mode === 'FFA' && row.count > 0));
+    const filteredMatches = await container.resolve(MatchHistoryRepository).getPaginatedMatches('FFA', { limit: 100 });
     assert.ok(filteredMatches.data.some(match => match.matchId === matchId));
   });
 

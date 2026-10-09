@@ -204,7 +204,7 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
       { id: 'ghost_wall_rival_2', username: 'Rival 2', isGuest: false, color: '#0000FF' },
       { id: 'ghost_wall_rival_3', username: 'Rival 3', isGuest: false, color: '#FFFF00' }
     ];
-    const game = new GameInstance('ghost_wall_turn_test', '4-FFA', roomPlayers, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    const game = new GameInstance('ghost_wall_turn_test', 'FFA', roomPlayers, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
     const player = game.board.players.get('ghost_wall_player')!;
     player.ghostTurnsRemaining = 3;
@@ -247,7 +247,7 @@ describe('Suite 07: Engine Comprehensive Rules & Mechanics', () => {
       { id: 'inactive_4', username: 'Player 4', isGuest: false, color: '#FFFF00' }
     ];
     const emittedEvents: Array<{ event: string; data: any }> = [];
-    const game = new GameInstance('inactivity_test', '4-FFA', roomPlayers, (event, data) => {
+    const game = new GameInstance('inactivity_test', 'FFA', roomPlayers, (event, data) => {
       emittedEvents.push({ event, data });
     }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();

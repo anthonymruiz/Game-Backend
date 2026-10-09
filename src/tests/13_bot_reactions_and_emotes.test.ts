@@ -35,7 +35,7 @@ async function captureBotReactions(
   }
 }
 
-function createFfaPlayers(playerCount: 4 | 6): IRoomPlayer[] {
+function createFfaPlayers(playerCount: 4 | 5 | 6): IRoomPlayer[] {
   return Array.from({ length: playerCount }, (_, index) => ({
     id: index === 0 ? 'user_1' : `bot_${index}`,
     username: index === 0 ? 'Player 1' : `BOT ${index}`,
@@ -91,9 +91,9 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
     game.destroy();
   });
 
-  it('4-FFA and 6-FFA treat every other player, including bots, as an enemy', () => {
-    for (const [mode, count] of [['4-FFA', 4], ['6-FFA', 6]] as const) {
-      const game = new GameInstance(`test_${mode}_reactions`, mode, createFfaPlayers(count), () => {}, GAME_INSTANCE_TEST_OPTIONS);
+  it('FFA treats every other player, including bots, as an enemy', () => {
+    for (const count of [4, 5, 6] as const) {
+      const game = new GameInstance(`test_ffa_${count}_reactions`, 'FFA', createFfaPlayers(count), () => {}, GAME_INSTANCE_TEST_OPTIONS);
       const bot = game.board.players.get('bot_1')!;
       const human = game.board.players.get('user_1')!;
       const otherBot = game.board.players.get('bot_2')!;
@@ -106,7 +106,7 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
     }
   });
 
-  it('The same laugh/anger wall logic works in 1v1, 2v2, 4-FFA and 6-FFA', async () => {
+  it('The same laugh/anger wall logic works in 1v1, 2v2 and FFA', async () => {
     const scenarios: { mode: GameMode; players: IRoomPlayer[]; placerId: string; targetId: string }[] = [
       {
         mode: '1v1',
@@ -128,8 +128,8 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
         placerId: 'bot_red',
         targetId: 'user_2'
       },
-      { mode: '4-FFA', players: createFfaPlayers(4), placerId: 'bot_1', targetId: 'bot_2' },
-      { mode: '6-FFA', players: createFfaPlayers(6), placerId: 'bot_1', targetId: 'bot_5' }
+      { mode: 'FFA', players: createFfaPlayers(4), placerId: 'bot_1', targetId: 'bot_2' },
+      { mode: 'FFA', players: createFfaPlayers(6), placerId: 'bot_1', targetId: 'bot_5' }
     ];
 
     for (const scenario of scenarios) {
@@ -263,7 +263,7 @@ describe('13 - Bot Reactions and Emotes Algorithm Tests', () => {
     const players = createFfaPlayers(6);
     const reactions = await captureBotReactions(game => {
       game.botReactionManager.onGameFinished('user_1');
-    }, '6-FFA', players, 0.99);
+    }, 'FFA', players, 0.99);
     assert.deepStrictEqual(reactions, []);
   });
 });

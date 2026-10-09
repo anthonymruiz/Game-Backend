@@ -56,6 +56,26 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
     assert.ok(room.players.some(player => player.id.startsWith('bot_')));
   });
 
+  it('Waiting rooms assign distinct random pawn cells and validate realtime moves', () => {
+    const room = roomService.createRoom('lobby_board_host', 'Host', true, 'Board Room', '2v2');
+    const hostStart = room.lobbyPawns[room.hostId];
+    assert.ok(hostStart);
+    roomService.joinRoom(room.id, 'lobby_board_guest', 'Guest', true);
+
+    const guestStart = room.lobbyPawns.lobby_board_guest;
+    assert.ok(guestStart);
+    assert.notDeepEqual(guestStart, hostStart);
+
+    room.lobbyPawns.lobby_board_host = { x: 0, y: 0 };
+    room.lobbyPawns.lobby_board_guest = { x: 1, y: 0 };
+    assert.throws(() => roomService.moveLobbyPawn(room.id, 'lobby_board_guest', 0, 0), /occupied/);
+    roomService.moveLobbyPawn(room.id, 'lobby_board_guest', 6, 6);
+    const destination = { x: 6, y: 6 };
+    assert.deepEqual(room.lobbyPawns.lobby_board_guest, destination);
+    assert.throws(() => roomService.moveLobbyPawn(room.id, 'lobby_board_guest', 8, 6), /Invalid lobby pawn destination/);
+    assert.throws(() => roomService.moveLobbyPawn(room.id, 'unknown_player', 1, 1), /Player not in room/);
+  });
+
   it('Guest 2 should be able to join the 1v1 room and get an unused color automatically', () => {
     const guest1Id = 'guest_1002';
     const guest2Id = 'guest_1003';

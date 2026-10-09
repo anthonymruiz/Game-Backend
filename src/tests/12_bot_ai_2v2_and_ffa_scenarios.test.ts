@@ -151,19 +151,19 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
   });
 
   // 4. 6-FFA Bot AI: 6 Players, Multi-Enemy Target Priority
-  it('Bot in 6-FFA should evaluate all 5 enemies and execute valid moves/walls', () => {
+  it('Bot in 6-player FFA should evaluate all 5 enemies and execute valid moves/walls', () => {
     const players = Array.from({ length: 6 }, (_, index) => ({
       id: index === 0 ? 'host_6ffa' : `bot_6ffa_${index}`,
       username: index === 0 ? 'Host6' : `BOT ${index}`,
       isGuest: index > 0,
       color: ['#FF3B30', '#007AFF', '#FFCC00', '#34C759', '#AF52DE', '#FF9500'][index]
     }));
-    const game = new GameInstance('six_ffa_bot_test', '6-FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    const game = new GameInstance('six_ffa_bot_test', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
     assert.equal(game.state, 'playing');
     assert.equal(game.board.size, 11);
 
-    // Trigger turns for bots in 6-FFA
+    // Trigger turns for bots in FFA
     for (const p of players.slice(1)) {
       if (p.id.startsWith('bot_')) {
         const action = game.board.getBotAction(p.id);
@@ -174,42 +174,42 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     game.destroy();
   });
 
-  it('4-FFA and 6-FFA bots collect exchange boosts for favorable swaps', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA bots collect exchange boosts for favorable swaps', () => {
+    for (const { label, size, center, playerCount } of [
+      { label: '4-player', size: 11, center: 5, playerCount: 4 },
+      { label: '6-player', size: 11, center: 5, playerCount: 6 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_exchange_${mode}`, 'Exchange Bot', true, center, size - 1, center, center, 7);
-      const leader = new Player(`leader_${mode}`, 'Leading Rival', false, center, center + 1, center, center, 7);
+      const bot = new Player(`bot_exchange_${label}`, 'Exchange Bot', true, center, size - 1, center, center, 7);
+      const leader = new Player(`leader_${label}`, 'Leading Rival', false, center, center + 1, center, center, 7);
       board.addPlayer(bot);
       board.addPlayer(leader);
 
-      for (let index = 0; index < (mode === '4-FFA' ? 2 : 4); index++) {
+      for (let index = 0; index < (playerCount === 4 ? 2 : 4); index++) {
         const x = index % 2 === 0 ? 0 : size - 1;
         const y = index < 2 ? 0 : size - 1;
-        board.addPlayer(new Player(`rival_${mode}_${index}`, 'Rival', false, x, y, center, center, 7));
+        board.addPlayer(new Player(`rival_${label}_${index}`, 'Rival', false, x, y, center, center, 7));
       }
 
-      const boostId = `exchange_boost_${mode}`;
+      const boostId = `exchange_boost_${label}`;
       board.boosts.push(new Boost(boostId, 'exchange_item', center, size - 2));
       board.grid[size - 2][center].hasBoost = boostId;
 
-      assert.equal(board.getBestBotExchangeTarget(bot.id)?.target.id, leader.id, `${mode}: select the opponent whose lead can be reversed`);
+      assert.equal(board.getBestBotExchangeTarget(bot.id)?.target.id, leader.id, `${label}: select the opponent whose lead can be reversed`);
       assert.deepEqual(
         board.getBotAction(bot.id),
         { type: 'move', x: center, y: size - 2 },
-        `${mode}: collect the exchange item when it enables a strong favorable swap`
+        `${label}: collect the exchange item when it enables a strong favorable swap`
       );
 
       let exchangedTargetId: string | undefined;
-      const gamePlayers = Array.from({ length: mode === '4-FFA' ? 4 : 6 }, (_, index) => ({
-        id: index === 0 ? `bot_full_exchange_${mode}` : `ffa_exchange_rival_${mode}_${index}`,
+      const gamePlayers = Array.from({ length: playerCount }, (_, index) => ({
+        id: index === 0 ? `bot_full_exchange_${label}` : `ffa_exchange_rival_${label}_${index}`,
         username: `Player ${index}`,
         isGuest: true,
         color: '#007AFF'
       }));
-      const game = new GameInstance(`full_exchange_${mode}`, mode, gamePlayers, (event, data) => {
+      const game = new GameInstance(`full_exchange_${label}`, 'FFA', gamePlayers, (event, data) => {
         if (event === 'playersExchanged') exchangedTargetId = data.targetId;
       }, GAME_INSTANCE_TEST_OPTIONS);
       game.start();
@@ -233,7 +233,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       game.currentTurnIndex = 0;
       game.board.players.get(gamePlayers[0].id)!.hasExchangeItem = true;
       assert.equal(game.beginBoostDecision(gamePlayers[0].id, 'exchange_item'), true);
-      assert.equal(exchangedTargetId, gamePlayers[1].id, `${mode}: resolve the boost against the best rival`);
+      assert.equal(exchangedTargetId, gamePlayers[1].id, `${label}: resolve the boost against the best rival`);
       game.destroy();
     }
   });
@@ -257,8 +257,8 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         { mode: '1v1', count: 2, hasKiller: false },
         { mode: 'vs_ai', count: 2, hasKiller: false },
         { mode: '2v2', count: 4, hasKiller: false },
-        { mode: '4-FFA', count: 4, hasKiller: true },
-        { mode: '6-FFA', count: 6, hasKiller: true }
+        { mode: 'FFA', count: 4, hasKiller: true },
+        { mode: 'FFA', count: 6, hasKiller: true }
       ] as const;
 
       for (const { mode, count, hasKiller } of scenarios) {
@@ -327,11 +327,78 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
+  it('moves classic mode portals to new positions after use', () => {
+    const scenarios = [
+      { mode: '1v1' as const, count: 2 },
+      { mode: 'vs_ai' as const, count: 2 },
+      { mode: '2v2' as const, count: 4 },
+      { mode: 'FFA' as const, count: 4 },
+      { mode: 'FFA' as const, count: 6 }
+    ];
+
+    for (const { mode, count } of scenarios) {
+      const players = Array.from({ length: count }, (_, index) => ({
+        id: `portal_rotation_${mode}_${index}`,
+        username: `Player ${index}`,
+        isGuest: true,
+        color: '#007AFF'
+      }));
+      const game = new GameInstance(`portal_rotation_game_${mode}`, mode, players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+      try {
+        game.start();
+        const board = game.board;
+        const playerId = game.getCurrentPlayer();
+        const player = board.players.get(playerId)!;
+        const source = board.boosts.find(boost => boost.type === 'portal')!;
+        const oldPositions = new Set(
+          board.boosts.filter(boost => boost.type === 'portal').map(({ x, y }) => `${x},${y}`)
+        );
+        const approach = [
+          { x: source.x, y: source.y - 1 },
+          { x: source.x, y: source.y + 1 },
+          { x: source.x - 1, y: source.y },
+          { x: source.x + 1, y: source.y }
+        ].find(position =>
+          position.x >= 0 && position.x < board.size &&
+          position.y >= 0 && position.y < board.size &&
+          !board.boosts.some(boost => boost.x === position.x && boost.y === position.y) &&
+          ![...board.players.values()].some(other =>
+            other.id !== playerId && other.x === position.x && other.y === position.y
+          )
+        );
+        assert.ok(approach, `${mode}: find an empty cell adjacent to a portal`);
+
+        board.walls = [];
+        for (const row of board.grid) {
+          for (const cell of row) cell.hasPlayer = null;
+        }
+        player.x = approach.x;
+        player.y = approach.y;
+        player.hasReachedGoal = false;
+        for (const other of board.players.values()) {
+          if (other.id !== playerId) board.grid[other.y][other.x].hasPlayer = other.id;
+        }
+        board.grid[player.y][player.x].hasPlayer = player.id;
+
+        assert.ok(board.getValidMoves(playerId).some(move => move.x === source.x && move.y === source.y));
+        assert.equal(game.executeMove(playerId, source.x, source.y), true, `${mode}: use portal`);
+        const newPortals = board.boosts.filter(boost => boost.type === 'portal');
+        assert.equal(newPortals.length, 2, `${mode}: keep a linked portal pair`);
+        assert.ok(
+          newPortals.every(({ x, y }) => !oldPositions.has(`${x},${y}`)),
+          `${mode}: both portals move to new cells`
+        );
+      } finally {
+        game.destroy();
+      }
+    }
+  });
+
   it('Collecting a timed boost starts its respawn cooldown from the pickup', (context) => {
     context.mock.timers.enable({ apis: ['setTimeout'], now: 0 });
     const originalRandom = Math.random;
     Math.random = () => 0;
-    const game = new GameInstance('picked_boost_cooldown', '4-FFA', Array.from({ length: 4 }, (_, index) => ({
+    const game = new GameInstance('picked_boost_cooldown', 'FFA', Array.from({ length: 4 }, (_, index) => ({
       id: `picked_boost_${index}`,
       username: `Player ${index}`,
       isGuest: true,
@@ -367,21 +434,21 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
-  it('4-FFA and 6-FFA matches can spawn a ghost boost alongside special items', () => {
+  it('FFA matches can spawn a ghost boost alongside special items', () => {
 
     const originalRandom = Math.random;
     Math.random = () => 0.75;
     try {
-      for (const mode of ['4-FFA', '6-FFA'] as const) {
-        const players = Array.from({ length: mode === '4-FFA' ? 4 : 6 }, (_, index) => ({
-          id: `ghost_spawn_${mode}_${index}`,
+      for (const playerCount of [4, 6] as const) {
+        const players = Array.from({ length: playerCount }, (_, index) => ({
+          id: `ghost_spawn_${playerCount}_${index}`,
           username: `Player ${index}`,
           isGuest: true,
           color: '#007AFF'
         }));
-        const game = new GameInstance(`ghost_spawn_game_${mode}`, mode, players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+        const game = new GameInstance(`ghost_spawn_game_${playerCount}`, 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
         game.start();
-        assert.ok(game.board.boosts.some(boost => boost.type === 'ghost'), `${mode}: ghost can be selected for spawning`);
+        assert.ok(game.board.boosts.some(boost => boost.type === 'ghost'), `${playerCount}: ghost can be selected for spawning`);
         assert.ok(game.board.boosts.some(boost => boost.type === 'killer_item'));
         assert.ok(game.board.boosts.some(boost => boost.type === 'exchange_item'));
         assert.ok(game.board.boosts.some(boost => boost.type === 'portal'));
@@ -390,12 +457,12 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         assert.equal(game.board.boosts.filter(boost => boost.type === 'exchange_item').length, 1);
         assert.equal(game.board.boosts.filter(boost => boost.type === 'portal').length, 2);
         for (const boost of game.board.boosts) {
-          assert.equal(game.board.grid[boost.y][boost.x].hasPlayer, null, `${mode}: boost must not spawn under a player`);
+          assert.equal(game.board.grid[boost.y][boost.x].hasPlayer, null, `${playerCount}: boost must not spawn under a player`);
           assert.ok(
             Array.from(game.board.players.values()).some(player =>
               game.board.findShortestPathToGoal(player.x, player.y, boost.y, boost.x).length > 0
             ),
-            `${mode}: boost must spawn in a reachable square`
+            `${playerCount}: boost must spawn in a reachable square`
           );
         }
         game.destroy();
@@ -405,8 +472,8 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
-  it('4-FFA and 6-FFA matches announce ghost activation to the whole game room', () => {
-    for (const mode of ['4-FFA', '6-FFA'] as const) {
+  it('FFA matches announce ghost activation to the whole game room', () => {
+    for (const playerCount of [4, 6] as const) {
       let ghostAnnouncement: {
         playerId: string;
         username: string;
@@ -414,13 +481,13 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         currentTurn: string;
         board: { players: Record<string, { ghostTurnsRemaining: number }> };
       } | undefined;
-      const players = Array.from({ length: mode === '4-FFA' ? 4 : 6 }, (_, index) => ({
-        id: `ghost_announcement_${mode}_${index}`,
+      const players = Array.from({ length: playerCount }, (_, index) => ({
+        id: `ghost_announcement_${playerCount}_${index}`,
         username: `Player ${index}`,
         isGuest: true,
         color: '#007AFF'
       }));
-      const game = new GameInstance(`ghost_announcement_game_${mode}`, mode, players, (event, data) => {
+      const game = new GameInstance(`ghost_announcement_game_${playerCount}`, 'FFA', players, (event, data) => {
         if (event === 'ghostModeActivated') ghostAnnouncement = data;
       }, GAME_INSTANCE_TEST_OPTIONS);
       game.start();
@@ -576,10 +643,10 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     );
   });
 
-  it('4-FFA and 6-FFA bots eliminate the opponent closest to the shared goal', () => {
-    for (const { mode, size, center, positions } of [
+  it('FFA bots eliminate the opponent closest to the shared goal', () => {
+    for (const { label, size, center, positions } of [
       {
-        mode: '4-FFA',
+        label: '4-player',
         size: 11,
         center: 5,
         positions: [
@@ -590,7 +657,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         ]
       },
       {
-        mode: '6-FFA',
+        label: '6-player',
         size: 11,
         center: 5,
         positions: [
@@ -605,12 +672,12 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     ] as const) {
       let killedTargetId: string | undefined;
       const players = positions.map((_, index) => ({
-        id: index === 0 ? `bot_hunter_${mode}` : `bot_rival_${mode}_${index}`,
+        id: index === 0 ? `bot_hunter_${label}` : `bot_rival_${label}_${index}`,
         username: `Player ${index}`,
         isGuest: true,
         color: '#007AFF'
       }));
-      const game = new GameInstance(`killer_target_${mode}`, mode, players, (event, data) => {
+      const game = new GameInstance(`killer_target_${label}`, 'FFA', players, (event, data) => {
         if (event === 'playerKilled') killedTargetId = data.targetId;
       }, GAME_INSTANCE_TEST_OPTIONS);
       game.start();
@@ -630,58 +697,58 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       game.currentTurnIndex = 0;
       game.board.players.get(players[0].id)!.hasKillerItem = true;
       assert.equal(game.beginBoostDecision(players[0].id, 'killer_item'), true);
-      assert.equal(killedTargetId, players[1].id, `${mode}: kill the closest rival to the goal`);
+      assert.equal(killedTargetId, players[1].id, `${label}: kill the closest rival to the goal`);
       game.destroy();
     }
   });
 
-  it('4-FFA and 6-FFA bots use portal routes to shorten their path to the shared goal', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA bots use portal routes to shorten their path to the shared goal', () => {
+    for (const { label, size, center } of [
+      { label: '4-player', size: 11, center: 5 },
+      { label: '6-player', size: 11, center: 5 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_portal_${mode}`, 'Portal Bot', true, center, size - 1, center, center, 0);
+      const bot = new Player(`bot_portal_${label}`, 'Portal Bot', true, center, size - 1, center, center, 0);
       board.addPlayer(bot);
       board.boosts.push(
-        new Boost(`portal_entry_${mode}`, 'portal', center, size - 2, center, center + 1),
-        new Boost(`portal_exit_${mode}`, 'portal', center, center + 1, center, size - 2)
+        new Boost(`portal_entry_${label}`, 'portal', center, size - 2, center, center + 1),
+        new Boost(`portal_exit_${label}`, 'portal', center, center + 1, center, size - 2)
       );
 
-      assert.equal(board.getBotStrategicDistance(bot.id, bot.x, bot.y), 2, `${mode}: count the portal in the shortest route`);
+      assert.equal(board.getBotStrategicDistance(bot.id, bot.x, bot.y), 2, `${label}: count the portal in the shortest route`);
       assert.deepEqual(
         board.getBotAction(bot.id),
         { type: 'move', x: center, y: size - 2 },
-        `${mode}: step onto the portal when it shortens the route to the goal`
+        `${label}: step onto the portal when it shortens the route to the goal`
       );
       assert.equal(board.movePlayer(bot.id, center, size - 2), true);
       assert.deepEqual(
         { x: bot.x, y: bot.y },
         { x: center, y: center + 1 },
-        `${mode}: execute the selected portal move at its real landing position`
+        `${label}: execute the selected portal move at its real landing position`
       );
     }
   });
 
-  it('4-FFA and 6-FFA bots avoid portals that make their route longer', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA bots avoid portals that make their route longer', () => {
+    for (const { label, size, center } of [
+      { label: '4-player', size: 11, center: 5 },
+      { label: '6-player', size: 11, center: 5 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_bad_portal_${mode}`, 'Portal Bot', true, center, size - 1, center, center, 0);
+      const bot = new Player(`bot_bad_portal_${label}`, 'Portal Bot', true, center, size - 1, center, center, 0);
       board.addPlayer(bot);
       board.boosts.push(
-        new Boost(`bad_portal_entry_${mode}`, 'portal', center - 1, size - 2, size - 1, size - 1),
-        new Boost(`bad_portal_exit_${mode}`, 'portal', size - 1, size - 1, center - 1, size - 2)
+        new Boost(`bad_portal_entry_${label}`, 'portal', center - 1, size - 2, size - 1, size - 1),
+        new Boost(`bad_portal_exit_${label}`, 'portal', size - 1, size - 1, center - 1, size - 2)
       );
 
       const normalDistance = board.getShortestPathLength(bot.x, bot.y, bot.targetY, bot.targetX);
-      assert.equal(board.getBotStrategicDistance(bot.id, bot.x, bot.y), normalDistance, `${mode}: ignore a portal detour`);
+      assert.equal(board.getBotStrategicDistance(bot.id, bot.x, bot.y), normalDistance, `${label}: ignore a portal detour`);
       assert.deepEqual(
         board.getBotAction(bot.id),
         { type: 'move', x: center, y: size - 2 },
-        `${mode}: continue along the ordinary shortest route instead of entering the detour`
+        `${label}: continue along the ordinary shortest route instead of entering the detour`
       );
     }
   });
@@ -714,43 +781,43 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     assert.notDeepEqual(board.getBotAction(bot.id), { type: 'move', x: 3, y: 4 });
   });
 
-  it('4-FFA and 6-FFA bots find routes that use more than one portal', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA bots find routes that use more than one portal', () => {
+    for (const { label, size, center } of [
+      { label: '4-player', size: 11, center: 5 },
+      { label: '6-player', size: 11, center: 5 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_chained_portals_${mode}`, 'Portal Bot', true, 0, size - 1, center, center, 0);
+      const bot = new Player(`bot_chained_portals_${label}`, 'Portal Bot', true, 0, size - 1, center, center, 0);
       board.addPlayer(bot);
       board.boosts.push(
-        new Boost(`portal_first_in_${mode}`, 'portal', 0, size - 2, center, size - 2),
-        new Boost(`portal_first_out_${mode}`, 'portal', center, size - 2, 0, size - 2),
-        new Boost(`portal_second_in_${mode}`, 'portal', center, size - 3, center, center),
-        new Boost(`portal_second_out_${mode}`, 'portal', center, center, center, size - 3)
+        new Boost(`portal_first_in_${label}`, 'portal', 0, size - 2, center, size - 2),
+        new Boost(`portal_first_out_${label}`, 'portal', center, size - 2, 0, size - 2),
+        new Boost(`portal_second_in_${label}`, 'portal', center, size - 3, center, center),
+        new Boost(`portal_second_out_${label}`, 'portal', center, center, center, size - 3)
       );
 
       assert.equal(
         board.getBotStrategicDistance(bot.id, bot.x, bot.y),
         2,
-        `${mode}: enter the first portal, then the second portal to reach the goal`
+        `${label}: enter the first portal, then the second portal to reach the goal`
       );
       assert.deepEqual(
         board.getBotAction(bot.id),
         { type: 'move', x: 0, y: size - 2 },
-        `${mode}: begin the shortest chained-portal route`
+        `${label}: begin the shortest chained-portal route`
       );
     }
   });
 
-  it('4-FFA and 6-FFA exchange decisions account for portal shortcuts', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA exchange decisions account for portal shortcuts', () => {
+    for (const { label, size, center } of [
+      { label: '4-player', size: 11, center: 5 },
+      { label: '6-player', size: 11, center: 5 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_portal_exchange_${mode}`, 'Exchange Bot', true, 0, size - 1, center, center, 0);
+      const bot = new Player(`bot_portal_exchange_${label}`, 'Exchange Bot', true, 0, size - 1, center, center, 0);
       const portalAdvantagedRival = new Player(
-        `rival_portal_exchange_${mode}`,
+        `rival_portal_exchange_${label}`,
         'Portal Rival',
         false,
         center,
@@ -760,7 +827,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         0
       );
       const ordinaryRival = new Player(
-        `rival_ordinary_exchange_${mode}`,
+        `rival_ordinary_exchange_${label}`,
         'Ordinary Rival',
         false,
         center + 3,
@@ -773,27 +840,27 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       board.addPlayer(portalAdvantagedRival);
       board.addPlayer(ordinaryRival);
       board.boosts.push(
-        new Boost(`exchange_shortcut_in_${mode}`, 'portal', center, center + 2, center, center),
-        new Boost(`exchange_shortcut_out_${mode}`, 'portal', center, center, center, center + 2)
+        new Boost(`exchange_shortcut_in_${label}`, 'portal', center, center + 2, center, center),
+        new Boost(`exchange_shortcut_out_${label}`, 'portal', center, center, center, center + 2)
       );
 
       assert.equal(
         board.getBotStrategicDistance(portalAdvantagedRival.id, portalAdvantagedRival.x, portalAdvantagedRival.y),
         1,
-        `${mode}: include the rival's portal shortcut when evaluating an exchange`
+        `${label}: include the rival's portal shortcut when evaluating an exchange`
       );
       assert.equal(
         board.getBestBotExchangeTarget(bot.id)?.target.id,
         portalAdvantagedRival.id,
-        `${mode}: exchange with the rival whose portal advantage can be reversed`
+        `${label}: exchange with the rival whose portal advantage can be reversed`
       );
     }
   });
 
-  it('4-FFA and 6-FFA bots place walls that increase the leading enemy route', () => {
-    for (const { mode, size, center, positions } of [
+  it('FFA bots place walls that increase the leading enemy route', () => {
+    for (const { label, size, center, positions } of [
       {
-        mode: '4-FFA',
+        label: '4-player',
         size: 11,
         center: 5,
         positions: [
@@ -804,7 +871,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         ]
       },
       {
-        mode: '6-FFA',
+        label: '6-player',
         size: 11,
         center: 5,
         positions: [
@@ -820,7 +887,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       const board = new Board(size);
       const players = positions.map((position, index) => {
         const player = new Player(
-          index === 0 ? `bot_wall_${mode}` : `wall_rival_${mode}_${index}`,
+          index === 0 ? `bot_wall_${label}` : `wall_rival_${label}_${index}`,
           `Player ${index}`,
           index === 0,
           position.x,
@@ -837,52 +904,52 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
       const shortestPathBefore = board.getShortestPathLength(
         leadingEnemy.x, leadingEnemy.y, leadingEnemy.targetY, leadingEnemy.targetX
       );
-      assert.equal(shortestPathBefore, 1, `${mode}: the leading enemy starts one move from the goal`);
+      assert.equal(shortestPathBefore, 1, `${label}: the leading enemy starts one move from the goal`);
 
       const actions = Array.from({ length: 3 }, () => board.getBotAction(players[0].id));
       for (const action of actions) {
-        assert.equal(action?.type, 'wall', `${mode}: consistently respond to a leading enemy with a wall`);
+        assert.equal(action?.type, 'wall', `${label}: consistently respond to a leading enemy with a wall`);
       }
-      assert.deepEqual(actions[1], actions[0], `${mode}: wall priority must not depend on randomness`);
+      assert.deepEqual(actions[1], actions[0], `${label}: wall priority must not depend on randomness`);
       const action = actions[0];
       if (action?.type === 'wall') {
-        board.walls.push(new Wall(`leading_enemy_block_${mode}`, players[0].id, action.x, action.y, action.isHorizontal));
+        board.walls.push(new Wall(`leading_enemy_block_${label}`, players[0].id, action.x, action.y, action.isHorizontal));
         const shortestPathAfter = board.getShortestPathLength(
           leadingEnemy.x, leadingEnemy.y, leadingEnemy.targetY, leadingEnemy.targetX
         );
-        assert.ok(shortestPathAfter > shortestPathBefore, `${mode}: the selected wall must lengthen the leading enemy's route`);
+        assert.ok(shortestPathAfter > shortestPathBefore, `${label}: the selected wall must lengthen the leading enemy's route`);
       }
     }
   });
 
-  it('4-FFA and 6-FFA bots block a portal that gives an opponent a shorter route to the goal', () => {
-    for (const { mode, size, center } of [
-      { mode: '4-FFA', size: 11, center: 5 },
-      { mode: '6-FFA', size: 11, center: 5 }
+  it('FFA bots block a portal that gives an opponent a shorter route to the goal', () => {
+    for (const { label, size, center } of [
+      { label: '4-player', size: 11, center: 5 },
+      { label: '6-player', size: 11, center: 5 }
     ] as const) {
       const board = new Board(size);
-      const bot = new Player(`bot_defend_${mode}`, 'Defending Bot', true, center - 4, center + 3, center, center, 7);
-      const enemy = new Player(`enemy_portal_${mode}`, 'Leading Enemy', false, center, center + 3, center, center, 7);
+      const bot = new Player(`bot_defend_${label}`, 'Defending Bot', true, center - 4, center + 3, center, center, 7);
+      const enemy = new Player(`enemy_portal_${label}`, 'Leading Enemy', false, center, center + 3, center, center, 7);
       board.addPlayer(bot);
       board.addPlayer(enemy);
       board.boosts.push(
-        new Boost(`enemy_portal_entry_${mode}`, 'portal', center, center + 2, center, center - 1),
-        new Boost(`enemy_portal_exit_${mode}`, 'portal', center, center - 1, center, center + 2)
+        new Boost(`enemy_portal_entry_${label}`, 'portal', center, center + 2, center, center - 1),
+        new Boost(`enemy_portal_exit_${label}`, 'portal', center, center - 1, center, center + 2)
       );
 
       const normalDistance = board.getShortestPathLength(enemy.x, enemy.y, enemy.targetY, enemy.targetX);
       const portalDistance = board.getBotStrategicDistance(enemy.id, enemy.x, enemy.y);
-      assert.ok(portalDistance < normalDistance, `${mode}: portal must genuinely shorten the enemy's route`);
+      assert.ok(portalDistance < normalDistance, `${label}: portal must genuinely shorten the enemy's route`);
 
       const action = board.getBotAction(bot.id);
-      assert.equal(action?.type, 'wall', `${mode}: defend against an enemy who can immediately use the portal`);
+      assert.equal(action?.type, 'wall', `${label}: defend against an enemy who can immediately use the portal`);
       if (action?.type === 'wall') {
-        board.walls.push(new Wall(`defense_${mode}`, bot.id, action.x, action.y, action.isHorizontal));
+        board.walls.push(new Wall(`defense_${label}`, bot.id, action.x, action.y, action.isHorizontal));
         const pathToPortal = board.findShortestPathToGoal(enemy.x, enemy.y, center + 2, center);
-        assert.ok(pathToPortal.length - 1 > 1, `${mode}: the chosen wall should delay enemy access to the portal`);
+        assert.ok(pathToPortal.length - 1 > 1, `${label}: the chosen wall should delay enemy access to the portal`);
         assert.ok(
           board.getBotStrategicDistance(enemy.id, enemy.x, enemy.y) > portalDistance,
-          `${mode}: the chosen wall must increase the enemy's best route after accounting for portals`
+          `${label}: the chosen wall must increase the enemy's best route after accounting for portals`
         );
       }
     }
