@@ -48,11 +48,11 @@ export class VsAiRules extends Standard1v1Rules {
   public override mode: GameMode = 'vs_ai';
 }
 
-// 4-Player Free For All (11x11 grid, 7 walls, goal is center cell (5,5))
-export class FourPlayerFfaRules implements IGameModeRules {
-  public mode: GameMode = '4-FFA';
+// FFA (Free For All) Mode (11x11 grid, 7 walls, goal is center cell (5,5), supports 4 to 6 players)
+export class FfaRules implements IGameModeRules {
+  public mode: GameMode = 'FFA';
   public boardSize = 11;
-  public maxPlayers = 4;
+  public maxPlayers = 6;
   public wallsPerPlayer = 7;
   public isTeamMode = false;
 
@@ -61,17 +61,44 @@ export class FourPlayerFfaRules implements IGameModeRules {
     const targetX = mid;
     const targetY = mid;
 
-    switch (index) {
-      case 0:
-        return { startX: mid, startY: size - 1, targetY, targetX }; // Bottom
-      case 1:
-        return { startX: mid, startY: 0, targetY, targetX }; // Top
-      case 2:
-        return { startX: 0, startY: mid, targetY, targetX }; // Left
-      case 3:
-      default:
-        return { startX: size - 1, startY: mid, targetY, targetX }; // Right
+    // Standard 4 cardinal spawns if 4 or fewer players
+    if (totalPlayers <= 4) {
+      switch (index) {
+        case 0:
+          return { startX: mid, startY: size - 1, targetY, targetX }; // Bottom
+        case 1:
+          return { startX: mid, startY: 0, targetY, targetX }; // Top
+        case 2:
+          return { startX: 0, startY: mid, targetY, targetX }; // Left
+        case 3:
+        default:
+          return { startX: size - 1, startY: mid, targetY, targetX }; // Right
+      }
     }
+
+    // Dynamic distributed perimeter spawns for 5-6 players
+    const maxCoord = size - 1;
+    const borderCoords: { x: number; y: number }[] = [];
+    for (let x = 0; x < size; x++) {
+      borderCoords.push({ x, y: 0 });          // Top border
+      borderCoords.push({ x, y: maxCoord });   // Bottom border
+    }
+    for (let y = 1; y < maxCoord; y++) {
+      borderCoords.push({ x: 0, y });          // Left border
+      borderCoords.push({ x: maxCoord, y });   // Right border
+    }
+
+    const total = Math.max(totalPlayers, 6);
+    const step = Math.floor(borderCoords.length / total);
+    const chosenIndex = (index * step + (index % 2 === 0 ? 1 : 2)) % borderCoords.length;
+    const chosen = borderCoords[chosenIndex];
+
+    return {
+      startX: chosen.x,
+      startY: chosen.y,
+      targetX: mid,
+      targetY: mid
+    };
   }
 
   public checkWinCondition(player: Player, board: Board): boolean {
@@ -106,50 +133,6 @@ export class TwoVsTwoRules implements IGameModeRules {
   public checkWinCondition(player: Player, board: Board): boolean {
     if (player.targetY !== undefined && player.y === player.targetY) return true;
     if (player.targetX !== undefined && player.x === player.targetX) return true;
-    return false;
-  }
-}
-
-// 6-Player Free For All (11x11 grid, 7 walls, goal is center cell (5,5), random border spawn)
-export class SixPlayerFfaRules implements IGameModeRules {
-  public mode: GameMode = '6-FFA';
-  public boardSize = 11;
-  public maxPlayers = 6;
-  public wallsPerPlayer = 7;
-  public isTeamMode = false;
-
-  public getPlayerStartConfig(index: number, totalPlayers: number, size: number): IPlayerStartConfig {
-    const mid = Math.floor(size / 2);
-    const maxCoord = size - 1;
-
-    // Collect all outer edge / border coordinates
-    const borderCoords: { x: number; y: number }[] = [];
-    for (let x = 0; x < size; x++) {
-      borderCoords.push({ x, y: 0 });          // Top border
-      borderCoords.push({ x, y: maxCoord });   // Bottom border
-    }
-    for (let y = 1; y < maxCoord; y++) {
-      borderCoords.push({ x: 0, y });          // Left border
-      borderCoords.push({ x: maxCoord, y });   // Right border
-    }
-
-    const total = Math.max(totalPlayers, 6);
-    const step = Math.floor(borderCoords.length / total);
-    const chosenIndex = (index * step + (index % 2 === 0 ? 1 : 2)) % borderCoords.length;
-    const chosen = borderCoords[chosenIndex];
-
-    return {
-      startX: chosen.x,
-      startY: chosen.y,
-      targetX: mid,
-      targetY: mid
-    };
-  }
-
-  public checkWinCondition(player: Player, board: Board): boolean {
-    if (player.targetX !== undefined && player.targetY !== undefined) {
-      return player.x === player.targetX && player.y === player.targetY;
-    }
     return false;
   }
 }
@@ -203,9 +186,8 @@ export class GameModeRegistry {
   private static modes: Map<string, IGameModeRules> = new Map([
     ['1v1', new Standard1v1Rules()],
     ['vs_ai', new VsAiRules()],
-    ['4-FFA', new FourPlayerFfaRules()],
+    ['FFA', new FfaRules()],
     ['2v2', new TwoVsTwoRules()],
-    ['6-FFA', new SixPlayerFfaRules()],
     ['impostor', new ImpostorRules()],
     ['infection', new InfectionRules()]
   ]);

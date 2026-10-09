@@ -513,6 +513,18 @@ export class SocketManager {
         }
       });
 
+      socket.on('moveLobbyPawn', (data: { roomId: string; x: number; y: number }) => {
+        try {
+          if (!data?.roomId || !socket.rooms.has(data.roomId)) {
+            throw new Error('Join the room before moving your lobby pawn.');
+          }
+          const room = this.roomService.moveLobbyPawn(data.roomId, userId, data.x, data.y);
+          matchmakingNs.to(room.id).emit('roomUpdated', room);
+        } catch (err: any) {
+          socket.emit('error', err.message);
+        }
+      });
+
       socket.on('toggleRoomPrivacy', (data: { roomId: string; isPrivate: boolean }) => {
         try {
           const room = this.roomService.toggleRoomPrivacy(data.roomId, userId, data.isPrivate);
@@ -562,7 +574,9 @@ export class SocketManager {
 
       socket.on('selectRoomCosmetic', async (data: { roomId: string; category: string; itemId: string | null }) => {
         try {
-          if (data.category !== StoreItemCategory.PAWN_COLOR && data.category !== StoreItemCategory.PAWN_SKIN) {
+          if (data.category !== StoreItemCategory.PAWN_COLOR &&
+              data.category !== StoreItemCategory.PAWN_SKIN &&
+              data.category !== StoreItemCategory.MOVEMENT_TRAIL) {
             throw new Error('Unsupported lobby cosmetic category');
           }
           let cosmeticValue: string | undefined;
@@ -587,13 +601,15 @@ export class SocketManager {
                 }
               }
               if (!cosmeticValue) throw new Error('Invalid pawn color item');
-            } else {
+            } else if (data.category === StoreItemCategory.PAWN_SKIN) {
               cosmeticValue = item.icon;
               cosmeticName = {
                 en: item.configuration.en.name,
                 es: item.configuration.es.name
               };
               allowColor = item.allowColor;
+            } else {
+              cosmeticValue = item.icon;
             }
           }
           const room = this.roomService.setPlayerCosmetic(data.roomId, userId, data.category, data.itemId || null, cosmeticValue, allowColor, cosmeticName);
@@ -624,7 +640,11 @@ export class SocketManager {
           if (room.mode === 'infection' && room.players.length < 3) {
             throw new Error('El modo Infección requiere al menos 3 participantes.');
           }
-          if (room.mode !== 'impostor' && room.mode !== 'infection' &&
+          if (room.mode === 'FFA') {
+            if (room.players.length < 4) {
+              throw new Error('El modo FFA requiere al menos 4 participantes para iniciar.');
+            }
+          } else if (room.mode !== 'impostor' && room.mode !== 'infection' &&
               room.players.length < room.maxPlayers) {
             throw new Error('Todos los cupos de la sala deben estar llenos para iniciar la partida.');
           }
@@ -683,8 +703,20 @@ export class SocketManager {
 
       const handleAddBot = (data: { roomId: string }) => {
         try {
+          const previousBotIds = new Set(
+            this.roomService.getRoom(data.roomId)?.players
+              .filter(player => player.id.startsWith('bot_'))
+              .map(player => player.id) ?? []
+          );
           const room = this.roomService.addBotToCustomRoom(data.roomId, userId);
           matchmakingNs.to(room.id).emit('roomUpdated', room);
+          const bot = room.players.find(player =>
+            player.id.startsWith('bot_') && !previousBotIds.has(player.id)
+          );
+          if (bot) matchmakingNs.to(room.id).emit('playerJoinedRoom', {
+            userId: bot.id,
+            username: bot.username
+          });
           void this.broadcastPublicRooms();
         } catch (err: any) {
           socket.emit('error', err.message);

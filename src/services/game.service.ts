@@ -206,7 +206,7 @@ export class GameService {
 
       const roomIsPrivate = isPrivate || game.isPrivate || oldRoom?.isPrivate || false;
       const humanPlayers = roomPlayers.filter(player => player?.id && !player.id.startsWith('bot_'));
-      const isGroupMode = mode === '2v2' || mode === '4-FFA' || mode === '6-FFA' ||
+      const isGroupMode = mode === '2v2' || mode === 'FFA' ||
         mode === 'impostor' || mode === 'infection';
       const matchmakingNamespace = this.io.of('/matchmaking');
 
@@ -220,7 +220,7 @@ export class GameService {
           isPrivate: roomIsPrivate,
           hostId: playerIds[0],
           players: roomPlayers,
-          maxPlayers: mode === '6-FFA' || mode === 'impostor' || mode === 'infection' ? 6 : 4,
+          maxPlayers: mode === 'FFA' || mode === 'impostor' || mode === 'infection' ? 6 : 4,
           status: 'WAITING',
           createdAt: new Date()
         };

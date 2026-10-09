@@ -48,11 +48,26 @@ export interface IRoom {
   maxPlayers: number;
   status: RoomStatus;
   createdAt: Date;
+  lobbyPawns: Record<string, { x: number; y: number }>;
 }
 
 @singleton()
 export class RoomService {
+  public static readonly LOBBY_BOARD_SIZE = 8;
   private rooms: Map<string, IRoom> = new Map();
+
+  private addLobbyPawn(room: IRoom, playerId: string): void {
+    if (room.lobbyPawns[playerId]) return;
+    const occupied = new Set(Object.values(room.lobbyPawns).map(({ x, y }) => `${x},${y}`));
+    const available: { x: number; y: number }[] = [];
+    for (let y = 0; y < RoomService.LOBBY_BOARD_SIZE; y++) {
+      for (let x = 0; x < RoomService.LOBBY_BOARD_SIZE; x++) {
+        if (!occupied.has(`${x},${y}`)) available.push({ x, y });
+      }
+    }
+    if (available.length === 0) throw new Error('No lobby board cells are available.');
+    room.lobbyPawns[playerId] = available[Math.floor(Math.random() * available.length)];
+  }
 
   public generateRoomCode(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -67,8 +82,7 @@ export class RoomService {
     switch (mode) {
       case '1v1': return 2;
       case '2v2': return 4;
-      case '4-FFA': return 4;
-      case '6-FFA': return 6;
+      case 'FFA': return 6;
       case 'impostor': return 6;
       case 'infection': return 6;
       default: return 2;
@@ -118,10 +132,12 @@ export class RoomService {
       players: [hostPlayer],
       maxPlayers,
       status: RoomStatus.WAITING,
-      createdAt: new Date()
+      createdAt: new Date(),
+      lobbyPawns: {}
     };
 
     this.rooms.set(roomId, room);
+    this.addLobbyPawn(room, hostId);
     return room;
   }
 
@@ -137,7 +153,7 @@ export class RoomService {
       return null;
     }
 
-    if (oldRoom.mode !== '2v2' && oldRoom.mode !== '4-FFA' && oldRoom.mode !== '6-FFA' &&
+    if (oldRoom.mode !== '2v2' && oldRoom.mode !== 'FFA' &&
         oldRoom.mode !== 'impostor' && oldRoom.mode !== 'infection') {
       return null;
     }
@@ -168,7 +184,7 @@ export class RoomService {
     }
 
     // Re-add bots if any were present in the previous match and mode supports bots
-    if (newRoom.mode === '4-FFA' || newRoom.mode === '6-FFA' || newRoom.mode === '2v2' ||
+    if (newRoom.mode === 'FFA' || newRoom.mode === '2v2' ||
         newRoom.mode === 'impostor' || newRoom.mode === 'infection') {
       for (const _ of botPlayers) {
         if (newRoom.players.length < newRoom.maxPlayers) {
@@ -226,6 +242,7 @@ export class RoomService {
       isGuest: true,
       color: availableColor
     });
+    this.addLobbyPawn(room, botId);
 
     return room;
   }
@@ -234,9 +251,9 @@ export class RoomService {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found');
     if (room.hostId !== hostId) throw new Error('Only the room host can add bots.');
-    if (room.mode !== '4-FFA' && room.mode !== '6-FFA' && room.mode !== '2v2' &&
+    if (room.mode !== 'FFA' && room.mode !== '2v2' &&
         room.mode !== 'impostor' && room.mode !== 'infection') {
-      throw new Error('Bots are allowed in 2v2, 4-FFA, 6-FFA, Impostor or Infection modes.');
+      throw new Error('Bots are allowed in 2v2, FFA, Impostor or Infection modes.');
     }
     if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
 
@@ -273,6 +290,7 @@ export class RoomService {
       color: assignedColor,
       team
     });
+    this.addLobbyPawn(room, botId);
 
     return room;
   }
@@ -283,6 +301,7 @@ export class RoomService {
     if (room.hostId !== hostId) throw new Error('Only the room host can remove bots.');
 
     room.players = room.players.filter(p => p.id !== botId);
+    delete room.lobbyPawns[botId];
     return room;
   }
 
@@ -296,6 +315,7 @@ export class RoomService {
     if (!playerToKick) throw new Error('Player not found in room.');
 
     room.players = room.players.filter(p => p.id !== targetPlayerId);
+    delete room.lobbyPawns[targetPlayerId];
     return room;
   }
 
@@ -411,8 +431,30 @@ export class RoomService {
         provider,
         wins
       });
+      this.addLobbyPawn(room, userId);
     }
 
+    return room;
+  }
+
+  public moveLobbyPawn(roomId: string, playerId: string, x: number, y: number): IRoom {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    if (room.status !== RoomStatus.WAITING) throw new Error('Lobby pawns can only move while waiting.');
+    if (!room.players.some(player => player.id === playerId)) throw new Error('Player not in room.');
+    if (!Number.isInteger(x) || !Number.isInteger(y) ||
+        x < 0 || y < 0 || x >= RoomService.LOBBY_BOARD_SIZE || y >= RoomService.LOBBY_BOARD_SIZE) {
+      throw new Error('Invalid lobby pawn destination.');
+    }
+
+    this.addLobbyPawn(room, playerId);
+    if (Object.entries(room.lobbyPawns).some(([otherId, position]) =>
+      otherId !== playerId && position.x === x && position.y === y
+    )) {
+      throw new Error('Lobby pawn destination is occupied.');
+    }
+
+    room.lobbyPawns[playerId] = { x, y };
     return room;
   }
 
@@ -487,6 +529,10 @@ export class RoomService {
         player.skinName = itemId ? name : undefined;
         player.skinAllowsColor = itemId ? allowColor : undefined;
         break;
+      case 'MOVEMENT_TRAIL':
+        player.movementTrailId = itemId || undefined;
+        player.movementTrailIcon = itemId ? value : undefined;
+        break;
       default:
         throw new Error('Unsupported lobby cosmetic category');
     }
@@ -551,6 +597,7 @@ export class RoomService {
     if (!room) return null;
 
     room.players = room.players.filter(p => p.id !== userId);
+    delete room.lobbyPawns[userId];
     const realHumans = room.players.filter(p => !p.id.startsWith('bot_'));
 
     if (room.players.length === 0 || realHumans.length === 0) {

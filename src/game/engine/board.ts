@@ -1095,6 +1095,49 @@ export class Board {
     return true;
   }
 
+  public rotatePortals(
+    excludedPortalCells: Coordinate[] = [],
+    random: () => number = Math.random
+  ): boolean {
+    const portals = this.boosts.filter(boost => boost.type === 'portal');
+    if (portals.length !== 2) return false;
+
+    const excludedCells = [
+      ...excludedPortalCells,
+      ...portals.map(({ x, y }) => ({ x, y }))
+    ];
+    const availableCells = this.getAccessibleEmptyCells().filter(position =>
+      !excludedCells.some(excluded => excluded.x === position.x && excluded.y === position.y)
+    );
+    if (availableCells.length < 2) return false;
+
+    const firstPosition = availableCells.splice(Math.floor(random() * availableCells.length), 1)[0];
+    const secondPosition = availableCells[Math.floor(random() * availableCells.length)];
+    this.removeBoostsOfType('portal');
+
+    const idSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const firstPortal = new Boost(
+      `ffa_portal_a_${idSuffix}`,
+      'portal',
+      firstPosition.x,
+      firstPosition.y,
+      secondPosition.x,
+      secondPosition.y
+    );
+    const secondPortal = new Boost(
+      `ffa_portal_b_${idSuffix}`,
+      'portal',
+      secondPosition.x,
+      secondPosition.y,
+      firstPosition.x,
+      firstPosition.y
+    );
+    this.boosts.push(firstPortal, secondPortal);
+    this.grid[firstPosition.y][firstPosition.x].hasBoost = firstPortal.id;
+    this.grid[secondPosition.y][secondPosition.x].hasBoost = secondPortal.id;
+    return true;
+  }
+
   public spawnPortals() {
     this.spawnSingleRandomBoost();
   }

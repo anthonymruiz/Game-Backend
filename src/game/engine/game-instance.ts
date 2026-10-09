@@ -158,6 +158,7 @@ export class GameInstance {
   private readonly impostorToolRequests = new Map<string, IPendingImpostorToolRequest>();
   private impostorToolRequestSequence = 0;
   private impostorEndReason: ImpostorEndReason | null = null;
+  private impostorSurrenderedPlayerId: string | null = null;
   private lastImpostorGhostId: string | null = null;
   private impostorGhostPickupCount = 0;
   private impostorTrapCooldownUntil: Record<ImpostorTrapType, number> = { ice: 0, teleport: 0 };
@@ -369,7 +370,7 @@ export class GameInstance {
   }
 
   private isFfaMode(): boolean {
-    return this.mode === '4-FFA' || this.mode === '6-FFA';
+    return this.mode === 'FFA';
   }
 
   private isImpostorBoardMode(): boolean {
@@ -1901,6 +1902,10 @@ export class GameInstance {
         teleported: landedBoost?.type === 'portal'
       });
       this.botReactionManager.onPlayerMoved(playerId, newX, newY);
+      if (landedBoost?.type === 'portal' &&
+          this.board.rotatePortals(this.getPortalSpawnExclusions())) {
+        this.broadcastBoostBoard();
+      }
       this.checkWinCondition(playerId);
       if (this.state === 'playing') {
         if (!hadKillerItem && p.hasKillerItem) {
@@ -2541,8 +2546,8 @@ export class GameInstance {
     if (!player || player.isDead) return false;
 
     if (this.rules.checkWinCondition(player, this.board)) {
+      player.hasReachedGoal = true;
       if (this.mode === '2v2') {
-        player.hasReachedGoal = true;
         const teammates = Array.from(this.board.players.values())
           .filter(candidate => candidate.team === player.team);
         if (teammates.length !== 2 ||
@@ -2835,6 +2840,7 @@ export class GameInstance {
         }
         return true;
       }
+      this.impostorSurrenderedPlayerId = surrenderingUserId;
       this.finishImpostorGame(
         surrenderingUserId === this.impostorId ? 'good' : this.impostorId,
         'surrender'
@@ -2842,7 +2848,7 @@ export class GameInstance {
       return true;
     }
 
-    if ((this.mode === '4-FFA' || this.mode === '6-FFA') &&
+    if (this.mode === 'FFA' &&
         !alive.some(player => !player.id.startsWith('bot_'))) {
       this.endGame(true);
       return true;
@@ -2886,7 +2892,8 @@ export class GameInstance {
       ...(this.mode === 'impostor'
         ? {
             impostorRevealedImpostorId: this.impostorId,
-            impostorEndReason: this.impostorEndReason
+            impostorEndReason: this.impostorEndReason,
+            impostorSurrenderedPlayerId: this.impostorSurrenderedPlayerId
           }
         : this.mode === 'infection'
           ? {
