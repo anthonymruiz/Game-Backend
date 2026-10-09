@@ -686,6 +686,34 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
+  it('does not let a bot enter a portal when its exit and every landing cell are occupied', () => {
+    const board = new Board(7);
+    const bot = new Player('bot_blocked_portal', 'Portal Bot', true, 3, 5, 0, 3, 0);
+    board.addPlayer(bot);
+
+    for (const [index, position] of [
+      { x: 3, y: 1 },
+      { x: 3, y: 0 },
+      { x: 3, y: 2 },
+      { x: 2, y: 1 },
+      { x: 4, y: 1 }
+    ].entries()) {
+      board.addPlayer(new Player(`occupant_${index}`, `Occupant ${index}`, false,
+        position.x, position.y, 0, 6, 0));
+    }
+    board.boosts.push(
+      new Boost('blocked_portal_entry', 'portal', 3, 4, 3, 1),
+      new Boost('blocked_portal_exit', 'portal', 3, 1, 3, 4)
+    );
+
+    assert.ok(board.getValidMoves(bot.id).some(move => move.x === 3 && move.y === 4));
+    assert.equal(board.movePlayer(bot.id, 3, 4), false);
+    assert.deepEqual({ x: bot.x, y: bot.y }, { x: 3, y: 5 });
+    assert.equal(board.grid[5][3].hasPlayer, bot.id);
+    assert.equal(board.grid[4][3].hasPlayer, null);
+    assert.notDeepEqual(board.getBotAction(bot.id), { type: 'move', x: 3, y: 4 });
+  });
+
   it('4-FFA and 6-FFA bots find routes that use more than one portal', () => {
     for (const { mode, size, center } of [
       { mode: '4-FFA', size: 11, center: 5 },

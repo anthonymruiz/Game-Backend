@@ -105,15 +105,17 @@ export class Board {
     const isValid = validMoves.some(m => m.x === newX && m.y === newY);
     if (!isValid) return false;
 
-    // Move player
-    this.grid[player.y][player.x].hasPlayer = null;
+    const boost = this.boosts.find(b => b.x === newX && b.y === newY);
+    const portalDestination = boost?.type === 'portal'
+      ? this.getPortalLandingPosition(boost, playerId)
+      : null;
+    if (boost?.type === 'portal' && !portalDestination) return false;
 
+    this.grid[player.y][player.x].hasPlayer = null;
     let finalX = newX;
     let finalY = newY;
     let pickedUpGhost = false;
 
-    // Check if stepped on a boost / special tile
-    const boost = this.boosts.find(b => b.x === newX && b.y === newY);
     if (boost) {
       if (boost.type === 'wall_pickup' || boost.type === 'extra_wall') {
         player.wallsLeft++;
@@ -133,30 +135,8 @@ export class Board {
         this.grid[newY][newX].hasBoost = null;
         this.boosts = this.boosts.filter(b => b.id !== boost.id);
       } else if (boost.type === 'portal') {
-        if (boost.targetX !== undefined && boost.targetY !== undefined) {
-          const destOccupant = this.grid[boost.targetY][boost.targetX].hasPlayer;
-          if (!destOccupant) {
-            finalX = boost.targetX;
-            finalY = boost.targetY;
-          } else {
-            const adjDirs = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
-            let foundFree = false;
-            for (const d of adjDirs) {
-              const ax = boost.targetX + d.dx;
-              const ay = boost.targetY + d.dy;
-              if (ax >= 0 && ax < this.size && ay >= 0 && ay < this.size && !this.grid[ay][ax].hasPlayer) {
-                finalX = ax;
-                finalY = ay;
-                foundFree = true;
-                break;
-              }
-            }
-            if (!foundFree) {
-              finalX = boost.targetX;
-              finalY = boost.targetY;
-            }
-          }
-        }
+        finalX = portalDestination!.x;
+        finalY = portalDestination!.y;
       }
     }
 
@@ -432,6 +412,7 @@ export class Board {
         const destination = portal
           ? this.getPortalLandingPosition(portal, playerId)
           : move;
+        if (!destination) continue;
         const remainingGhostTurns = Math.max(0, current.ghostTurnsRemaining - 1);
         const key = `${destination.x},${destination.y},${remainingGhostTurns}`;
         if (visited.has(key)) continue;
@@ -456,9 +437,11 @@ export class Board {
     return true;
   }
 
-  private getPortalLandingPosition(portal: Boost, movingPlayerId: string): Coordinate {
-    const targetX = portal.targetX!;
-    const targetY = portal.targetY!;
+  private getPortalLandingPosition(portal: Boost, movingPlayerId: string): Coordinate | null {
+    const targetX = portal.targetX;
+    const targetY = portal.targetY;
+    if (targetX === undefined || targetY === undefined ||
+        targetX < 0 || targetX >= this.size || targetY < 0 || targetY >= this.size) return null;
     const occupant = this.grid[targetY]?.[targetX]?.hasPlayer;
     if (!occupant || occupant === movingPlayerId) return { x: targetX, y: targetY };
 
@@ -469,12 +452,12 @@ export class Board {
       const adjacentOccupant = this.grid[y][x].hasPlayer;
       if (!adjacentOccupant || adjacentOccupant === movingPlayerId) return { x, y };
     }
-    return { x: targetX, y: targetY };
+    return null;
   }
 
-  private getMoveDestination(player: Player, move: Coordinate): Coordinate {
+  private getMoveDestination(player: Player, move: Coordinate): Coordinate | null {
     const portal = this.boosts.find(boost => boost.type === 'portal' && boost.x === move.x && boost.y === move.y);
-    if (!portal || portal.targetX === undefined || portal.targetY === undefined) return move;
+    if (!portal) return move;
     return this.getPortalLandingPosition(portal, player.id);
   }
 
@@ -682,6 +665,7 @@ export class Board {
     for (const move of validMoves) {
       const boost = this.boosts.find(candidate => candidate.x === move.x && candidate.y === move.y);
       const destination = this.getMoveDestination(bot, move);
+      if (!destination) continue;
       const excludedPortalId = boost?.type === 'portal' ? boost.id : undefined;
       const ownDistance = this.getBotStrategicDistance(
         botId,
@@ -932,6 +916,7 @@ export class Board {
               this.isWallBlocking(current.x, current.y, move.x, move.y))) continue;
 
         const destination = this.getMoveDestination(player, move);
+        if (!destination) continue;
         const remainingGhostTurns = Math.max(0, current.ghostTurnsRemaining - 1);
         const key = `${destination.x},${destination.y},${remainingGhostTurns}`;
         if (visited.has(key)) continue;
