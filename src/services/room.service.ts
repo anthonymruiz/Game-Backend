@@ -9,7 +9,8 @@ export const AVAILABLE_COLORS: string[] = [
   '#FFCC00', // Yellow
   '#34C759', // Green
   '#AF52DE', // Purple
-  '#FF9500'  // Orange
+  '#FF9500', // Orange
+  '#B0B0B0'  // Gray
 ];
 
 export interface IRoomPlayer {
@@ -83,7 +84,7 @@ export class RoomService {
       case '1v1': return 2;
       case '2v2': return 4;
       case 'FFA': return 6;
-      case 'impostor': return 6;
+      case 'impostor': return 7;
       case 'infection': return 6;
       default: return 2;
     }
@@ -210,6 +211,7 @@ export class RoomService {
     else if (c === '#AF52DE' || c === '#8B5CF6') colorName = 'PURPLE';
     else if (c === '#FF9500' || c === '#F97316') colorName = 'ORANGE';
     else if (c === '#5AC8FA' || c === '#06B6D4') colorName = 'CYAN';
+    else if (c === '#B0B0B0' || c === '#808080') colorName = 'GRAY';
     else if (c === '#FF2D55' || c === '#EC4899') colorName = 'PINK';
     else if (c === '#E5E5EA' || c === '#94A3B8') colorName = 'SILVER';
     else if (c === '#1C1C1E' || c === '#1E293B') colorName = 'BLACK';

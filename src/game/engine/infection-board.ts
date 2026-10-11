@@ -10,13 +10,27 @@ export class InfectionBoard extends ImpostorBoardBase {
   private ghostPickupSequence = 0;
   private infectionPickupSequence = 0;
 
+  public override generateRandomImpostorWalls(
+    targetWallCount: number = Math.floor(this.size * this.size * 0.28),
+    random: () => number = Math.random,
+    exitCount: number = this.players.size,
+    prioritizeGateApproaches = false
+  ): void {
+    super.generateRandomImpostorWalls(targetWallCount, random, exitCount, prioritizeGateApproaches);
+  }
+
   public override reshuffleImpostor(
     random: () => number = Math.random,
     prioritizeGateApproaches = false
   ): void {
     this.walls = this.walls.filter(wall => wall.ownerId === 'board');
     for (const player of this.players.values()) player.isInPrison = false;
-    super.reshuffleImpostor(random, prioritizeGateApproaches);
+    this.generateRandomImpostorWalls(
+      Math.floor(this.size * this.size * 0.28),
+      random,
+      this.players.size,
+      prioritizeGateApproaches
+    );
   }
 
   protected override getProtectedCentralZoneBounds(): {
@@ -38,6 +52,40 @@ export class InfectionBoard extends ImpostorBoardBase {
       !this.ghostPickups.some(pickup => pickup.x === x && pickup.y === y) &&
       !this.invisiblePickups.some(pickup => pickup.x === x && pickup.y === y) &&
       this.getAvailablePowerupCells().length > 9;
+  }
+
+  public scatterAllPlayersRandomly(random: () => number = Math.random): void {
+    const activePlayers = Array.from(this.players.values()).filter(p => !p.isDead && !p.hasImpostorEscaped);
+    if (!activePlayers.length) return;
+
+    const candidates: Coordinate[] = [];
+    for (let y = 0; y < this.size; y++) {
+      for (let x = 0; x < this.size; x++) {
+        if (
+          !this.isSafeZoneCell(x, y) &&
+          !this.traps.some(trap => trap.x === x && trap.y === y) &&
+          !this.teleports.some(teleport => teleport.x === x && teleport.y === y)
+        ) {
+          candidates.push({ x, y });
+        }
+      }
+    }
+
+    const shuffled = this.shuffleCandidates(candidates, random);
+    let index = 0;
+
+    for (const player of activePlayers) {
+      if (this.grid[player.y]?.[player.x]?.hasPlayer === player.id) {
+        this.grid[player.y][player.x].hasPlayer = null;
+      }
+    }
+
+    for (const player of activePlayers) {
+      const destination = shuffled[index++] || { x: 0, y: 0 };
+      player.x = destination.x;
+      player.y = destination.y;
+      this.grid[player.y][player.x].hasPlayer = player.id;
+    }
   }
 
   public placePlayerAtSouthEdge(playerId: string): Coordinate {

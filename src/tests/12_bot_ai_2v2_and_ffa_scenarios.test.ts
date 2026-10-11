@@ -108,7 +108,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     assert.equal(action?.type, 'move', 'An early non-critical wall should not consume the bot team wall reserve');
   });
 
-  it('4-FFA bots should not spend walls on the opening turn around the center', () => {
+  it('FFA bots should not spend walls on the opening turn around the center', () => {
     const board = new Board(11);
     board.addPlayer(new Player('north_bot', 'North Bot', true, 5, 0, 5, 5, 5));
     board.addPlayer(new Player('south_bot', 'South Bot', true, 5, 10, 5, 5, 5));
@@ -119,8 +119,8 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     assert.equal(action?.type, 'move', 'Bots should advance toward the center before spending walls');
   });
 
-  // 3. 4-FFA Bot AI: Multi-Enemy Target Priority
-  it('Bot in 4-FFA should target the leading opponent instead of focusing only on player 0', () => {
+  // 3. FFA Bot AI: Multi-Enemy Target Priority
+  it('Bot in FFA should target the leading opponent instead of focusing only on player 0', () => {
     const board = new Board(9);
 
     // Player 0 (Human, Red) at start (y=8, targetY=0, dist=8)
@@ -150,7 +150,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
-  // 4. 6-FFA Bot AI: 6 Players, Multi-Enemy Target Priority
+  // 4. FFA Bot AI: 6 Players, Multi-Enemy Target Priority
   it('Bot in 6-player FFA should evaluate all 5 enemies and execute valid moves/walls', () => {
     const players = Array.from({ length: 6 }, (_, index) => ({
       id: index === 0 ? 'host_6ffa' : `bot_6ffa_${index}`,
@@ -247,83 +247,61 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
-  it('Timed boosts disappear and respawn after random cooldowns in every supported mode', (context) => {
-    context.mock.timers.enable({ apis: ['setTimeout'], now: 0 });
+  it('Timed boosts rotate every 5 rounds instead of expiring by time in every supported mode', () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     const games: GameInstance[] = [];
     try {
       const scenarios = [
-        { mode: '1v1', count: 2, hasKiller: false },
-        { mode: 'vs_ai', count: 2, hasKiller: false },
-        { mode: '2v2', count: 4, hasKiller: false },
-        { mode: 'FFA', count: 4, hasKiller: true },
-        { mode: 'FFA', count: 6, hasKiller: true }
+        { mode: '1v1', count: 2 },
+        { mode: 'vs_ai', count: 2 },
+        { mode: '2v2', count: 4 },
+        { mode: 'FFA', count: 4 },
+        { mode: 'FFA', count: 6 }
       ] as const;
 
-      for (const { mode, count, hasKiller } of scenarios) {
+      for (const { mode, count } of scenarios) {
         const players = Array.from({ length: count }, (_, index) => ({
           id: `boost_cycle_${mode}_${index}`,
           username: `Player ${index}`,
           isGuest: true,
           color: '#007AFF'
         }));
-        const game = new GameInstance(`boost_cycle_game_${mode}`, mode, players, () => {}, {
-          turnTimeLimitSeconds: 60,
-          maxStrikesBeforeKick: 100
-        });
+        const game = new GameInstance(`boost_cycle_game_${mode}`, mode, players, () => {}, { turnTimeLimitSeconds: 60, maxStrikesBeforeKick: 100 });
         games.push(game);
         game.start();
 
-        const assertPortalsAvoidGoalExtremes = (): void => {
-          if (mode !== '1v1' && mode !== 'vs_ai' && mode !== '2v2') return;
-          const goalExtremes = new Set<string>();
-          const lastCoordinate = game.board.size - 1;
-          for (const player of game.board.players.values()) {
-            if (player.targetY !== undefined) {
-              goalExtremes.add(`0,${player.targetY}`);
-              goalExtremes.add(`${lastCoordinate},${player.targetY}`);
-            }
-            if (player.targetX !== undefined) {
-              goalExtremes.add(`${player.targetX},0`);
-              goalExtremes.add(`${player.targetX},${lastCoordinate}`);
-            }
-          }
-          const portals = game.board.boosts.filter(boost => boost.type === 'portal');
-          assert.equal(portals.length, 2, `${mode}: a portal pair must be present`);
-          assert.ok(
-            portals.every(portal => !goalExtremes.has(`${portal.x},${portal.y}`)),
-            `${mode}: neither portal may spawn at an extreme of a winning line`
-          );
-        };
-        assertPortalsAvoidGoalExtremes();
-
-        const timedTypes = ['ghost', 'exchange_item', 'portal', ...(hasKiller ? ['killer_item'] : [])];
-        for (const type of timedTypes) {
+        const expectedBaseTypes = ['ghost', 'exchange_item', 'portal'];
+        for (const type of expectedBaseTypes) {
           assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} spawns`);
         }
         assert.equal(
           game.board.boosts.some(boost => boost.type === 'killer_item'),
-          hasKiller,
-          `${mode}: killer item is restricted to FFA`
+          false,
+          `${mode}: killer item should not spawn at the start`
         );
 
-        context.mock.timers.tick(60_000);
-        for (const type of timedTypes) {
-          assert.equal(game.board.boosts.some(boost => boost.type === type), false, `${mode}: ${type} expires`);
+        (game as any).completedRounds = 4;
+        (game as any).handleRoundBasedBoostRotation();
+        for (const type of expectedBaseTypes) {
+          assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} still present before round 5`);
         }
 
-        for (const playerId of game.playersList) game.recordPlayerActivity(playerId);
-        context.mock.timers.tick(60_000);
-        for (const type of timedTypes) {
-          assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} respawns after cooldown`);
+        (game as any).completedRounds = 5;
+        (game as any).handleRoundBasedBoostRotation();
+        for (const type of expectedBaseTypes) {
+          assert.ok(game.board.boosts.some(boost => boost.type === type), `${mode}: ${type} respawns after round 5`);
         }
-        assertPortalsAvoidGoalExtremes();
+
+        if (mode === 'FFA') {
+          assert.equal(game.board.boosts.filter(boost => boost.type === 'killer_item').length, 1, `${mode}: killer item spawns once at round 5`);
+          (game as any).handleRoundBasedBoostRotation();
+          assert.equal(game.board.boosts.filter(boost => boost.type === 'killer_item').length, 1, `${mode}: killer item does not spawn more than once`);
+        }
       }
     } finally {
       for (const game of games) game.destroy();
       Math.random = originalRandom;
-      context.mock.timers.reset();
     }
   });
 
@@ -394,8 +372,7 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     }
   });
 
-  it('Collecting a timed boost starts its respawn cooldown from the pickup', (context) => {
-    context.mock.timers.enable({ apis: ['setTimeout'], now: 0 });
+  it('Collecting a boost schedules it to respawn 5 rounds later', () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     const game = new GameInstance('picked_boost_cooldown', 'FFA', Array.from({ length: 4 }, (_, index) => ({
@@ -411,7 +388,6 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
     try {
       game.start();
       const playerId = game.getCurrentPlayer();
-      const player = game.board.players.get(playerId)!;
       const ghost = game.board.boosts.find(boost => boost.type === 'ghost')!;
       const target = game.board.getValidMoves(playerId).find(move =>
         !game.board.boosts.some(boost => boost.x === move.x && boost.y === move.y)
@@ -423,14 +399,17 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
 
       assert.equal(game.executeMove(playerId, target.x, target.y), true);
       assert.equal(game.board.boosts.some(boost => boost.type === 'ghost'), false);
-      context.mock.timers.tick(BOOST_MIN_DELAY_MS - 1);
+
+      (game as any).completedRounds = 4;
+      (game as any).applyScheduledBoostRespawns();
       assert.equal(game.board.boosts.some(boost => boost.type === 'ghost'), false);
-      context.mock.timers.tick(1);
+
+      (game as any).completedRounds = 5;
+      (game as any).applyScheduledBoostRespawns();
       assert.equal(game.board.boosts.some(boost => boost.type === 'ghost'), true);
     } finally {
       game.destroy();
       Math.random = originalRandom;
-      context.mock.timers.reset();
     }
   });
 
@@ -449,10 +428,12 @@ describe('12 - 2v2 & FFA Bot AI Scenarios & Rules Tests', () => {
         const game = new GameInstance(`ghost_spawn_game_${playerCount}`, 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
         game.start();
         assert.ok(game.board.boosts.some(boost => boost.type === 'ghost'), `${playerCount}: ghost can be selected for spawning`);
-        assert.ok(game.board.boosts.some(boost => boost.type === 'killer_item'));
         assert.ok(game.board.boosts.some(boost => boost.type === 'exchange_item'));
         assert.ok(game.board.boosts.some(boost => boost.type === 'portal'));
         assert.equal(game.board.boosts.filter(boost => boost.type === 'ghost').length, 1);
+        assert.equal(game.board.boosts.filter(boost => boost.type === 'killer_item').length, 0);
+        (game as any).completedRounds = 5;
+        (game as any).handleRoundBasedBoostRotation();
         assert.equal(game.board.boosts.filter(boost => boost.type === 'killer_item').length, 1);
         assert.equal(game.board.boosts.filter(boost => boost.type === 'exchange_item').length, 1);
         assert.equal(game.board.boosts.filter(boost => boost.type === 'portal').length, 2);

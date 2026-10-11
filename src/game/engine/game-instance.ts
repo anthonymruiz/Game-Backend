@@ -21,7 +21,7 @@ export type InfectionLastSurvivorPower = 'ghost' | 'shield' | 'invisible' | 'tel
 export const BOOST_MIN_DELAY_MS = 60_000;
 export const BOOST_MAX_DELAY_MS = 120_000;
 export const PLAYER_INACTIVITY_LIMIT_MS = 120_000;
-export const IMPOSTOR_GAME_DURATION_MS = 8 * 60_000;
+export const IMPOSTOR_GAME_DURATION_MS = 10 * 60_000;
 export const IMPOSTOR_IDLE_LIMIT_MS = 60_000;
 export const IMPOSTOR_RESHUFFLE_INTERVAL_MS = 60_000;
 export const IMPOSTOR_MIN_HUMAN_PLAYERS = 1;
@@ -38,6 +38,8 @@ export const IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS = 7_000;
 export const IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE = 5;
 export const IMPOSTOR_ICE_TRAP_DURATION_MS = 30_000;
 export const IMPOSTOR_TELEPORT_ANIMATION_MS = 1_400;
+export const IMPOSTOR_RADAR_GRACE_PERIOD_MS = 30_000;
+export const IMPOSTOR_RADAR_REQUEST_TIMEOUT_MS = 5_000;
 export const INFECTION_HUNT_DELAY_MS = 10_000;
 export const INFECTION_SAFE_ZONE_DURATION_MS = 10_000;
 export const INFECTION_SAFE_ZONE_COOLDOWN_MS = 60_000;
@@ -111,6 +113,8 @@ export class GameInstance {
   public board: Board | ImpostorBoardBase;
   public playersList: string[] = [];
   public currentTurnIndex: number = 0;
+  private completedRounds = 0;
+  private readonly boostResetEveryRounds = 5;
   
   public state: 'waiting' | 'playing' | 'finished' = 'waiting';
   public winner: string | null = null;
@@ -140,6 +144,8 @@ export class GameInstance {
     exitNumber?: number;
     power?: InfectionLastSurvivorPower;
     generatorSector?: string;
+    infectorId?: string;
+    infectorName?: string;
   }> = [];
   private readonly impostorExitOpenUsed = new Set<string>();
   private impostorGoodPlayersReturned = 0;
@@ -157,12 +163,15 @@ export class GameInstance {
   private impostorEmergencyMeetingGameRemainingMs = 0;
   private readonly impostorToolRequests = new Map<string, IPendingImpostorToolRequest>();
   private impostorToolRequestSequence = 0;
+  private radarGraceUntil = 0;
   private impostorEndReason: ImpostorEndReason | null = null;
   private impostorSurrenderedPlayerId: string | null = null;
   private lastImpostorGhostId: string | null = null;
   private impostorGhostPickupCount = 0;
+  private impostorFootprintStepCount = 0;
   private impostorTrapCooldownUntil: Record<ImpostorTrapType, number> = { ice: 0, teleport: 0 };
   private readonly impostorGeneratorRepairTimers = new Map<string, NodeJS.Timeout>();
+  private readonly impostorTrapDeactivationTimers = new Map<string, NodeJS.Timeout>();
   private readonly infectionTrapCooldownUntil = new Map<string, Record<ImpostorTrapType, number>>();
   private impostorWallPlacementCooldownUntil = new Map<string, number>();
   private impostorExitSealCooldownUntil = 0;
@@ -183,6 +192,7 @@ export class GameInstance {
   private turnDeadlineAt: number | null = null;
   private pendingBoostDecision: IPendingBoostDecision | null = null;
   private timedBoostTimers = new Map<TimedBoostType, NodeJS.Timeout>();
+  private readonly timedBoostRespawnRounds = new Map<TimedBoostType, number>();
   private playerLastActivityAt = new Map<string, number>();
   private playerInactivityTimers = new Map<string, NodeJS.Timeout>();
   public onStateChange: (event: string, data: any) => void;
@@ -195,6 +205,8 @@ export class GameInstance {
   ) => void = () => {};
 
   public isPrivate: boolean = false;
+  private surrenderedPlayerId: string | null = null;
+  private surrenderedPlayerName: string | null = null;
 
   constructor(
     id: string, 
@@ -322,17 +334,17 @@ export class GameInstance {
     if (this.isImpostorBoardMode()) {
       this.startImpostorTimer();
     } else if (this.isFfaMode()) {
-      this.board.spawnKillerItem();
-      this.hasSpawnedKillerItem = true;
+      this.hasSpawnedKillerItem = false;
+      this.board.spawnFfaBoost('wall_pickup');
     } else {
       this.board.spawnFfaBoost('wall_pickup');
     }
     if (!this.isImpostorBoardMode()) {
+      this.clearTimedBoostTimers();
       this.board.spawnFfaBoost('portal', this.getPortalSpawnExclusions());
       this.board.spawnExchangeItem();
       this.hasSpawnedExchangeItem = true;
       this.board.spawnGhostItem();
-      this.startTimedBoostLifecycles();
     }
     if (!this.isImpostorBoardMode()) this.startTurnTimer();
     this.onStateChange('gameStarted', {
@@ -360,6 +372,7 @@ export class GameInstance {
     if (this.isImpostorBoardMode()) {
       this.emitPrivateImpostorActionStates();
       this.emitPrivateImpostorTrapState();
+      this.emitPrivateImpostorFootprints();
       if (this.mode === 'infection') this.emitImpostorGhostPickups();
       if (this.mode === 'infection') {
         this.initializeInfectionSafeZones();
@@ -401,49 +414,52 @@ export class GameInstance {
     return type === 'ghost' || type === 'killer_item' || type === 'exchange_item' || type === 'portal';
   }
 
-  private startTimedBoostLifecycles(): void {
-    const types: TimedBoostType[] = this.isFfaMode()
-      ? ['ghost', 'killer_item', 'exchange_item', 'portal']
-      : ['ghost', 'exchange_item', 'portal'];
-    for (const type of types) {
-      this.scheduleBoostLifecycle(type);
-    }
-  }
-
-  private scheduleBoostLifecycle(type: TimedBoostType): void {
-    if (this.board.boosts.some(boost => boost.type === type)) {
-      this.scheduleTimedBoostExpiry(type);
-    } else {
-      this.scheduleTimedBoostRespawn(type);
-    }
-  }
-
-  private scheduleTimedBoostExpiry(type: TimedBoostType): void {
-    this.clearTimedBoostTimer(type);
-    const timer = setTimeout(() => {
-      this.timedBoostTimers.delete(type);
-      if (this.state !== 'playing') return;
-      if (this.board.removeBoostsOfType(type) > 0) this.broadcastBoostBoard();
-      this.scheduleTimedBoostRespawn(type);
-    }, getRandomBoostDelayMs());
-    this.timedBoostTimers.set(type, timer);
-    if (typeof timer.unref === 'function') timer.unref();
+  private getRoundBasedBoostTypes(): TimedBoostType[] {
+    return ['ghost', 'exchange_item', 'portal'];
   }
 
   private scheduleTimedBoostRespawn(type: TimedBoostType): void {
+    if (this.isImpostorBoardMode() || this.state !== 'playing' || type === 'killer_item') return;
     this.clearTimedBoostTimer(type);
-    const timer = setTimeout(() => {
-      this.timedBoostTimers.delete(type);
-      if (this.state !== 'playing') return;
-      if (this.spawnTimedBoost(type)) {
-        this.broadcastBoostBoard();
-        this.scheduleTimedBoostExpiry(type);
-      } else {
-        this.scheduleTimedBoostRespawn(type);
+    this.timedBoostRespawnRounds.set(type, this.completedRounds + this.boostResetEveryRounds);
+  }
+
+  private applyScheduledBoostRespawns(): void {
+    if (this.isImpostorBoardMode() || this.state !== 'playing') return;
+
+    for (const [type, respawnAtRound] of [...this.timedBoostRespawnRounds.entries()]) {
+      if (this.completedRounds < respawnAtRound || this.board.boosts.some(boost => boost.type === type)) {
+        continue;
       }
-    }, getRandomBoostDelayMs());
-    this.timedBoostTimers.set(type, timer);
-    if (typeof timer.unref === 'function') timer.unref();
+      this.spawnTimedBoost(type);
+      this.timedBoostRespawnRounds.delete(type);
+    }
+  }
+
+  private handleRoundBasedBoostRotation(): void {
+    if (this.isImpostorBoardMode() || this.state !== 'playing') return;
+    if (this.completedRounds % this.boostResetEveryRounds !== 0) return;
+
+    const shouldSpawnKiller = this.mode === 'FFA' &&
+      this.completedRounds >= this.boostResetEveryRounds &&
+      !this.hasSpawnedKillerItem;
+
+    let changed = false;
+    for (const type of this.getRoundBasedBoostTypes()) {
+      if (this.board.removeBoostsOfType(type) > 0) changed = true;
+    }
+    if (shouldSpawnKiller && this.board.removeBoostsOfType('killer_item') > 0) changed = true;
+    if (!changed && !shouldSpawnKiller) return;
+
+    for (const type of this.getRoundBasedBoostTypes()) {
+      if (this.spawnTimedBoost(type)) changed = true;
+    }
+    if (shouldSpawnKiller && !this.hasSpawnedKillerItem) {
+      const killerSpawned = this.spawnTimedBoost('killer_item');
+      this.hasSpawnedKillerItem = killerSpawned;
+      if (killerSpawned) changed = true;
+    }
+    if (changed) this.broadcastBoostBoard();
   }
 
   private clearTimedBoostTimer(type: TimedBoostType): void {
@@ -618,6 +634,7 @@ export class GameInstance {
       if (impostorStateExpired) this.onStateChange('impostorStateChanged', this.getImpostorStateData());
       if (impostorStateExpired && this.mode === 'infection') this.resolveInfectionContact();
       this.emitPrivateImpostorTrapState();
+      this.emitPrivateImpostorFootprints();
       this.expireImpostorGhostModes();
       this.emitPrivateImpostorActionStates();
       if (this.mode === 'infection') {
@@ -642,6 +659,8 @@ export class GameInstance {
     this.impostorInactivityTimer = null;
     for (const timer of this.impostorGeneratorRepairTimers.values()) clearTimeout(timer);
     this.impostorGeneratorRepairTimers.clear();
+    for (const timer of this.impostorTrapDeactivationTimers.values()) clearTimeout(timer);
+    this.impostorTrapDeactivationTimers.clear();
     for (const timer of this.impostorEmergencyMeetingTimers) clearTimeout(timer);
     this.impostorEmergencyMeetingTimers = [];
   }
@@ -872,12 +891,18 @@ export class GameInstance {
     traps: IImpostorTrap[];
     cooldowns: Record<ImpostorTrapType, number>;
   } | null {
+    const player = this.board.players.get(playerId);
+    const hasRevealedTraps = this.getImpostorBoard().traps.some(trap => trap.isRevealed);
     const mayViewTraps = this.mode === 'impostor'
-      ? playerId === this.impostorId
+      ? (playerId === this.impostorId || player?.impostorTool === 'magnifier' || hasRevealedTraps)
       : this.mode === 'infection' && !this.isInfected(playerId);
     if (!this.isImpostorBoardMode() || !mayViewTraps) return null;
+    let traps = this.getImpostorBoard().traps.map(trap => ({ ...trap }));
+    if (this.mode === 'impostor' && playerId !== this.impostorId && player?.impostorTool !== 'magnifier') {
+      traps = traps.filter(trap => trap.isRevealed);
+    }
     return {
-      traps: this.getImpostorBoard().traps.map(trap => ({ ...trap })),
+      traps,
       cooldowns: this.getImpostorTrapCooldowns(playerId)
     };
   }
@@ -894,15 +919,39 @@ export class GameInstance {
 
   private emitPrivateImpostorTrapState(): void {
     if (this.mode === 'impostor') {
-      if (!this.impostorId) return;
-      const state = this.getPrivateImpostorTrapState(this.impostorId);
-      if (state) this.onPrivateStateChange(this.impostorId, 'impostorTrapState', state);
+      for (const playerId of this.playersList) {
+        const state = this.getPrivateImpostorTrapState(playerId);
+        this.onPrivateStateChange(playerId, 'impostorTrapState', state ?? { traps: [], cooldowns: { ice: 0, teleport: 0 } });
+      }
       return;
     }
     if (this.mode === 'infection') {
       for (const playerId of this.getInfectionSurvivorIds()) {
         const state = this.getPrivateImpostorTrapState(playerId);
         if (state) this.onPrivateStateChange(playerId, 'impostorTrapState', state);
+      }
+    }
+  }
+
+  public emitPrivateImpostorFootprints(): void {
+    if (this.mode !== 'impostor') return;
+    const now = Date.now();
+    this.getImpostorBoard().cleanupExpiredFootprints(now);
+    const impostor = this.impostorId ? this.board.players.get(this.impostorId) : null;
+    const footprints = this.getImpostorBoard().footprints
+      .filter(fp => {
+        if (!impostor) return true;
+        const distToImpostor = Math.max(Math.abs(impostor.x - fp.x), Math.abs(impostor.y - fp.y));
+        return distToImpostor > 2;
+      })
+      .map(fp => ({ ...fp }));
+    for (const playerId of this.playersList) {
+      if (playerId.startsWith('bot_')) continue;
+      const player = this.board.players.get(playerId);
+      if (player?.impostorTool === 'magnifier') {
+        this.onPrivateStateChange(playerId, 'impostorFootprints', footprints);
+      } else {
+        this.onPrivateStateChange(playerId, 'impostorFootprints', []);
       }
     }
   }
@@ -1151,8 +1200,9 @@ export class GameInstance {
         !canPlaceTrap || !player || player.isDead ||
         player.isInPrison || player.hasImpostorEscaped ||
         (type !== 'ice' && type !== 'teleport') ||
-        (this.mode === 'impostor' &&
-          this.getImpostorBoard().traps.filter(trap => trap.type === type).length >= IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE) ||
+        // Límite de 5 trampas por tipo comentado por ahora para permitir colocar todas las que quiera:
+        // (this.mode === 'impostor' &&
+        //   this.getImpostorBoard().traps.filter(trap => trap.type === type).length >= IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE) ||
         (this.mode === 'infection'
           ? (this.infectionTrapCooldownUntil.get(playerId)?.[type] ?? 0)
           : this.impostorTrapCooldownUntil[type]) > Date.now() ||
@@ -1182,7 +1232,10 @@ export class GameInstance {
     return true;
   }
 
-  public removeImpostorTrap(playerId: string, trapId: string): boolean {
+  public removeImpostorTrap(_playerId: string, _trapId: string): boolean {
+    // Funcionalidad de retiro manual de trampas por parte del impostor comentada por ahora
+    return false;
+    /*
     if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
         playerId !== this.impostorId) return false;
     const player = this.board.players.get(playerId);
@@ -1194,6 +1247,7 @@ export class GameInstance {
     this.emitPrivateImpostorTrapState();
     this.onStateChange('impostorStateChanged', this.getImpostorStateData());
     return true;
+    */
   }
 
   public takeImpostorTool(playerId: string, toolId: string): boolean {
@@ -1201,8 +1255,14 @@ export class GameInstance {
     const player = this.board.players.get(playerId);
     if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
         !this.getImpostorBoard().takeTool(playerId, toolId)) return false;
+    if (player.impostorTool === 'radar') {
+      this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
+    }
     this.cancelImpostorGeneratorRepair(playerId);
+    this.cancelImpostorTrapDeactivation(playerId);
     this.recordPlayerActivity(playerId);
+    this.emitPrivateImpostorTrapState();
+    this.emitPrivateImpostorFootprints();
     this.emitImpostorState();
     return true;
   }
@@ -1214,18 +1274,32 @@ export class GameInstance {
     if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
         !this.getImpostorBoard().dropTool(playerId)) return false;
     this.cancelImpostorGeneratorRepair(playerId);
+    this.cancelImpostorTrapDeactivation(playerId);
     this.recordPlayerActivity(playerId);
+    this.emitPrivateImpostorTrapState();
+    this.emitPrivateImpostorFootprints();
     this.emitImpostorState();
     return true;
   }
 
-  public requestImpostorTool(requesterId: string, targetId: string): boolean {
-    if (!this.arePlayersEligibleForToolTransfer(requesterId, targetId)) return false;
-    const requester = this.getImpostorBoard().players.get(requesterId)!;
-    const target = this.getImpostorBoard().players.get(targetId)!;
-    const toolType = target.impostorTool;
-    if (!toolType || [...this.impostorToolRequests.values()].some(request =>
-      request.requesterId === requesterId || request.targetId === targetId
+  public requestImpostorTool(requesterId: string, targetId?: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' ||
+        this.isImpostorEmergencyMeetingActive() || !this.playersList.includes(requesterId)) return false;
+    const requester = this.getImpostorBoard().players.get(requesterId);
+    if (!requester || requester.isDead || requester.isInPrison || requester.hasImpostorEscaped ||
+        !this.getImpostorBoard().isSafeZoneCell(requester.x, requester.y) ||
+        !this.getImpostorBoard().isAdjacentToToolTable(requester.x, requester.y)) return false;
+
+    const radarTool = this.getImpostorBoard().tools.find(tool => tool.type === 'radar');
+    const holderId = targetId || radarTool?.carriedBy;
+    if (!holderId || holderId === requesterId) return false;
+    const holder = this.getImpostorBoard().players.get(holderId);
+    if (!holder || holder.impostorTool !== 'radar') return false;
+
+    if (Date.now() < this.radarGraceUntil) return false;
+
+    if ([...this.impostorToolRequests.values()].some(request =>
+      request.requesterId === requesterId || request.targetId === holderId
     )) return false;
 
     const requestId = `${Date.now()}-${++this.impostorToolRequestSequence}`;
@@ -1234,20 +1308,43 @@ export class GameInstance {
       if (!request) return;
       this.impostorToolRequests.delete(requestId);
       this.onPrivateStateChange(request.targetId, 'impostorToolRequestClosed', { requestId });
-      this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
-        requestId,
-        status: 'expired',
-        playerName: target.username,
-        toolType
-      });
-    }, 15_000);
+      const currentHolder = this.getImpostorBoard().players.get(request.targetId);
+      const currentRequester = this.getImpostorBoard().players.get(request.requesterId);
+      if (currentHolder?.impostorTool === 'radar' && currentRequester && !currentRequester.isDead &&
+          !currentRequester.isInPrison && !currentRequester.hasImpostorEscaped &&
+          this.getImpostorBoard().isSafeZoneCell(currentRequester.x, currentRequester.y)) {
+        this.getImpostorBoard().transferTool(request.targetId, request.requesterId);
+        this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
+        this.cancelImpostorGeneratorRepair(request.targetId);
+        this.cancelImpostorGeneratorRepair(request.requesterId);
+        this.recordPlayerActivity(request.targetId);
+        this.recordPlayerActivity(request.requesterId);
+        this.emitPrivateImpostorTrapState();
+        this.emitPrivateImpostorFootprints();
+        this.emitImpostorState();
+        this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+          requestId,
+          status: 'accepted',
+          playerName: currentHolder.username,
+          toolType: 'radar'
+        });
+      } else {
+        this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
+          requestId,
+          status: 'expired',
+          playerName: currentHolder?.username,
+          toolType: 'radar'
+        });
+      }
+    }, IMPOSTOR_RADAR_REQUEST_TIMEOUT_MS);
     timeout.unref();
-    this.impostorToolRequests.set(requestId, { requesterId, targetId, toolType, timeout });
-    this.onPrivateStateChange(targetId, 'impostorToolRequestReceived', {
+    this.impostorToolRequests.set(requestId, { requesterId, targetId: holderId, toolType: 'radar', timeout });
+    this.onPrivateStateChange(holderId, 'impostorToolRequestReceived', {
       requestId,
       requesterId,
       requesterName: requester.username,
-      toolType
+      toolType: 'radar',
+      durationMs: IMPOSTOR_RADAR_REQUEST_TIMEOUT_MS
     });
     return true;
   }
@@ -1261,19 +1358,20 @@ export class GameInstance {
     if (!request || request.targetId !== targetId) return false;
     this.clearImpostorToolRequest(requestId);
 
+    const holder = this.getImpostorBoard().players.get(targetId);
+    const requester = this.getImpostorBoard().players.get(request.requesterId);
     if (!accepted) {
       this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
         requestId,
         status: 'denied',
-        playerName: this.getImpostorBoard().players.get(targetId)?.username,
+        playerName: holder?.username,
         toolType: request.toolType
       });
       return true;
     }
 
-    const holder = this.getImpostorBoard().players.get(targetId);
     const transferred = holder?.impostorTool === request.toolType &&
-      this.arePlayersEligibleForToolTransfer(request.requesterId, targetId) &&
+      requester && !requester.isDead && !requester.isInPrison && !requester.hasImpostorEscaped &&
       this.getImpostorBoard().transferTool(targetId, request.requesterId);
     if (!transferred) {
       this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
@@ -1285,10 +1383,13 @@ export class GameInstance {
       return true;
     }
 
+    this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
     this.cancelImpostorGeneratorRepair(targetId);
     this.cancelImpostorGeneratorRepair(request.requesterId);
     this.recordPlayerActivity(targetId);
     this.recordPlayerActivity(request.requesterId);
+    this.emitPrivateImpostorTrapState();
+    this.emitPrivateImpostorFootprints();
     this.emitImpostorState();
     this.onPrivateStateChange(request.requesterId, 'impostorToolRequestResult', {
       requestId,
@@ -1307,7 +1408,9 @@ export class GameInstance {
     const target = this.getImpostorBoard().players.get(targetId);
     if (!requester || !target || requester.isDead || target.isDead ||
         requester.isInPrison || target.isInPrison ||
-        requester.hasImpostorEscaped || target.hasImpostorEscaped) return false;
+        requester.hasImpostorEscaped || target.hasImpostorEscaped ||
+        !this.getImpostorBoard().isSafeZoneCell(requester.x, requester.y) ||
+        !this.getImpostorBoard().isSafeZoneCell(target.x, target.y)) return false;
     return Math.max(Math.abs(requester.x - target.x), Math.abs(requester.y - target.y)) <= 1 &&
       (requester.x !== target.x || requester.y !== target.y);
   }
@@ -1334,6 +1437,12 @@ export class GameInstance {
     const generator = this.getImpostorBoard().damageGenerator(generatorId);
     if (!generator) return false;
     this.impostorGeneratorSabotageCooldownUntil = Date.now() + IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS;
+    for (const [deactivatorId] of this.impostorTrapDeactivationTimers) {
+      const p = this.board.players.get(deactivatorId);
+      if (p && !this.getImpostorBoard().isCellPowered(p.x, p.y)) {
+        this.cancelImpostorTrapDeactivation(deactivatorId);
+      }
+    }
     this.recordPlayerActivity(playerId);
     this.emitImpostorPublicEvent('generator_sabotaged', {
       generatorSector: generator.sector,
@@ -1388,6 +1497,81 @@ export class GameInstance {
     clearTimeout(timer);
     this.impostorGeneratorRepairTimers.delete(playerId);
     this.onPrivateStateChange(playerId, 'impostorGeneratorRepairEnded', {});
+  }
+
+  public revealImpostorTrap(playerId: string, trapId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive()) return false;
+    const player = this.board.players.get(playerId);
+    const trap = this.getImpostorBoard().traps.find(item => item.id === trapId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        player.impostorTool !== 'magnifier' || !trap || trap.isRevealed ||
+        !this.getImpostorBoard().isCellPowered(player.x, player.y) ||
+        !this.getImpostorBoard().isCellPowered(trap.x, trap.y) ||
+        Math.max(Math.abs(player.x - trap.x), Math.abs(player.y - trap.y)) > 3) {
+      return false;
+    }
+    trap.isRevealed = true;
+    this.recordPlayerActivity(playerId);
+    this.emitImpostorPublicEvent('trap_revealed', {
+      trapType: trap.type,
+      playerName: player.username
+    });
+    this.emitPrivateImpostorTrapState();
+    this.emitImpostorState();
+    return true;
+  }
+
+  public beginImpostorTrapDeactivation(playerId: string, trapId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive()) return false;
+    const player = this.board.players.get(playerId);
+    const trap = this.getImpostorBoard().traps.find(item => item.id === trapId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        player.impostorTool !== 'hammer' || !trap || !trap.isRevealed ||
+        !this.getImpostorBoard().isCellPowered(player.x, player.y) ||
+        !this.getImpostorBoard().isCellPowered(trap.x, trap.y) ||
+        Math.max(Math.abs(player.x - trap.x), Math.abs(player.y - trap.y)) > 1 ||
+        this.impostorTrapDeactivationTimers.has(playerId)) return false;
+    this.recordPlayerActivity(playerId);
+    const durationMs = 5000;
+    const timer = setTimeout(() => {
+      this.impostorTrapDeactivationTimers.delete(playerId);
+      this.onPrivateStateChange(playerId, 'impostorTrapDeactivationEnded', {});
+      const currentPlayer = this.board.players.get(playerId);
+      const currentTrap = this.getImpostorBoard().traps.find(item => item.id === trapId);
+      if (this.state !== 'playing' || !currentPlayer || currentPlayer.impostorTool !== 'hammer' ||
+          currentPlayer.isDead || currentPlayer.isInPrison || currentPlayer.hasImpostorEscaped ||
+          !currentTrap || !currentTrap.isRevealed ||
+          Math.max(Math.abs(currentPlayer.x - currentTrap.x), Math.abs(currentPlayer.y - currentTrap.y)) > 1 ||
+          !this.getImpostorBoard().isCellPowered(currentPlayer.x, currentPlayer.y) ||
+          !this.getImpostorBoard().isCellPowered(currentTrap.x, currentTrap.y)) {
+        return;
+      }
+      const removed = this.getImpostorBoard().removeTrapAt(currentTrap.x, currentTrap.y);
+      if (!removed) return;
+      this.emitImpostorPublicEvent('trap_deactivated', {
+        trapType: removed.type,
+        playerName: currentPlayer.username
+      });
+      this.emitPrivateImpostorTrapState();
+      this.emitImpostorState();
+    }, durationMs);
+    timer.unref();
+    this.impostorTrapDeactivationTimers.set(playerId, timer);
+    this.onPrivateStateChange(playerId, 'impostorTrapDeactivationStarted', {
+      trapId,
+      trapType: trap.type,
+      durationMs,
+      endsAt: Date.now() + durationMs
+    });
+    return true;
+  }
+
+  public cancelImpostorTrapDeactivation(playerId: string): void {
+    const timer = this.impostorTrapDeactivationTimers.get(playerId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.impostorTrapDeactivationTimers.delete(playerId);
+    this.onPrivateStateChange(playerId, 'impostorTrapDeactivationEnded', {});
   }
 
   private emitImpostorState(): void {
@@ -1475,6 +1659,12 @@ export class GameInstance {
       const impostorBoard = this.getImpostorBoard();
       impostorBoard.reshuffleImpostor(random, true, this.mode === 'impostor');
       if (this.mode === 'infection') {
+        if (this.isLastInfectionSurvivor(playerId)) {
+          this.getInfectionBoard().scatterAllPlayersRandomly(random);
+          this.infectionSafeZoneEnteredAt.clear();
+          for (const timer of this.infectionSafeZoneTimers.values()) clearTimeout(timer);
+          this.infectionSafeZoneTimers.clear();
+        }
         this.getInfectionBoard().respawnInfectionPowerups(
           INFECTION_GHOST_PICKUP_COUNT,
           INFECTION_INVISIBLE_PICKUP_COUNT,
@@ -1545,6 +1735,7 @@ export class GameInstance {
     if (this.isImpostorBoardMode() || this.playersList.length === 0 ||
         this.pendingBoostDecision || this.state !== 'playing') return;
 
+    const previousTurnIndex = this.currentTurnIndex;
     let attempts = 0;
     do {
       this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playersList.length;
@@ -1553,6 +1744,12 @@ export class GameInstance {
       if (p && !p.isDead &&
           (this.mode !== '2v2' || !p.hasReachedGoal || p.wallsLeft > 0)) break;
     } while (attempts < this.playersList.length);
+
+    if (previousTurnIndex === this.playersList.length - 1 && this.currentTurnIndex === 0) {
+      this.completedRounds += 1;
+      this.handleRoundBasedBoostRotation();
+      this.applyScheduledBoostRespawns();
+    }
 
     const alive = Array.from(this.board.players.values()).filter(p => !p.isDead);
     const canTakeTurn = alive.some(player =>
@@ -1698,7 +1895,9 @@ export class GameInstance {
     this.impostorActionsUsed.set(playerId, (this.impostorActionsUsed.get(playerId) || 0) + 1);
   }
 
-  private getImpostorStateData(): {
+  private getImpostorStateData(
+    board: ReturnType<ImpostorBoard['toDTO']> = this.getImpostorBoard().toDTO()
+  ): {
     board: ReturnType<ImpostorBoard['toDTO']>;
     rescueStatus: ReturnType<GameInstance['getImpostorRescueStatus']>;
     publicActionCounts: Record<string, number>;
@@ -1709,15 +1908,19 @@ export class GameInstance {
     impostorGoodPlayersTotal: number;
     impostorEmergencyMeeting: ImpostorEmergencyMeeting | null;
     impostorEmergencyMeetingSecondsRemaining: number;
+    impostorRadarGraceUntil: number;
+    impostorRadarGraceRemainingSeconds: number;
   } {
     return {
-      board: this.getImpostorBoard().toDTO(),
+      board,
       rescueStatus: this.getImpostorRescueStatus(),
       publicActionCounts: this.getImpostorPublicActionCounts(),
       impostorSecondsUntilChange: this.getImpostorSecondsUntilChange(),
       impostorGeneratorSabotageSecondsRemaining: this.getImpostorGeneratorSabotageCooldownSeconds(),
       impostorEmergencyMeeting: this.getImpostorEmergencyMeetingState(),
       impostorEmergencyMeetingSecondsRemaining: this.getImpostorEmergencyMeetingSecondsRemaining(),
+      impostorRadarGraceUntil: this.radarGraceUntil,
+      impostorRadarGraceRemainingSeconds: Math.max(0, Math.ceil((this.radarGraceUntil - Date.now()) / 1000)),
       impostorExitOpenUsedBy: [...this.impostorExitOpenUsed],
       impostorGoodPlayersReturned: this.impostorGoodPlayersReturned +
         Number(this.impostorId
@@ -1968,6 +2171,13 @@ export class GameInstance {
           movementTrailId: player.movementTrailId,
           movementTrailIcon: player.movementTrailIcon
         });
+        if (this.mode === 'impostor' && playerId === this.impostorId) {
+          this.impostorFootprintStepCount = (this.impostorFootprintStepCount || 0) + 1;
+          if (this.impostorFootprintStepCount % 2 === 1) {
+            this.getImpostorBoard().addFootprint(newX, newY, now);
+          }
+          this.emitPrivateImpostorFootprints();
+        }
         const key = this.mode === 'impostor'
           ? this.getImpostorBoard().collectKey(playerId, newX, newY, playerId === this.impostorId)
           : null;
@@ -2056,18 +2266,23 @@ export class GameInstance {
       if (!player || player.isDead || player.invisibleUntil > Date.now() ||
           (player.impostorShieldActive && player.impostorShieldExpiresAt > Date.now()) ||
           impostorBoard.isSafeZoneCell(player.x, player.y)) continue;
-      const isAdjacentToInfected = infectedPlayers.some(infected =>
-        Math.abs(infected.x - player.x) + Math.abs(infected.y - player.y) === 1 &&
-        !impostorBoard.isSeparatedByWall(infected.x, infected.y, player.x, player.y)
-      );
-      if (!isAdjacentToInfected) continue;
+      let infectingPlayer: Player | undefined;
+      for (const infected of infectedPlayers) {
+        const dx = Math.abs(infected.x - player.x);
+        const dy = Math.abs(infected.y - player.y);
+        if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+          if (!impostorBoard.isSeparatedByWall(infected.x, infected.y, player.x, player.y)) {
+            infectingPlayer = infected;
+            break;
+          }
+        }
+      }
+      if (!infectingPlayer) continue;
       player.isInfected = true;
       player.invisibleUntil = 0;
       player.ghostModeExpiresAt = 0;
       this.infectedPlayerIds.add(playerId);
       newlyInfected.push(player);
-    }
-    for (const player of newlyInfected) {
       this.onPrivateStateChange(player.id, 'impostorRole', this.getPrivateImpostorRole(player.id));
       this.onPrivateStateChange(player.id, 'impostorActionState', {
         canBreakBlock: false,
@@ -2080,7 +2295,12 @@ export class GameInstance {
         traps: [],
         cooldowns: this.getImpostorTrapCooldowns(player.id)
       });
-      this.emitImpostorPublicEvent('player_infected', { playerId: player.id, playerName: player.username });
+      this.emitImpostorPublicEvent('player_infected', {
+        playerId: player.id,
+        playerName: player.username,
+        infectorId: infectingPlayer?.id,
+        infectorName: infectingPlayer?.username
+      });
     }
     if (newlyInfected.length) {
       this.emitPrivateImpostorTrapState();
@@ -2145,7 +2365,8 @@ export class GameInstance {
   }
 
   public getImpostorStateDataForPlayer(playerId: string) {
-    const state = this.getImpostorStateData();
+    const board = this.getImpostorBoard().toDTO(playerId, playerId === this.impostorId);
+    const state = this.getImpostorStateData(board);
     const hiddenPlayerIds = this.mode === 'infection' && this.isInfected(playerId)
       ? new Set(this.playersList.filter(id => this.isInfectionPlayerInvisible(id)))
       : null;
@@ -2157,7 +2378,7 @@ export class GameInstance {
             capturedPlayers: state.rescueStatus.capturedPlayers.filter(id => !hiddenPlayerIds.has(id))
           }
         : state.rescueStatus,
-      board: this.getImpostorBoard().toDTO(playerId, playerId === this.impostorId)
+      board
     };
   }
 
@@ -2317,8 +2538,8 @@ export class GameInstance {
           x,
           y,
           isHorizontal,
-          player.wallEffectId,
-          player.wallEffectIcon,
+          undefined,
+          undefined,
           false,
           isImpostor
         );
@@ -2848,16 +3069,48 @@ export class GameInstance {
       return true;
     }
 
-    if (this.mode === 'FFA' &&
-        !alive.some(player => !player.id.startsWith('bot_'))) {
+    const hasAliveHumans = alive.some(player => !player.id.startsWith('bot_'));
+    if (!hasAliveHumans) {
       this.endGame(true);
       return true;
     }
 
-    if (alive.length <= 1 && this.mode !== '2v2') {
+    if (this.mode === '2v2') {
+      const surrenderingTeam = surrenderingPlayer.team;
+      for (const p of this.board.players.values()) {
+        if (p.team === surrenderingTeam) {
+          p.isDead = true;
+          this.stopTrackingPlayerActivity(p.id);
+        }
+      }
+      const winningOpponent = Array.from(this.board.players.values()).find(p => p.team !== surrenderingTeam && !p.id.startsWith('bot_'))
+        || Array.from(this.board.players.values()).find(p => p.team !== surrenderingTeam);
+      this.winner = winningOpponent?.id || null;
+      this.surrenderedPlayerId = surrenderingUserId;
+      this.surrenderedPlayerName = surrenderingPlayer.username;
+      this.endGame();
+      return true;
+    }
+
+    if (this.mode === '1v1' || this.mode === 'vs_ai') {
       this.winner = alive[0]?.id || null;
+      this.surrenderedPlayerId = surrenderingUserId;
+      this.surrenderedPlayerName = surrenderingPlayer.username;
+      this.endGame();
+      return true;
+    }
+
+    if (alive.length <= 1) {
+      this.winner = alive[0]?.id || null;
+      this.surrenderedPlayerId = surrenderingUserId;
+      this.surrenderedPlayerName = surrenderingPlayer.username;
       this.endGame();
     } else {
+      this.onStateChange('playerSurrendered', {
+        playerId: surrenderingUserId,
+        playerName: surrenderingPlayer.username,
+        roomId: this.id
+      });
       if (this.getCurrentPlayer() === surrenderingUserId) {
         this.nextTurn();
       } else {
@@ -2889,6 +3142,12 @@ export class GameInstance {
       winner: this.winner,
       durationSeconds,
       abandoned,
+      ...(this.surrenderedPlayerId
+        ? {
+            surrenderedPlayerId: this.surrenderedPlayerId,
+            surrenderedPlayerName: this.surrenderedPlayerName
+          }
+        : {}),
       ...(this.mode === 'impostor'
         ? {
             impostorRevealedImpostorId: this.impostorId,

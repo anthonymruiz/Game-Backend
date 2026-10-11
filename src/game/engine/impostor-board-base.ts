@@ -43,6 +43,7 @@ export type ImpostorTrapType = 'ice' | 'teleport';
 export interface IImpostorTrap extends Coordinate {
   id: string;
   type: ImpostorTrapType;
+  isRevealed?: boolean;
 }
 
 export interface IImpostorShieldPickup extends Coordinate {
@@ -51,6 +52,11 @@ export interface IImpostorShieldPickup extends Coordinate {
 
 export interface IImpostorGhostPickup extends Coordinate {
   id: string;
+}
+
+export interface IImpostorFootprint extends Coordinate {
+  id: string;
+  createdAt: number;
 }
 
 export abstract class ImpostorBoardBase extends Board {
@@ -62,9 +68,10 @@ export abstract class ImpostorBoardBase extends Board {
   public traps: IImpostorTrap[] = [];
   public shieldPickups: IImpostorShieldPickup[] = [];
   public ghostPickups: IImpostorGhostPickup[] = [];
+  public footprints: IImpostorFootprint[] = [];
 
   public generateRandomImpostorWalls(
-    targetWallCount: number = Math.floor(this.size * this.size * 0.35),
+    targetWallCount: number = Math.floor(this.size * this.size * 0.315),
     random: () => number = Math.random,
     _exitCount: number = this.players.size,
     prioritizeGateApproaches = false
@@ -103,6 +110,7 @@ export abstract class ImpostorBoardBase extends Board {
     const tryAddWall = (wall: Wall): boolean => {
       if (this.walls.length >= targetWallCount) return false;
       if (!super.canPlaceWall(wall) || this.wallPassagesTouchGenerator(wall)) return false;
+      if (this.wouldCreateExcessiveCollinearChain(wall)) return false;
       const passages = this.getWallPassages(wall);
       if (passages.some(passage =>
         protectedPassages.has(passage.key) || this.isPassageInsideCentralRoom(passage)
@@ -197,16 +205,23 @@ export abstract class ImpostorBoardBase extends Board {
     const middle = Math.floor(this.size / 2);
     this.tools = [
       { id: 'radar_1', type: 'radar', slot: 1, x: middle - 1, y: middle - 1 },
-      { id: 'radar_2', type: 'radar', slot: 2, x: middle + 1, y: middle - 1 },
+      { id: 'magnifier_1', type: 'magnifier', slot: 1, x: middle + 1, y: middle - 1 },
+      { id: 'magnifier_2', type: 'magnifier', slot: 2, x: middle, y: middle - 1 },
       { id: 'hammer_1', type: 'hammer', slot: 1, x: middle - 1, y: middle + 1 },
-      { id: 'wrench_1', type: 'wrench', slot: 1, x: middle + 1, y: middle + 1 }
+      { id: 'hammer_2', type: 'hammer', slot: 2, x: middle, y: middle + 1 },
+      { id: 'wrench_1', type: 'wrench', slot: 1, x: middle + 1, y: middle + 1 },
+      { id: 'wrench_2', type: 'wrench', slot: 2, x: middle + 1, y: middle }
     ];
   }
 
   public isToolTableCell(x: number, y: number): boolean {
     if (this.tools.length === 0) return false;
     const middle = Math.floor(this.size / 2);
-    return Math.abs(x - middle) <= 1 && Math.abs(y - middle) <= 1;
+    return (x === middle || x === middle + 1) && (y === middle || y === middle + 1);
+  }
+
+  public isAdjacentToToolTable(x: number, y: number): boolean {
+    return this.isSafeZoneCell(x, y) && !this.isToolTableCell(x, y);
   }
 
   public getGeneratorSector(x: number, y: number): ImpostorGeneratorSector {
@@ -237,15 +252,18 @@ export abstract class ImpostorBoardBase extends Board {
     return generator;
   }
 
-  public takeTool(playerId: string, toolId: string): boolean {
+  public takeTool(playerId: string, toolIdOrType: string): boolean {
     const player = this.players.get(playerId);
-    const tool = this.tools.find(item => item.id === toolId);
-    if (!player || !tool || tool.carriedBy) return false;
+    if (!player) return false;
+    let tool = this.tools.find(item => item.id === toolIdOrType && !item.carriedBy);
+    if (!tool) {
+      tool = this.tools.find(item => item.type === toolIdOrType && !item.carriedBy);
+    }
+    if (!tool || tool.carriedBy) return false;
+    const isAdjacentDirectly = Math.abs(player.x - tool.x) <= 1 && Math.abs(player.y - tool.y) <= 1;
+    const isAdjacentToTable = this.isAdjacentToToolTable(player.x, player.y);
     if (!this.isSafeZoneCell(player.x, player.y) ||
-        !this.isSafeZoneCell(tool.x, tool.y) ||
-        Math.abs(player.x - tool.x) > 1 ||
-        Math.abs(player.y - tool.y) > 1 ||
-        Math.abs(player.x - tool.x) + Math.abs(player.y - tool.y) === 0 ||
+        (!isAdjacentDirectly && !isAdjacentToTable) ||
         player.impostorTool === tool.type) return false;
     const previousTool = player.impostorTool;
     if (previousTool) {
@@ -532,7 +550,7 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   protected isGeneratedImpostorLayoutPlayable(): boolean {
-    return this.isBoardConnected();
+    return this.isBoardConnected() && this.areAdjacentQuadrantsDirectlyConnected();
   }
 
   public canPlaceTrap(x: number, y: number, allowPlayerId?: string): boolean {
@@ -557,6 +575,27 @@ export abstract class ImpostorBoardBase extends Board {
   public removeTrapAt(x: number, y: number): IImpostorTrap | null {
     const index = this.traps.findIndex(trap => trap.x === x && trap.y === y);
     return index < 0 ? null : this.traps.splice(index, 1)[0];
+  }
+
+  public addFootprint(x: number, y: number, createdAt: number = Date.now()): IImpostorFootprint | null {
+    if (this.isSafeZoneCell(x, y)) return null;
+    const footprint: IImpostorFootprint = {
+      id: `footprint_${createdAt}_${Math.random().toString(36).slice(2, 9)}`,
+      x,
+      y,
+      createdAt
+    };
+    this.footprints.push(footprint);
+    this.cleanupExpiredFootprints(createdAt);
+    return footprint;
+  }
+
+  public cleanupExpiredFootprints(now: number = Date.now(), maxAgeMs: number = 10_000): void {
+    this.footprints = this.footprints.filter(fp => now - fp.createdAt < maxAgeMs);
+  }
+
+  public clearFootprints(): void {
+    this.footprints = [];
   }
 
   public spawnShieldPickups(targetCount: number, random: () => number = Math.random): void {
@@ -1135,11 +1174,23 @@ export abstract class ImpostorBoardBase extends Board {
       }
     }
 
+    const cornerOffset = Math.max(1, Math.min(min - 1, Math.floor(min / 2)));
+    const cornerFarOffset = this.size - 1 - cornerOffset;
+
     const routes = [
       this.createRoute({ x: middle, y: middle - radius }, { x: middle, y: 0 }),
       this.createRoute({ x: middle + radius, y: middle }, { x: this.size - 1, y: middle }),
       this.createRoute({ x: middle, y: middle + radius }, { x: middle, y: this.size - 1 }),
-      this.createRoute({ x: middle - radius, y: middle }, { x: 0, y: middle })
+      this.createRoute({ x: middle - radius, y: middle }, { x: 0, y: middle }),
+      // Direct quadrant connectors around corners to prevent full perimeter loops:
+      this.createRoute({ x: middle, y: cornerOffset }, { x: cornerOffset, y: cornerOffset }),
+      this.createRoute({ x: cornerOffset, y: cornerOffset }, { x: cornerOffset, y: middle }),
+      this.createRoute({ x: middle, y: cornerOffset }, { x: cornerFarOffset, y: cornerOffset }),
+      this.createRoute({ x: cornerFarOffset, y: cornerOffset }, { x: cornerFarOffset, y: middle }),
+      this.createRoute({ x: cornerOffset, y: middle }, { x: cornerOffset, y: cornerFarOffset }),
+      this.createRoute({ x: cornerOffset, y: cornerFarOffset }, { x: middle, y: cornerFarOffset }),
+      this.createRoute({ x: cornerFarOffset, y: middle }, { x: cornerFarOffset, y: cornerFarOffset }),
+      this.createRoute({ x: cornerFarOffset, y: cornerFarOffset }, { x: middle, y: cornerFarOffset })
     ];
 
     for (const route of routes) {
@@ -1505,5 +1556,128 @@ export abstract class ImpostorBoardBase extends Board {
       }
     }
     return false;
+  }
+
+  private wouldCreateExcessiveCollinearChain(wall: Wall): boolean {
+    if (wall.isHorizontal) {
+      let leftCount = 0;
+      let checkX = wall.x - 2;
+      while (checkX >= 0 && this.walls.some(w => w.isHorizontal && w.y === wall.y && w.x === checkX)) {
+        leftCount++;
+        checkX -= 2;
+      }
+      let rightCount = 0;
+      checkX = wall.x + 2;
+      while (checkX < this.size - 1 && this.walls.some(w => w.isHorizontal && w.y === wall.y && w.x === checkX)) {
+        rightCount++;
+        checkX += 2;
+      }
+      if (leftCount + 1 + rightCount >= 3) return true;
+    } else {
+      let upCount = 0;
+      let checkY = wall.y - 2;
+      while (checkY >= 0 && this.walls.some(w => !w.isHorizontal && w.x === wall.x && w.y === checkY)) {
+        upCount++;
+        checkY -= 2;
+      }
+      let downCount = 0;
+      checkY = wall.y + 2;
+      while (checkY < this.size - 1 && this.walls.some(w => !w.isHorizontal && w.x === wall.x && w.y === checkY)) {
+        downCount++;
+        checkY += 2;
+      }
+      if (upCount + 1 + downCount >= 3) return true;
+    }
+    return false;
+  }
+
+  protected areAdjacentQuadrantsDirectlyConnected(): boolean {
+    if (this.size < 7) return true;
+    const middle = Math.floor(this.size / 2);
+    const radius = this.getCentralRoomRadius();
+    const min = middle - radius;
+    const max = middle + radius;
+    const northPt = { x: middle, y: Math.max(0, min - 2) };
+    const southPt = { x: middle, y: Math.min(this.size - 1, max + 2) };
+    const westPt = { x: Math.max(0, min - 2), y: middle };
+    const eastPt = { x: Math.min(this.size - 1, max + 2), y: middle };
+
+    const maxDirectDistance = Math.floor((this.size - 1) * 1.5) + 4;
+
+    const distFromNorth = this.getShortestPathDistancesFrom(northPt);
+    const dNW = distFromNorth[westPt.y * this.size + westPt.x];
+    const dNE = distFromNorth[eastPt.y * this.size + eastPt.x];
+    if (dNW < 0 || dNW > maxDirectDistance || dNE < 0 || dNE > maxDirectDistance) {
+      return false;
+    }
+
+    const distFromSouth = this.getShortestPathDistancesFrom(southPt);
+    const dSW = distFromSouth[westPt.y * this.size + westPt.x];
+    const dSE = distFromSouth[eastPt.y * this.size + eastPt.x];
+    if (dSW < 0 || dSW > maxDirectDistance || dSE < 0 || dSE > maxDirectDistance) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private getShortestPathDistancesFrom(start: Coordinate): Int32Array {
+    const totalCells = this.size * this.size;
+    const distances = new Int32Array(totalCells);
+    distances.fill(-1);
+
+    const startIndex = start.y * this.size + start.x;
+    const queue = new Int32Array(totalCells);
+    let readIndex = 0;
+    let writeIndex = 0;
+
+    const blockedPassages = new Set<number>();
+    for (const wall of this.walls) {
+      for (const passage of this.getWallPassages(wall)) {
+        blockedPassages.add(passage.key);
+      }
+    }
+
+    const excludedCells = new Uint8Array(totalCells);
+    for (const generator of this.generators) {
+      for (let y = generator.y; y <= generator.y + 1; y++) {
+        for (let x = generator.x; x <= generator.x + 1; x++) {
+          if (x >= 0 && x < this.size && y >= 0 && y < this.size) {
+            excludedCells[y * this.size + x] = 1;
+          }
+        }
+      }
+    }
+
+    if (excludedCells[startIndex]) return distances;
+
+    distances[startIndex] = 0;
+    queue[writeIndex++] = startIndex;
+
+    while (readIndex < writeIndex) {
+      const currentIndex = queue[readIndex++];
+      const currentDist = distances[currentIndex];
+      const x = currentIndex % this.size;
+      const y = Math.floor(currentIndex / this.size);
+
+      const neighbors = [
+        y > 0 ? currentIndex - this.size : -1,
+        y < this.size - 1 ? currentIndex + this.size : -1,
+        x > 0 ? currentIndex - 1 : -1,
+        x < this.size - 1 ? currentIndex + 1 : -1
+      ];
+
+      for (const nextIndex of neighbors) {
+        if (nextIndex < 0 || excludedCells[nextIndex] || distances[nextIndex] !== -1) continue;
+        const passageKey = Math.min(currentIndex, nextIndex) * this.size * this.size +
+          Math.max(currentIndex, nextIndex);
+        if (blockedPassages.has(passageKey)) continue;
+
+        distances[nextIndex] = currentDist + 1;
+        queue[writeIndex++] = nextIndex;
+      }
+    }
+
+    return distances;
   }
 }

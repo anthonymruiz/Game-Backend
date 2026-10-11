@@ -22,7 +22,6 @@ describe('Impostor personal keys, tools, and generators', () => {
     for (const game of games.splice(0)) game.destroy();
     mock.timers.reset();
   });
-
   it('pauses the game for emergency voting and only reveals ballots after everyone votes', () => {
     mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
     const players = [
@@ -58,7 +57,7 @@ describe('Impostor personal keys, tools, and generators', () => {
     }
     assert.equal(game.callImpostorEmergencyMeeting(impostorId), false);
     assert.equal(game.callImpostorEmergencyMeeting(goodId), true);
-    assert.equal(game.getImpostorRemainingSeconds(), 300);
+    assert.equal(game.getImpostorRemainingSeconds(), 420);
     assert.equal(game.callImpostorEmergencyMeeting(impostorId), false);
 
     mock.timers.tick(IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS);
@@ -158,13 +157,13 @@ describe('Impostor personal keys, tools, and generators', () => {
     board.spawnTools();
 
     const radar = board.tools.find(tool => tool.type === 'radar')!;
-    const secondRadar = board.tools.find(tool => tool.type === 'radar' && tool.id !== radar.id)!;
+    const magnifier = board.tools.find(tool => tool.type === 'magnifier')!;
     const hammer = board.tools.find(tool => tool.type === 'hammer')!;
     player.x = radar.x;
     player.y = radar.y - 1;
     assert.equal(board.takeTool(player.id, radar.id), true);
     assert.equal(player.impostorTool, 'radar');
-    assert.equal(board.takeTool(player.id, secondRadar.id), false);
+    assert.equal(board.takeTool(player.id, radar.id), false);
 
     player.x = hammer.x - 1;
     player.y = hammer.y - 1;
@@ -184,7 +183,8 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.deepEqual({ x: hammer.x, y: hammer.y }, { x: 9, y: 11 });
   });
 
-  it('lets nearby players request and transfer tools only after the holder accepts', () => {
+  it('lets players request and transfer the radar from the central table after the grace period', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
     const players = [
       { id: 'tool_requester', username: 'Requester', isGuest: false, color: '#FF3B30' },
       { id: 'tool_holder', username: 'Holder', isGuest: false, color: '#007AFF' }
@@ -196,59 +196,56 @@ describe('Impostor personal keys, tools, and generators', () => {
     game.start();
 
     const board = game.board as ImpostorBoard;
+    const middle = Math.floor(board.size / 2);
     const requester = board.players.get('tool_requester')!;
     const holder = board.players.get('tool_holder')!;
-    requester.x = 10;
-    requester.y = 10;
-    holder.x = 11;
-    holder.y = 10;
-    const hammer = board.tools.find(tool => tool.type === 'hammer')!;
-    hammer.carriedBy = holder.id;
-    holder.impostorTool = 'hammer';
+    const radar = board.tools.find(tool => tool.type === 'radar')!;
+    holder.x = middle - 1;
+    holder.y = middle - 2;
+    assert.equal(game.takeImpostorTool(holder.id, radar.id), true);
+    holder.x = middle + 3;
+    holder.y = middle + 3;
 
-    assert.equal(game.requestImpostorTool(requester.id, holder.id), true);
+    requester.x = middle - 2;
+    requester.y = middle - 1;
+
+    // Before grace period expires (30s), request is rejected
+    assert.equal(game.requestImpostorTool(requester.id), false);
+
+    // Advance 30 seconds
+    mock.timers.tick(30_000);
+
+    // Request from table succeeds
+    assert.equal(game.requestImpostorTool(requester.id), true);
     const firstRequest = privateEvents.find(event => event.event === 'impostorToolRequestReceived')!.data;
     assert.deepEqual(
       { playerId: privateEvents.find(event => event.event === 'impostorToolRequestReceived')!.playerId, toolType: firstRequest.toolType },
-      { playerId: holder.id, toolType: 'hammer' }
+      { playerId: holder.id, toolType: 'radar' }
     );
-    assert.equal(game.respondToImpostorToolRequest(holder.id, firstRequest.requestId, false), true);
-    assert.equal(holder.impostorTool, 'hammer');
-    assert.equal(requester.impostorTool, null);
-    assert.equal(privateEvents.at(-1)?.event, 'impostorToolRequestResult');
-    assert.equal(privateEvents.at(-1)?.data.status, 'denied');
 
-    assert.equal(game.requestImpostorTool(requester.id, holder.id), true);
-    const secondRequest = privateEvents.filter(event => event.event === 'impostorToolRequestReceived').at(-1)!.data;
-    assert.equal(game.respondToImpostorToolRequest(holder.id, secondRequest.requestId, true), true);
+    // Holder accepts -> radar transferred immediately
+    assert.equal(game.respondToImpostorToolRequest(holder.id, firstRequest.requestId, true), true);
     assert.equal(holder.impostorTool, null);
-    assert.equal(requester.impostorTool, 'hammer');
-    assert.equal(hammer.carriedBy, requester.id);
-
-    const radar = board.tools.find(tool => tool.type === 'radar')!;
-    radar.carriedBy = holder.id;
-    holder.impostorTool = 'radar';
-    assert.equal(game.requestImpostorTool(requester.id, holder.id), true);
-    const swapRequest = privateEvents.filter(event => event.event === 'impostorToolRequestReceived').at(-1)!.data;
-    assert.equal(game.respondToImpostorToolRequest(holder.id, swapRequest.requestId, true), true);
     assert.equal(requester.impostorTool, 'radar');
-    assert.equal(holder.impostorTool, 'hammer');
     assert.equal(radar.carriedBy, requester.id);
-    assert.equal(hammer.carriedBy, holder.id);
+    assert.equal(privateEvents.at(-1)?.event, 'impostorToolRequestResult');
+    assert.equal(privateEvents.at(-1)?.data.status, 'accepted');
 
-    holder.x = requester.x + 1;
-    assert.equal(game.requestImpostorTool(requester.id, holder.id), true);
-    const expiredByDistance = privateEvents.filter(event =>
-      event.event === 'impostorToolRequestReceived'
-    ).at(-1)!.data;
-    holder.x += 3;
-    assert.equal(game.respondToImpostorToolRequest(holder.id, expiredByDistance.requestId, true), true);
-    assert.equal(requester.impostorTool, 'radar');
-    assert.equal(holder.impostorTool, 'hammer');
-    assert.equal(privateEvents.at(-1)?.data.status, 'unavailable');
+    // Requester now has 30s grace period
+    holder.x = middle - 2;
+    holder.y = middle - 1;
+    assert.equal(game.requestImpostorTool(holder.id), false);
 
-    requester.x = 5;
-    assert.equal(game.requestImpostorTool(requester.id, holder.id), false);
+    // Advance 30s
+    mock.timers.tick(30_000);
+
+    // Holder requests radar and lets the 5s timeout auto-transfer it
+    assert.equal(game.requestImpostorTool(holder.id), true);
+    const secondRequest = privateEvents.filter(event => event.event === 'impostorToolRequestReceived').at(-1)!.data;
+    mock.timers.tick(5_000);
+    assert.equal(holder.impostorTool, 'radar');
+    assert.equal(requester.impostorTool, null);
+    assert.equal(radar.carriedBy, holder.id);
   });
 
   it('lets players reach tools from the middle of the safe-zone table after dropping one', () => {
@@ -277,11 +274,15 @@ describe('Impostor personal keys, tools, and generators', () => {
     board.walls = [];
 
     assert.equal(board.isToolTableCell(middle, middle), true);
-    assert.equal(board.moveImpostorPlayer(player.id, middle - 1, middle), false);
+    assert.equal(board.isToolTableCell(middle + 1, middle + 1), true);
+    assert.equal(board.isToolTableCell(middle - 1, middle), false);
+    // Player moves to cell adjacent to table (middle - 1, middle) successfully
+    assert.equal(board.moveImpostorPlayer(player.id, middle - 1, middle), true);
+    // Player cannot step onto the tool table cell (middle, middle)
+    assert.equal(board.moveImpostorPlayer(player.id, middle, middle), false);
     assert.ok(board.getImpostorValidMoves(player.id).every(({ x, y }) =>
       !board.isToolTableCell(x, y)
     ));
-    assert.equal(board.moveImpostorPlayer(player.id, middle - 2, middle - 1), true);
   });
 
   it('spawns every Impostor participant outside the tool table', () => {
@@ -596,12 +597,10 @@ describe('Impostor personal keys, tools, and generators', () => {
     }
     assert.equal(board.traps.filter(trap => trap.type === 'ice').length, 5);
     mock.timers.tick(IMPOSTOR_TRAP_COOLDOWN_MS);
-    const replacementCell = trapCells[IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE];
-    assert.equal(game.placeImpostorTrap(impostorId, 'ice', replacementCell.x, replacementCell.y), false,
-      'the sixth trap is rejected while five are active');
-    assert.equal(game.removeImpostorTrap(impostorId, board.traps[0].id), true);
-    assert.equal(game.placeImpostorTrap(impostorId, 'ice', replacementCell.x, replacementCell.y), true);
-    assert.equal(board.traps.filter(trap => trap.type === 'ice').length, 5);
+    const sixthCell = trapCells[IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE];
+    assert.equal(game.placeImpostorTrap(impostorId, 'ice', sixthCell.x, sixthCell.y), true,
+      'the sixth trap is now allowed with unlimited traps');
+    assert.equal(board.traps.filter(trap => trap.type === 'ice').length, 6);
   });
 
   it('ends the good-team objective only after every good player returns with their own key', async () => {
@@ -664,5 +663,227 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.equal(game.executeMove(goodPlayers[1].id, goodPlayers[1].x, middle), true);
     assert.equal(game.state, 'finished');
     assert.equal(game.winner, 'good');
+  });
+
+  it('reveals traps with magnifier within distance 3 in powered sectors, broadcasts announcement, and allows wrench deactivation', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
+    const players = [
+      { id: 'investigator_player', username: 'Investigator', isGuest: false, color: '#FF3B30' },
+      { id: 'technician_player', username: 'Technician', isGuest: false, color: '#007AFF' },
+      { id: 'impostor_trap_maker', username: 'TrapMaker', isGuest: false, color: '#FFCC00' }
+    ];
+    const publicEvents: Array<{ event: string; data: any }> = [];
+    const privateEvents: Array<{ playerId: string; event: string; data: any }> = [];
+    const game = new GameInstance('impostor_reveal_deactivate_test', 'impostor', players, (event, data) => {
+      publicEvents.push({ event, data });
+    }, GAME_INSTANCE_TEST_OPTIONS);
+    games.push(game);
+    game.onPrivateStateChange = (playerId, event, data) => privateEvents.push({ playerId, event, data });
+    game.start();
+
+    const board = game.board as ImpostorBoard;
+    board.walls = [];
+    const impostorId = game.impostorId!;
+    const goodPlayers = players.filter(p => p.id !== impostorId);
+    const investigator = board.players.get(goodPlayers[0].id)!;
+    const technician = board.players.get(goodPlayers[1].id)!;
+
+    // Place a trap at (5, 5) which is in the northwest powered sector
+    const trapX = 5;
+    const trapY = 5;
+    assert.equal(game.placeImpostorTrap(impostorId, 'ice', trapX, trapY), true);
+    const placedTrap = board.traps.find(t => t.x === trapX && t.y === trapY)!;
+    assert.ok(placedTrap);
+    assert.equal(placedTrap.isRevealed, undefined);
+
+    // Good players without magnifier or revealed traps do not receive trap state
+    assert.equal(game.getPrivateImpostorTrapState(technician.id), null);
+
+    // Impostor always sees the trap
+    const impostorTrapState = game.getPrivateImpostorTrapState(impostorId);
+    assert.equal(impostorTrapState?.traps.length, 1);
+    assert.equal(impostorTrapState?.traps[0].id, placedTrap.id);
+
+    // Technician with hammer cannot deactivate an unrevealed trap
+    technician.impostorTool = 'hammer';
+    technician.x = trapX + 1;
+    technician.y = trapY;
+    assert.equal(game.beginImpostorTrapDeactivation(technician.id, placedTrap.id), false);
+
+    // Player without magnifier cannot reveal the trap
+    investigator.impostorTool = 'radar';
+    investigator.x = trapX + 2;
+    investigator.y = trapY;
+    assert.equal(game.revealImpostorTrap(investigator.id, placedTrap.id), false);
+
+    // Investigator with magnifier but too far (>3 distance) cannot reveal
+    investigator.impostorTool = 'magnifier';
+    investigator.x = trapX + 4;
+    investigator.y = trapY;
+    assert.equal(game.revealImpostorTrap(investigator.id, placedTrap.id), false);
+
+    // Investigator in dark/unpowered sector cannot reveal
+    board.damageGenerator('generator_northwest');
+    investigator.x = trapX + 2;
+    investigator.y = trapY;
+    assert.equal(game.revealImpostorTrap(investigator.id, placedTrap.id), false);
+
+    // Repair generator -> powered sector again -> reveal succeeds
+    board.repairGenerator('generator_northwest');
+    assert.equal(game.revealImpostorTrap(investigator.id, placedTrap.id), true);
+    assert.equal(placedTrap.isRevealed, true);
+
+    // Public event broadcasted
+    assert.ok(publicEvents.some(e =>
+      e.event === 'impostorPublicEvent' &&
+      e.data?.type === 'trap_revealed' &&
+      e.data?.playerName === investigator.username &&
+      e.data?.trapType === 'ice'
+    ));
+
+    // Now technician receives the revealed trap
+    const technicianTrapStateAfter = game.getPrivateImpostorTrapState(technician.id);
+    assert.equal(technicianTrapStateAfter?.traps.length, 1);
+    assert.equal(technicianTrapStateAfter?.traps[0].id, placedTrap.id);
+    assert.equal(technicianTrapStateAfter?.traps[0].isRevealed, true);
+
+    // Technician with hammer adjacent to the revealed trap can now begin deactivation
+    assert.equal(game.beginImpostorTrapDeactivation(technician.id, placedTrap.id), true);
+    assert.ok(privateEvents.some(e => e.playerId === technician.id && e.event === 'impostorTrapDeactivationStarted'));
+
+    // Advance 5 seconds
+    mock.timers.tick(5000);
+    assert.ok(privateEvents.some(e => e.playerId === technician.id && e.event === 'impostorTrapDeactivationEnded'));
+    assert.ok(publicEvents.some(e =>
+      e.event === 'impostorPublicEvent' &&
+      e.data?.type === 'trap_deactivated' &&
+      e.data?.playerName === technician.username
+    ));
+    assert.equal(board.traps.length, 0);
+  });
+
+  it('strictly limits tool requests and transfers to the safe zone', () => {
+    const players = [
+      { id: 'sz_requester', username: 'SZRequester', isGuest: false, color: '#FF3B30' },
+      { id: 'sz_holder', username: 'SZHolder', isGuest: false, color: '#007AFF' }
+    ];
+    const game = new GameInstance('impostor_safe_zone_tool_test', 'impostor', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    games.push(game);
+    game.start();
+
+    const board = game.board as ImpostorBoard;
+    const middle = Math.floor(board.size / 2);
+    const requester = board.players.get('sz_requester')!;
+    const holder = board.players.get('sz_holder')!;
+    const radar = board.tools.find(tool => tool.type === 'radar')!;
+    radar.carriedBy = holder.id;
+    holder.impostorTool = 'radar';
+
+    // Outside safe zone: request fails
+    requester.x = 2;
+    requester.y = 2;
+    holder.x = 2;
+    holder.y = 3;
+    assert.equal(board.isSafeZoneCell(requester.x, requester.y), false);
+    assert.equal(game.requestImpostorTool(requester.id, holder.id), false);
+
+    // Requester inside safe zone: request succeeds
+    requester.x = middle - 2;
+    requester.y = middle - 1;
+    assert.equal(board.isSafeZoneCell(requester.x, requester.y), true);
+    assert.equal(board.isAdjacentToToolTable(requester.x, requester.y), true);
+    assert.equal(game.requestImpostorTool(requester.id, holder.id), true);
+  });
+
+  it('tracks footprints for the impostor outside safe zone and emits them to players holding magnifier', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 10_000 });
+    const players = [
+      { id: 'fp_good', username: 'GoodInvestigator', isGuest: false, color: '#FF3B30' },
+      { id: 'fp_impostor', username: 'ImpostorWalker', isGuest: false, color: '#007AFF' }
+    ];
+    const privateEvents: Array<{ playerId: string; event: string; data: any }> = [];
+    const game = new GameInstance('impostor_footprint_test', 'impostor', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    game.onPrivateStateChange = (playerId, event, data) => {
+      privateEvents.push({ playerId, event, data });
+    };
+    games.push(game);
+    game.start();
+
+    const board = game.board as ImpostorBoard;
+    const impostorId = game.impostorId!;
+    const goodId = players.find(p => p.id !== impostorId)!.id;
+    const impostor = board.players.get(impostorId)!;
+    const good = board.players.get(goodId)!;
+    const middle = Math.floor(board.size / 2);
+
+    // Good player starts with magnifier
+    good.impostorTool = 'magnifier';
+    good.x = 5;
+    good.y = 5;
+    board.walls = [];
+
+    // Impostor in safe zone moving within safe zone does NOT leave footprints
+    impostor.x = middle;
+    impostor.y = middle;
+    board.grid[middle][middle].hasPlayer = impostorId;
+    assert.equal(board.isSafeZoneCell(middle, middle + 1), true);
+    board.moveImpostorPlayer(impostorId, middle, middle + 1);
+    assert.equal(board.footprints.length, 0);
+
+    // Impostor outside safe zone stepping on (2, 2) (Step 1 -> leaves footprint)
+    impostor.x = 2;
+    impostor.y = 1;
+    board.grid[1][2].hasPlayer = impostorId;
+    assert.equal(board.isSafeZoneCell(2, 2), false);
+
+    privateEvents.length = 0;
+    assert.equal(game.executeMove(impostorId, 2, 2), true);
+    assert.equal(board.footprints.length, 1);
+    assert.equal(board.footprints[0].x, 2);
+    assert.equal(board.footprints[0].y, 2);
+
+    // Impostor steps on (2, 3) (Step 2 -> intermittent, skips footprint)
+    mock.timers.tick(200);
+    assert.equal(game.executeMove(impostorId, 2, 3), true);
+    assert.equal(board.footprints.length, 1, 'Intermittent step does not leave footprint');
+
+    // Impostor steps on (2, 4) (Step 3 -> leaves footprint)
+    mock.timers.tick(200);
+    assert.equal(game.executeMove(impostorId, 2, 4), true);
+    assert.equal(board.footprints.length, 2, 'Third step leaves footprint');
+
+    // Impostor moves further away to (2, 7).
+    // The footprint at (2, 2) is 5 tiles away (> 2 tiles) so it is emitted.
+    // The footprint at (2, 4) is 3 tiles away (> 2 tiles) so it is emitted.
+    impostor.x = 2;
+    impostor.y = 6;
+    board.grid[6][2].hasPlayer = impostorId;
+    mock.timers.tick(200);
+    privateEvents.length = 0;
+    assert.equal(game.executeMove(impostorId, 2, 7), true);
+
+    const emittedFps = privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').pop();
+    assert.ok(emittedFps);
+    assert.ok(emittedFps.data.some((f: any) => f.x === 2 && f.y === 2));
+
+    // When impostor is at (2, 4), the footprint at (2, 2) is 2 tiles away (<= 2 tiles) -> masked!
+    impostor.x = 2;
+    impostor.y = 4;
+    game.emitPrivateImpostorFootprints();
+    const maskedFps = privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').pop();
+    assert.ok(maskedFps);
+    assert.equal(maskedFps.data.some((f: any) => f.x === 2 && f.y === 2), false, 'Footprint within 2 tiles of impostor is masked');
+
+    // If good player drops magnifier, they receive empty footprints
+    good.impostorTool = null;
+    game.emitPrivateImpostorFootprints();
+    const droppedEvent = privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').pop();
+    assert.ok(droppedEvent);
+    assert.equal(droppedEvent.data.length, 0);
+
+    // Advance 11 seconds: footprint expires and is cleaned up
+    mock.timers.tick(11_000);
+    board.cleanupExpiredFootprints(Date.now());
+    assert.equal(board.footprints.length, 0);
   });
 });

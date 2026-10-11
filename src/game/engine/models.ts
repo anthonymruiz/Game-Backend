@@ -3,7 +3,7 @@ export interface Coordinate {
   y: number;
 }
 
-export type ImpostorToolType = 'radar' | 'hammer' | 'wrench';
+export type ImpostorToolType = 'radar' | 'hammer' | 'wrench' | 'magnifier';
 
 export class Cell {
   constructor(

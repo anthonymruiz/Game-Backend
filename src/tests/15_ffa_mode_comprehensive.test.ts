@@ -40,6 +40,27 @@ describe('15 - FFA Mode Comprehensive Rules, Combinations (4, 5, 6 Players) & Ga
       assert.equal(ffaRules.isTeamMode, false);
     });
 
+    it('3-Player FFA spawns on 3 distinct cardinal perimeter borders with goal at center (5,5)', () => {
+      const players = createTestFfaPlayers(3);
+      const game = new GameInstance('ffa_init_3', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+      game.start();
+
+      try {
+        assert.equal(game.board.size, 11);
+        assert.equal(game.board.players.size, 3);
+
+        const p0 = game.board.players.get('user_ffa_0')!;
+        const p1 = game.board.players.get('user_ffa_1')!;
+        const p2 = game.board.players.get('user_ffa_2')!;
+
+        assert.deepEqual({ x: p0.x, y: p0.y }, { x: 5, y: 10 }, 'Player 0 at Bottom');
+        assert.deepEqual({ x: p1.x, y: p1.y }, { x: 5, y: 0 }, 'Player 1 at Top');
+        assert.deepEqual({ x: p2.x, y: p2.y }, { x: 0, y: 5 }, 'Player 2 at Left');
+      } finally {
+        game.destroy();
+      }
+    });
+
     it('4-Player FFA spawns on 4 cardinal perimeter borders with goal at center (5,5)', () => {
       const players = createTestFfaPlayers(4);
       const game = new GameInstance('ffa_init_4', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);

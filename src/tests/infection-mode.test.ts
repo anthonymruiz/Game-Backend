@@ -1242,4 +1242,52 @@ describe('Infection mode', () => {
     assert.equal(survivor.isInfected, false);
     game.destroy();
   });
+
+  it('survivor placing an ice trap freezes the infected on contact and prevents survivor from getting infected', () => {
+    const game = createGame(makePlayers(3));
+    game.start();
+
+    const board = game.board as InfectionBoard;
+    const infected = [...board.players.values()].find(player => player.isInfected);
+    const survivor = [...board.players.values()].find(player => !player.isInfected);
+    const otherSurvivor = [...board.players.values()].find(player =>
+      !player.isInfected && player.id !== survivor?.id
+    );
+    assert.ok(infected && survivor && otherSurvivor);
+
+    board.walls = [];
+    for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+
+    // Position infected at (4, 4), survivor at (4, 6), and trap at (4, 5) right between them
+    infected.x = 4;
+    infected.y = 4;
+    survivor.x = 4;
+    survivor.y = 6;
+    otherSurvivor.x = board.size - 2;
+    otherSurvivor.y = board.size - 2;
+    for (const player of [infected, survivor, otherSurvivor]) {
+      board.grid[player.y][player.x].hasPlayer = player.id;
+    }
+    game.startTime = Date.now() - 11_000;
+
+    // Survivor places an ice trap at (4, 5)
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', 4, 5), true);
+    assert.equal(board.traps.length, 1);
+
+    // Infected moves to (4, 5) right adjacent to survivor at (4, 6)
+    assert.equal(game.executeMove(infected.id, 4, 5), true);
+
+    // Infected must be frozen for 10 seconds
+    assert.ok(infected.impostorFrozenUntil > Date.now());
+    assert.equal(board.traps.length, 0); // Trap was consumed
+
+    // Survivor directly adjacent at (4, 6) must NOT be infected!
+    assert.equal(survivor.isInfected, false);
+
+    // While frozen, infected cannot move to survivor's cell or anywhere
+    assert.equal(game.executeMove(infected.id, 4, 6), false);
+    assert.equal(survivor.isInfected, false);
+
+    game.destroy();
+  });
 });

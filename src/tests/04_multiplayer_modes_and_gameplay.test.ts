@@ -70,7 +70,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     assert.equal(snapshot.board.exits.length, 4);
     assert.equal(snapshot.board.teleports.length, 0);
     assert.equal(snapshot.board.generators.length, 4);
-    assert.equal(snapshot.board.tools.length, 4);
+    assert.equal(snapshot.board.tools.length, 7);
     game.destroy();
   });
 
@@ -358,7 +358,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
       assert.equal(player.targetY, 5);
       assert.ok(
         player.x === 0 || player.y === 0 || player.x === 10 || player.y === 10,
-        'Each 6-FFA player should start on the 11x11 board perimeter'
+        'Each 6-player FFA player should start on the 11x11 board perimeter'
       );
       startingPositions.add(`${player.x},${player.y}`);
     }
@@ -367,9 +367,9 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     game.destroy();
   });
 
-  it('Should create a six-slot Impostor room that can be filled with bots', () => {
+  it('Should create a seven-slot Impostor room that can be filled with bots', () => {
     const room = roomService.createRoom('impostor_host', 'ImpostorHost', false, 'Impostor room', 'impostor');
-    assert.equal(room.maxPlayers, 6);
+    assert.equal(room.maxPlayers, 7);
     for (let index = 0; index < 5; index++) {
       roomService.addBotToCustomRoom(room.id, 'impostor_host');
     }
@@ -876,8 +876,8 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     assert.equal(impostorBoard.teleports.length, 0);
     assert.ok(impostorBoard.isCellCapturable(impostorBoard.keys[0].x, impostorBoard.keys[0].y));
     assert.equal(impostorBoard.generators.length, 4);
-    assert.equal(impostorBoard.tools.length, 4);
-    assert.equal(game.getImpostorGameTimeLimitSeconds(), 480);
+    assert.equal(impostorBoard.tools.length, 7);
+    assert.equal(game.getImpostorGameTimeLimitSeconds(), 600);
 
     const humanRoles = players
       .filter(player => !player.id.startsWith('bot_'))
@@ -950,7 +950,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     assert.equal('currentTurn' in startEvent, false);
     assert.equal('turnTimeLimitSeconds' in startEvent, false);
     assert.equal('turnSecondsRemaining' in startEvent, false);
-    assert.equal(startEvent.gameTimeLimitSeconds, 480);
+    assert.equal(startEvent.gameTimeLimitSeconds, 600);
     const impostorBoard = game.board as ImpostorBoard;
     const firstMove = impostorBoard.getImpostorValidMoves('impostor_realtime_1')[0];
     assert.ok(firstMove);
@@ -1140,7 +1140,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     game.destroy();
   });
 
-  it('Should give the impostor the win when the eight-minute Impostor timer expires', () => {
+  it('Should give the impostor the win when the ten-minute Impostor timer expires', () => {
     mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
     let finishedWinner: string | null = null;
     const game = new GameInstance('impostor_timer_test', 'impostor', [
@@ -1151,12 +1151,12 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     }, GAME_INSTANCE_TEST_OPTIONS);
     try {
       game.start();
-      for (let minute = 0; minute < 8; minute++) {
+      for (let minute = 0; minute < 10; minute++) {
         mock.timers.tick(59_000);
         game.recordPlayerActivity('impostor_timer_1');
         game.recordPlayerActivity('impostor_timer_2');
       }
-      mock.timers.tick(7_999);
+      mock.timers.tick(9_999);
       assert.equal(game.state, 'playing');
       mock.timers.tick(1);
       assert.equal(game.state, 'finished');
@@ -1801,6 +1801,10 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     }, GAME_INSTANCE_TEST_OPTIONS);
     game.start();
 
+    assert.equal(game.hasSpawnedKillerItem, false);
+    assert.equal(game.board.boosts.some(boost => boost.type === 'killer_item'), false);
+    (game as any).completedRounds = 5;
+    (game as any).handleRoundBasedBoostRotation();
     assert.equal(game.hasSpawnedKillerItem, true);
     const killerBoost = game.board.boosts.find(b => b.type === 'killer_item');
     assert.ok(killerBoost);
@@ -1944,7 +1948,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     game.destroy();
   });
 
-  it('Should keep a 2v2 match running when a player surrenders without eliminating their teammate', () => {
+  it('Should end a 2v2 match when a player surrenders and eliminate their whole team', () => {
     const players = [
       { id: 'surrender_human', username: 'Human', isGuest: false, color: '#FF3B30', team: 1 },
       { id: 'bot_surrender', username: 'BOT Red', isGuest: true, color: '#F59E0B', team: 1 },
@@ -1960,10 +1964,10 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     assert.equal(game.hasBots(), true);
     game.surrender('surrender_human');
 
-    assert.equal(game.state, 'playing');
-    assert.equal(finishedWinner, undefined);
+    assert.equal(game.state, 'finished');
+    assert.equal(finishedWinner, 'opponent_human');
     assert.equal(game.board.players.get('surrender_human')?.isDead, true);
-    assert.equal(game.board.players.get('bot_surrender')?.isDead, false);
+    assert.equal(game.board.players.get('bot_surrender')?.isDead, true);
     assert.equal(game.board.players.get('opponent_human')?.isDead, false);
     assert.equal(game.board.players.get('bot_opponent')?.isDead, false);
     game.destroy();

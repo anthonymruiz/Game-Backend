@@ -140,7 +140,7 @@ export class TwoVsTwoRules implements IGameModeRules {
 export class ImpostorRules implements IGameModeRules {
   public mode: GameMode = 'impostor';
   public boardSize = 40;
-  public maxPlayers = 6;
+  public maxPlayers = 7;
   public wallsPerPlayer = 0;
   public isTeamMode = false;
 
@@ -152,6 +152,7 @@ export class ImpostorRules implements IGameModeRules {
       { x: 2, y: -2 },
       { x: -2, y: 0 },
       { x: 2, y: 0 },
+      { x: -2, y: 2 },
       { x: 0, y: 2 }
     ];
     const offset = centralSpawnOffsets[index % centralSpawnOffsets.length];
@@ -165,6 +166,7 @@ export class ImpostorRules implements IGameModeRules {
 
 export class InfectionRules extends ImpostorRules {
   public override mode: GameMode = 'infection';
+  public override boardSize = 35;
 
   public override getPlayerStartConfig(index: number, _totalPlayers: number, size: number): IPlayerStartConfig {
     const middle = Math.floor(size / 2);
