@@ -220,4 +220,67 @@ describe('01 - Guest Capabilities & 1v1 Room/Game Engine Tests', () => {
 
     game.destroy();
   });
+
+  it('Should rotate timed boosts every 5 completed rounds instead of using a time delay', () => {
+    const room = roomService.createRoom('boost_round_host', 'BoostHost', true, 'Round Boosts', '1v1');
+    roomService.joinRoom(room.id, 'boost_round_guest', 'BoostGuest', true);
+
+    const game = new GameInstance(room.id, room.mode, room.players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+
+    game.board.boosts = [];
+    game.board.spawnGhostItem();
+    game.board.spawnExchangeItem();
+    game.board.spawnFfaBoost('portal', (game as any).getPortalSpawnExclusions());
+
+    const timedBoosts = game.board.boosts.filter(boost =>
+      boost.type === 'ghost' || boost.type === 'exchange_item' || boost.type === 'portal'
+    );
+    const originalIds = timedBoosts.map(boost => boost.id);
+
+    (game as any).completedRounds = 4;
+    (game as any).handleRoundBasedBoostRotation();
+    const stillSameAtRoundFour = game.board.boosts
+      .filter(boost => boost.type === 'ghost' || boost.type === 'exchange_item' || boost.type === 'portal')
+      .map(boost => boost.id);
+    assert.deepEqual(stillSameAtRoundFour.sort(), originalIds.sort());
+
+    (game as any).completedRounds = 5;
+    (game as any).handleRoundBasedBoostRotation();
+    const refreshedBoosts = game.board.boosts
+      .filter(boost => boost.type === 'ghost' || boost.type === 'exchange_item' || boost.type === 'portal');
+    assert.ok(refreshedBoosts.length > 0);
+    assert.ok(refreshedBoosts.some(boost => !originalIds.includes(boost.id)));
+
+    game.destroy();
+  });
+
+  it('FFA killer item should appear only once after 5 rounds and never at the start', () => {
+    const players = Array.from({ length: 4 }, (_, index) => ({
+      id: `ffa_killer_${index}`,
+      username: `Player ${index}`,
+      isGuest: true,
+      color: '#007AFF'
+    }));
+
+    const game = new GameInstance('ffa_killer_once', 'FFA', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    game.start();
+
+    assert.equal(game.board.boosts.some(boost => boost.type === 'killer_item'), false);
+
+    (game as any).completedRounds = 4;
+    (game as any).handleRoundBasedBoostRotation();
+    assert.equal(game.board.boosts.some(boost => boost.type === 'killer_item'), false);
+
+    (game as any).completedRounds = 5;
+    (game as any).handleRoundBasedBoostRotation();
+    assert.equal(game.board.boosts.filter(boost => boost.type === 'killer_item').length, 1);
+
+    game.board.removeBoostsOfType('killer_item');
+    (game as any).completedRounds = 10;
+    (game as any).handleRoundBasedBoostRotation();
+    assert.equal(game.board.boosts.some(boost => boost.type === 'killer_item'), false);
+
+    game.destroy();
+  });
 });

@@ -525,6 +525,62 @@ export class SocketManager {
         }
       });
 
+      socket.on('jumpLobbyPawn', (data: { roomId: string }) => {
+        try {
+          if (typeof data?.roomId !== 'string') {
+            return;
+          }
+          const room = this.roomService.getRoom(data.roomId);
+          if (!room?.players.some(player => player.id === userId)) return;
+          matchmakingNs.to(data.roomId).emit('lobbyPawnJumped', { roomId: data.roomId, playerId: userId });
+        } catch (error) {
+          socket.emit('error', error instanceof Error ? error.message : 'Could not jump lobby pawn.');
+        }
+      });
+
+      socket.on('lobbyEmote', async (data: { roomId: string; emoteId: string }) => {
+        try {
+          if (typeof data?.roomId !== 'string' || typeof data.emoteId !== 'string') return;
+          const room = this.roomService.getRoom(data.roomId);
+          if (!room?.players.some(player => player.id === userId)) return;
+          const defaults = ['👍', '😂', '😮', '😡'];
+          let displayedEmote = data.emoteId;
+          if (!defaults.includes(data.emoteId)) {
+            const item = await this.storeItemService.getOwnedItem(userId, data.emoteId, StoreItemCategory.EXCLUSIVE_EMOTES);
+            if (!item) return;
+            displayedEmote = item.icon;
+          }
+          socket.join(data.roomId);
+          matchmakingNs.to(data.roomId).emit('lobbyEmote', {
+            roomId: data.roomId,
+            sender: username,
+            senderId: userId,
+            emoteId: displayedEmote
+          });
+        } catch (error) {
+          socket.emit('error', error instanceof Error ? error.message : 'Could not send lobby emote.');
+        }
+      });
+
+      socket.on('lobbyQuickChat', (data: { roomId: string; messageId: string }) => {
+        try {
+          if (typeof data?.roomId !== 'string' || typeof data.messageId !== 'string' ||
+              !QUICK_CHAT_MESSAGE_IDS.has(data.messageId)) return;
+          const room = this.roomService.getRoom(data.roomId);
+          if (!room?.players.some(player => player.id === userId)) return;
+          socket.join(data.roomId);
+          matchmakingNs.to(data.roomId).emit('lobbyQuickChat', {
+            roomId: data.roomId,
+            sender: username,
+            senderId: userId,
+            messageId: data.messageId,
+            timestamp: new Date()
+          });
+        } catch (error) {
+          socket.emit('error', error instanceof Error ? error.message : 'Could not send lobby quick chat.');
+        }
+      });
+
       socket.on('toggleRoomPrivacy', (data: { roomId: string; isPrivate: boolean }) => {
         try {
           const room = this.roomService.toggleRoomPrivacy(data.roomId, userId, data.isPrivate);
@@ -641,8 +697,8 @@ export class SocketManager {
             throw new Error('El modo Infección requiere al menos 3 participantes.');
           }
           if (room.mode === 'FFA') {
-            if (room.players.length < 4) {
-              throw new Error('El modo FFA requiere al menos 4 participantes para iniciar.');
+            if (room.players.length < 3) {
+              throw new Error('El modo FFA requiere al menos 3 participantes para iniciar.');
             }
           } else if (room.mode !== 'impostor' && room.mode !== 'infection' &&
               room.players.length < room.maxPlayers) {
@@ -850,7 +906,9 @@ export class SocketManager {
             socket.emit('gameStarted', {
               matchId: roomId,
               mode: game.mode,
-              isResuming: true,
+              isResuming: game.startTime
+                ? (Date.now() - game.startTime >= 5000 || game.currentTurnIndex > 0)
+                : false,
               board: game.board.toDTO(userId, userId === game.impostorId),
               pendingBoostDecision: game.getPendingBoostDecision(),
               ...(game.mode === 'impostor' || game.mode === 'infection'
@@ -975,11 +1033,11 @@ export class SocketManager {
         if (!game.dropImpostorTool(userId)) socket.emit('impostorToolActionRejected');
       });
 
-      socket.on('requestImpostorTool', (data: { roomId: string; targetId: string }) => {
-        if (typeof data?.roomId !== 'string' || typeof data.targetId !== 'string') return;
+      socket.on('requestImpostorTool', (data: { roomId: string; targetId?: string }) => {
+        if (typeof data?.roomId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);
         if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
-            !game.playersList.includes(userId) || !game.playersList.includes(data.targetId)) return;
+            !game.playersList.includes(userId)) return;
         if (!game.requestImpostorTool(userId, data.targetId)) {
           socket.emit('impostorToolRequestRejected');
         }
@@ -1017,6 +1075,26 @@ export class SocketManager {
             !game.playersList.includes(userId)) return;
         if (!game.beginImpostorGeneratorRepair(userId, data.generatorId)) {
           socket.emit('impostorGeneratorActionRejected');
+        }
+      });
+
+      socket.on('revealImpostorTrap', (data: { roomId: string; trapId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.trapId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.revealImpostorTrap(userId, data.trapId)) {
+          socket.emit('impostorTrapActionRejected');
+        }
+      });
+
+      socket.on('deactivateImpostorTrap', (data: { roomId: string; trapId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.trapId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.beginImpostorTrapDeactivation(userId, data.trapId)) {
+          socket.emit('impostorTrapActionRejected');
         }
       });
 
@@ -1218,8 +1296,12 @@ export class SocketManager {
               game.abandon();
             } else {
               const surrendered = game.surrender(userId);
-              if (surrendered && (game.state === 'playing' || game.mode === 'infection')) {
-                socket.emit('playerSurrendered', { roomId });
+              if (surrendered) {
+                const player = game.board.players.get(userId);
+                this.roomService.leaveRoom(roomId, userId);
+                socket.emit('playerSurrendered', { roomId, playerId: userId, playerName: player?.username });
+                const matchmakingNs = this.io.of('/matchmaking');
+                matchmakingNs.to(userId).emit('myActiveRoom', null);
               }
             }
           }
@@ -1237,10 +1319,11 @@ export class SocketManager {
           const requests = this.rematchRequests.get(roomId)!;
           requests.add(userId);
 
+          const lastPlayers = this.lastMatchPlayers.get(roomId) || [];
           const room = this.roomService.getRoom(roomId);
-          const rawPlayers = (room && room.players && room.players.length > 0)
-            ? room.players
-            : (this.lastMatchPlayers.get(roomId) || []);
+          const rawPlayers = lastPlayers.length >= (room?.players?.length || 0)
+            ? lastPlayers
+            : (room?.players || []);
 
           // Deduplicate players list
           const uniquePlayersMap = new Map<string, any>();
@@ -1405,6 +1488,17 @@ export class SocketManager {
       socket.on('emote', (data: { roomId: string; emoteId: string }) => {
         if (typeof data?.roomId === 'string' && typeof data?.emoteId === 'string') {
           void handleEmote(data.roomId, data.emoteId);
+        }
+      });
+
+      socket.on('jumpPawn', (data: { roomId: string }) => {
+        try {
+          if (!data?.roomId || !socket.rooms.has(data.roomId)) {
+            return;
+          }
+          gameNs.to(data.roomId).emit('pawnJumped', { roomId: data.roomId, playerId: userId });
+        } catch {
+          // ignore
         }
       });
 

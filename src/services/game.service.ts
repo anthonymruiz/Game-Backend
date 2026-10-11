@@ -77,7 +77,9 @@ export class GameService {
                   board: game.board.toDTO(playerId, playerId === game.impostorId)
                 }
               : game.getImpostorStateDataForPlayer(playerId);
-            namespace.to(matchId).except(game.playersList).emit(event, personalizedData(''));
+            if (typeof (namespace.to(matchId) as any).except === 'function') {
+              (namespace.to(matchId) as any).except(game.playersList).emit(event, personalizedData(''));
+            }
             for (const playerId of game.playersList) {
               if (playerId.startsWith('bot_')) continue;
               namespace.to(playerId).emit(event, personalizedData(playerId));

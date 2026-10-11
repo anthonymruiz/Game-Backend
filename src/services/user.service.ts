@@ -8,6 +8,7 @@ import { isReservedUsername } from '../utils/reserved-username.util.js';
 import { getLevelProgress, LevelProgressionService } from './level-progression.service.js';
 import { RankTierService } from './rank-tier.service.js';
 import { getUtcWeekRange } from '../utils/utc-week.util.js';
+import { PresenceStatus } from '../models/presence.enum.js';
 
 @injectable()
 export class UserService {
@@ -105,6 +106,14 @@ export class UserService {
       userId: user.id,
       username: user.username,
       avatarUrl: user.avatarUrl || null,
+      isOnline: Boolean(
+        user.isOnline ||
+        user.presenceStatus === PresenceStatus.ONLINE ||
+        user.presenceStatus === PresenceStatus.PLAYING ||
+        (user.presenceStatus as string)?.toLowerCase() === 'online' ||
+        (user.presenceStatus as string)?.toLowerCase() === 'playing'
+      ),
+      presenceStatus: user.presenceStatus,
       totalGames,
       wins,
       losses,

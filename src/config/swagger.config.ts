@@ -294,7 +294,7 @@ const options: swaggerJSDoc.Options = {
                   type: 'object',
                   properties: {
                     name: { type: 'string' },
-                    mode: { type: 'string', enum: ['1v1', '2v2', '4-FFA', '6-FFA'] },
+                    mode: { type: 'string', enum: ['1v1', '2v2', 'FFA', 'vs_ai', 'impostor', 'infection'] },
                     isPrivate: { type: 'boolean' }
                   }
                 }

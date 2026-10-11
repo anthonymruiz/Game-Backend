@@ -7,7 +7,7 @@ import { ENV } from './config/env.config.js';
 import { SocketManager } from './socket/socket.manager.js';
 import { RedisService } from './services/redis.service.js';
 import { startWeeklyRewardsScheduler } from './services/weekly-rewards.service.js';
-import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedReports, seedMatchHistory, seedLevelProgressionConfig, seedRankTiers, seedRewardsSettings } from './utils/seed.utils.js';
+import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedLevelProgressionConfig, seedRankTiers, seedRewardsSettings } from './utils/seed.utils.js';
 import { seedBadges } from './seeds/badges.seed.js';
 
 process.on('uncaughtException', (err) => {
@@ -39,9 +39,7 @@ async function bootstrap() {
       seedRankTiers(),
       seedSystemSettings()
     ]));
-    await runStartupStage('Sample data and badge seeds', () => Promise.all([
-      seedReports(),
-      seedMatchHistory(),
+    await runStartupStage('Badge seeds', () => Promise.all([
       seedBadges()
     ]));
     startWeeklyRewardsScheduler();
