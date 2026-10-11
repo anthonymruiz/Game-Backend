@@ -89,7 +89,7 @@ describe('Persistent rank tiers', () => {
       assert.equal(reversed.at(-1)?.key, 'NOVATO');
       assert.equal((await service.getRankInfo(0)).rankKey, 'LEGENDARIO');
     } finally {
-      await service.replaceRanks(payload(original));
+      await service.replaceRanks(original);
     }
   });
 
