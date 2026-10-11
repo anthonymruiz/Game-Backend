@@ -19,7 +19,7 @@ export class MatchHistory extends AbstractBaseEntity {
   result!: string; // 'win' | 'loss' | 'draw'
 
   @Column({ type: 'varchar', default: '1v1' })
-  mode!: string; // '1v1' | '4way' | '2v2'
+  mode!: string; // '1v1' | '2v2' | 'FFA' | 'vs_ai' | 'impostor' | 'infection'
 
   @Column({ type: 'int', default: 0 })
   xpAwarded!: number;

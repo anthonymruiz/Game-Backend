@@ -286,7 +286,10 @@ export class AdminService {
 
   private normalizeDashboardMode(mode: string): string {
     const normalized = mode.toLowerCase();
-    if (normalized === '4way' || normalized === '6way' || normalized === '4-ffa' || normalized === '6-ffa') return 'ffa';
+    if (normalized === 'vs_ai' || normalized === '1v1' || normalized === '2v2' || normalized === 'impostor' || normalized === 'infection') {
+      return normalized;
+    }
+    if (['ffa', '4way', '6way', '4-ffa', '6-ffa'].includes(normalized)) return 'ffa';
     return normalized;
   }
 

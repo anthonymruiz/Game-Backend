@@ -22,7 +22,11 @@ export class MatchHistoryRepository {
           WHEN match.mode = 'vs_ai' OR (
             match.mode = '1v1' AND LOWER(COALESCE(match.opponentUsername, '')) LIKE 'bot%'
           ) THEN 'vs_ai'
+          WHEN match.mode = '2v2' THEN '2v2'
+          WHEN match.mode = 'impostor' THEN 'impostor'
+          WHEN match.mode = 'infection' THEN 'infection'
           WHEN match.mode = 'FFA' THEN 'FFA'
+          WHEN match.mode = '1v1' OR match.mode IS NULL THEN '1v1'
           ELSE match.mode
         END`,
         'mode'
@@ -99,16 +103,25 @@ export class MatchHistoryRepository {
       ]);
 
     if (modeFilter && modeFilter !== 'all') {
-      if (modeFilter === '1v1') {
+      const normalized = modeFilter.toLowerCase();
+      if (normalized === '1v1') {
         queryBuilder.andWhere(
           '(match.mode = :mode OR match.mode IS NULL) AND LOWER(COALESCE(match.opponentUsername, \'\')) NOT LIKE :botPrefix',
-          { mode: modeFilter, botPrefix: 'bot%' }
+          { mode: '1v1', botPrefix: 'bot%' }
         );
-      } else if (modeFilter === 'vs_ai') {
+      } else if (normalized === 'vs_ai') {
         queryBuilder.andWhere(
           '(match.mode = :mode OR (match.mode = :legacyMode AND LOWER(COALESCE(match.opponentUsername, \'\')) LIKE :botPrefix))',
-          { mode: modeFilter, legacyMode: '1v1', botPrefix: 'bot%' }
+          { mode: 'vs_ai', legacyMode: '1v1', botPrefix: 'bot%' }
         );
+      } else if (normalized === 'ffa') {
+        queryBuilder.andWhere('match.mode = :mode', { mode: 'FFA' });
+      } else if (normalized === '2v2') {
+        queryBuilder.andWhere('match.mode = :mode', { mode: '2v2' });
+      } else if (normalized === 'impostor') {
+        queryBuilder.andWhere('match.mode = :mode', { mode: 'impostor' });
+      } else if (normalized === 'infection') {
+        queryBuilder.andWhere('match.mode = :mode', { mode: 'infection' });
       } else {
         queryBuilder.andWhere('match.mode = :mode', { mode: modeFilter });
       }
