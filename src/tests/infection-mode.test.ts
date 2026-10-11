@@ -72,6 +72,51 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
+  it('does not resend unchanged private action state', () => {
+    const events: Array<{ playerId: string; event: string }> = [];
+    const game = createGame();
+    game.onPrivateStateChange = (playerId, event) => events.push({ playerId, event });
+    game.start();
+    events.length = 0;
+
+    (game as any).emitPrivateImpostorActionStates();
+    assert.equal(events.length, 0);
+
+    const player = game.board.players.get('player_0')!;
+    player.isInPrison = !player.isInPrison;
+    (game as any).emitPrivateImpostorActionStates();
+    assert.deepEqual(events, [{ playerId: player.id, event: 'impostorActionState' }]);
+
+    events.length = 0;
+    (game as any).emitPrivateImpostorActionStates();
+    assert.equal(events.length, 0);
+    game.destroy();
+  });
+
+  it('does not resend unchanged private trap state', () => {
+    const events: Array<{ playerId: string; event: string }> = [];
+    const game = createGame();
+    game.onPrivateStateChange = (playerId, event) => events.push({ playerId, event });
+    game.start();
+    events.length = 0;
+
+    (game as any).emitPrivateImpostorTrapState();
+    assert.equal(events.length, 0);
+
+    const survivor = [...game.board.players.values()].find(player => !player.isInfected)!;
+    (game as any).infectionTrapCooldownUntil.set(survivor.id, {
+      ice: Date.now() + 5_000,
+      teleport: 0
+    });
+    (game as any).emitPrivateImpostorTrapState();
+    assert.deepEqual(events, [{ playerId: survivor.id, event: 'impostorTrapState' }]);
+
+    events.length = 0;
+    (game as any).emitPrivateImpostorTrapState();
+    assert.equal(events.length, 0);
+    game.destroy();
+  });
+
   it('holds the initial infected for ten seconds and announces when the hunt begins', async () => {
     const events: Array<{ event: string; data: any }> = [];
     const game = createGame(makePlayers(3), (event, data) => events.push({ event, data }));

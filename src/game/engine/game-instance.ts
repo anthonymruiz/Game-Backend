@@ -128,6 +128,9 @@ export class GameInstance {
   public onPrivateStateChange: (playerId: string, event: string, data: unknown) => void = () => {};
   private readonly impostorMoveAt = new Map<string, number>();
   private readonly impostorActionsUsed = new Map<string, number>();
+  private readonly lastImpostorTrapStateByPlayer = new Map<string, string>();
+  private readonly lastImpostorActionStateByPlayer = new Map<string, string>();
+  private readonly lastImpostorFootprintsByPlayer = new Map<string, string>();
   private readonly impostorPublicEvents: Array<{
     id: string;
     type: string;
@@ -921,16 +924,29 @@ export class GameInstance {
     if (this.mode === 'impostor') {
       for (const playerId of this.playersList) {
         const state = this.getPrivateImpostorTrapState(playerId);
-        this.onPrivateStateChange(playerId, 'impostorTrapState', state ?? { traps: [], cooldowns: { ice: 0, teleport: 0 } });
+        this.emitImpostorTrapStateIfChanged(
+          playerId,
+          state ?? { traps: [], cooldowns: { ice: 0, teleport: 0 } }
+        );
       }
       return;
     }
     if (this.mode === 'infection') {
       for (const playerId of this.getInfectionSurvivorIds()) {
         const state = this.getPrivateImpostorTrapState(playerId);
-        if (state) this.onPrivateStateChange(playerId, 'impostorTrapState', state);
+        if (state) this.emitImpostorTrapStateIfChanged(playerId, state);
       }
     }
+  }
+
+  private emitImpostorTrapStateIfChanged(
+    playerId: string,
+    state: { traps: IImpostorTrap[]; cooldowns: Record<ImpostorTrapType, number> }
+  ): void {
+    const signature = JSON.stringify(state);
+    if (this.lastImpostorTrapStateByPlayer.get(playerId) === signature) return;
+    this.lastImpostorTrapStateByPlayer.set(playerId, signature);
+    this.onPrivateStateChange(playerId, 'impostorTrapState', state);
   }
 
   public emitPrivateImpostorFootprints(): void {
@@ -945,14 +961,17 @@ export class GameInstance {
         return distToImpostor > 2;
       })
       .map(fp => ({ ...fp }));
+    const footprintSignature = footprints
+      .map(footprint => `${footprint.id}:${footprint.x}:${footprint.y}:${footprint.createdAt}`)
+      .join('|');
     for (const playerId of this.playersList) {
       if (playerId.startsWith('bot_')) continue;
       const player = this.board.players.get(playerId);
-      if (player?.impostorTool === 'magnifier') {
-        this.onPrivateStateChange(playerId, 'impostorFootprints', footprints);
-      } else {
-        this.onPrivateStateChange(playerId, 'impostorFootprints', []);
-      }
+      const visibleFootprints = player?.impostorTool === 'magnifier' ? footprints : [];
+      const signature = player?.impostorTool === 'magnifier' ? footprintSignature : '';
+      if (this.lastImpostorFootprintsByPlayer.get(playerId) === signature) continue;
+      this.lastImpostorFootprintsByPlayer.set(playerId, signature);
+      this.onPrivateStateChange(playerId, 'impostorFootprints', visibleFootprints);
     }
   }
 
@@ -962,12 +981,18 @@ export class GameInstance {
       const role = this.getPrivateImpostorRole(playerId);
       const player = this.board.players.get(playerId);
       if (!role || !player) continue;
-      this.onPrivateStateChange(playerId, 'impostorActionState', {
+      const actionState = {
         canBreakBlock: role.canBreakBlock,
         canPlaceWall: role.canPlaceWall,
         canRescue: role.canRescue,
         isInPrison: player.isInPrison,
-        wallPlacementCooldownUntil: role.wallPlacementCooldownUntil,
+        wallPlacementCooldownUntil: role.wallPlacementCooldownUntil
+      };
+      const signature = JSON.stringify(actionState);
+      if (this.lastImpostorActionStateByPlayer.get(playerId) === signature) continue;
+      this.lastImpostorActionStateByPlayer.set(playerId, signature);
+      this.onPrivateStateChange(playerId, 'impostorActionState', {
+        ...actionState,
         serverTime: Date.now()
       });
     }

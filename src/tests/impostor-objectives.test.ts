@@ -881,6 +881,14 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.ok(droppedEvent);
     assert.equal(droppedEvent.data.length, 0);
 
+    privateEvents.length = 0;
+    game.emitPrivateImpostorFootprints();
+    assert.equal(
+      privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').length,
+      0,
+      'Unchanged footprint state should not be emitted again'
+    );
+
     // Advance 11 seconds: footprint expires and is cleaned up
     mock.timers.tick(11_000);
     board.cleanupExpiredFootprints(Date.now());
