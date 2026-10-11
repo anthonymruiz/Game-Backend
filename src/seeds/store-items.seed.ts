@@ -760,6 +760,26 @@ export const DEFAULT_STORE_ITEMS = [
     "sortOrder": 37
   },
   {
+    "code": "EMT-320",
+    "category": "EXCLUSIVE_EMOTES",
+    "rarity": "LEGENDARY",
+    "pricePoints": 1000,
+    "status": "AVAILABLE",
+    "icon": "🫵🏻😹",
+    "allowColor": false,
+    "configuration": {
+      "es": {
+        "name": "Emoji Burlón (🫵🏻😹)",
+        "description": "Emoji animado legendario de gato riendo y señalando para reaccionar con burla épica."
+      },
+      "en": {
+        "name": "Pointing Laughing Cat Emoji (🫵🏻😹)",
+        "description": "Legendary animated laughing cat pointing emoji for epic mock reactions."
+      }
+    },
+    "sortOrder": 38
+  },
+  {
     "code": "SKN-305",
     "category": "PAWN_SKIN",
     "rarity": "LEGENDARY",
