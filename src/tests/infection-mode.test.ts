@@ -212,32 +212,65 @@ describe('Infection mode', () => {
     const player = [...board.players.values()].find(candidate => !candidate.isInfected);
     assert.ok(player);
 
+    const safeZoneCells = Array.from({ length: board.size }, (_, y) =>
+      Array.from({ length: board.size }, (_, x) => ({ x, y }))
+        .filter(cell => board.isSafeZoneCell(cell.x, cell.y))
+    ).flat();
+    assert.equal(safeZoneCells.length, 64);
+    assert.ok(safeZoneCells.every(cell =>
+      cell.x >= min && cell.x <= max && cell.y >= min && cell.y <= max
+    ));
+    assert.deepEqual(
+      board.exits.map(({ x, y }) => ({ x, y })),
+      [
+        { x: middle, y: min },
+        { x: max, y: middle },
+        { x: middle, y: max },
+        { x: min, y: middle }
+      ]
+    );
     assert.equal(board.isSafeZoneCell(max, middle), true);
     assert.equal(board.isSafeZoneCell(max + 1, middle), false);
     board.reshuffleImpostor(() => 0.5);
     assert.ok(board.walls.some(wall => wall.id.startsWith('impostor_center_')));
-    const entrances = [
-      [middle, min - 1, middle, min],
-      [middle + 1, min - 1, middle + 1, min],
-      [middle, max, middle, max + 1],
-      [middle + 1, max, middle + 1, max + 1],
-      [min - 1, middle, min, middle],
-      [min - 1, middle + 1, min, middle + 1],
-      [max, middle, max + 1, middle],
-      [max, middle + 1, max + 1, middle + 1]
+    const perimeterPassages = [
+      ...Array.from({ length: max - min + 1 }, (_, offset) => ({
+        from: { x: min + offset, y: min - 1 },
+        to: { x: min + offset, y: min },
+        isEntrance: min + offset === middle || min + offset === middle + 1
+      })),
+      ...Array.from({ length: max - min + 1 }, (_, offset) => ({
+        from: { x: min + offset, y: max + 1 },
+        to: { x: min + offset, y: max },
+        isEntrance: min + offset === middle || min + offset === middle + 1
+      })),
+      ...Array.from({ length: max - min + 1 }, (_, offset) => ({
+        from: { x: min - 1, y: min + offset },
+        to: { x: min, y: min + offset },
+        isEntrance: min + offset === middle || min + offset === middle + 1
+      })),
+      ...Array.from({ length: max - min + 1 }, (_, offset) => ({
+        from: { x: max + 1, y: min + offset },
+        to: { x: max, y: min + offset },
+        isEntrance: min + offset === middle || min + offset === middle + 1
+      }))
     ];
     for (let reshuffle = 0; reshuffle < 3; reshuffle++) {
       board.reshuffleImpostor(() => 0.5);
-      for (const [fromX, fromY, toX, toY] of entrances) {
+      for (const { from, to, isEntrance } of perimeterPassages) {
         for (const row of board.grid) {
           for (const cell of row) cell.hasPlayer = null;
         }
-        player.x = fromX;
-        player.y = fromY;
-        board.grid[fromY][fromX].hasPlayer = player.id;
-        assert.ok(board.getImpostorValidMoves(player.id).some(move =>
-          move.x === toX && move.y === toY
-        ));
+        player.x = from.x;
+        player.y = from.y;
+        board.grid[from.y][from.x].hasPlayer = player.id;
+        assert.equal(
+          board.getImpostorValidMoves(player.id).some(move =>
+            move.x === to.x && move.y === to.y
+          ),
+          isEntrance,
+          `unexpected safe-zone perimeter passage from ${from.x},${from.y} to ${to.x},${to.y}`
+        );
       }
     }
 

@@ -1127,21 +1127,30 @@ export abstract class ImpostorBoardBase extends Board {
 
   private addCentralEntranceWalls(): void {
     const middle = Math.floor(this.size / 2);
-    const { minX: min, maxX: max, minY, maxY } = this.getCentralRoomBounds();
-    const gateSegmentStart = middle;
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     let northSouthIndex = 0;
     let eastWestIndex = 0;
-    for (let offset = 1; offset < max - min; offset += 2) {
-      const x = min + offset;
-      if (x === gateSegmentStart) continue;
+    const horizontalWallStarts = [
+      ...Array.from({ length: Math.max(0, middle - minX - 1) }, (_, index) => minX + index),
+      ...Array.from({ length: Math.max(0, maxX - middle - 2) }, (_, index) => middle + 2 + index)
+    ];
+    const verticalWallStarts = [
+      ...Array.from({ length: Math.max(0, middle - minY - 1) }, (_, index) => minY + index),
+      ...Array.from({ length: Math.max(0, maxY - middle - 2) }, (_, index) => middle + 2 + index)
+    ];
+
+    for (const x of horizontalWallStarts) {
       this.walls.push(
         new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, minY - 1, true),
         new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, maxY, true)
       );
       northSouthIndex++;
+    }
+
+    for (const y of verticalWallStarts) {
       this.walls.push(
-        new Wall(`impostor_center_w_${eastWestIndex}`, 'board', min - 1, minY + offset, false),
-        new Wall(`impostor_center_e_${eastWestIndex}`, 'board', max, minY + offset, false)
+        new Wall(`impostor_center_w_${eastWestIndex}`, 'board', minX - 1, y, false),
+        new Wall(`impostor_center_e_${eastWestIndex}`, 'board', maxX, y, false)
       );
       eastWestIndex++;
     }
