@@ -296,24 +296,25 @@ describe('Impostor personal keys, tools, and generators', () => {
     }
   });
 
-  it('spawns two protected entrances on every two-by-two generator through layout changes', () => {
+  it('spawns three-by-three generators with protected entrances through layout changes', () => {
     const board = new ImpostorBoard(20);
     board.spawnGenerators();
     assert.deepEqual(board.generators.map(({ sector, x, y }) => ({ sector, x, y })), [
       { sector: 'northwest', x: 0, y: 0 },
-      { sector: 'northeast', x: 18, y: 0 },
-      { sector: 'southwest', x: 0, y: 18 },
-      { sector: 'southeast', x: 18, y: 18 }
+      { sector: 'northeast', x: 17, y: 0 },
+      { sector: 'southwest', x: 0, y: 17 },
+      { sector: 'southeast', x: 17, y: 17 }
     ]);
 
     const doorPassages: Array<Array<[number, number, number, number]>> = [
-      [[2, 0, 3, 0], [2, 1, 3, 1], [0, 2, 0, 3], [1, 2, 1, 3],
-        [3, 0, 4, 0], [3, 1, 4, 1], [0, 3, 0, 4], [1, 3, 1, 4]],
-      [[16, 0, 17, 0], [16, 1, 17, 1], [18, 2, 18, 3], [19, 2, 19, 3],
-        [18, 3, 18, 4], [19, 3, 19, 4]],
-      [[2, 18, 3, 18], [2, 19, 3, 19], [0, 16, 0, 17], [1, 16, 1, 17],
-        [3, 18, 4, 18], [3, 19, 4, 19]],
-      [[17, 18, 16, 18], [17, 19, 16, 19], [18, 16, 18, 17], [19, 16, 19, 17]]
+      [[3, 0, 4, 0], [3, 1, 4, 1], [3, 2, 4, 2],
+        [0, 3, 0, 4], [1, 3, 1, 4], [2, 3, 2, 4]],
+      [[16, 0, 15, 0], [16, 1, 15, 1],
+        [17, 3, 17, 4], [18, 3, 18, 4], [19, 3, 19, 4]],
+      [[3, 17, 4, 17], [3, 18, 4, 18], [3, 19, 4, 19],
+        [0, 16, 0, 15], [1, 16, 1, 15], [2, 16, 2, 15]],
+      [[16, 17, 15, 17], [16, 18, 15, 18], [16, 19, 15, 19],
+        [17, 16, 17, 15], [18, 16, 18, 15], [19, 16, 19, 15]]
     ];
     const assertDoorsRemainOpen = (): void => {
       for (const [outsideX, outsideY, insideX, insideY] of doorPassages.flat()) {
@@ -330,7 +331,8 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.deepEqual(board.generators.map(generator => board.isGeneratorCell(generator.x, generator.y)), [
       true, true, true, true
     ]);
-    assert.equal(board.isGeneratorCell(2, 2), false);
+    assert.equal(board.isGeneratorCell(2, 2), true);
+    assert.equal(board.isGeneratorCell(3, 2), false);
     assert.equal(board.canPlaceWall(new Wall('generator_access_block', 'test', 2, 3, true)), false);
     for (const generator of board.generators) {
       for (const wall of board.walls) {
@@ -351,11 +353,18 @@ describe('Impostor personal keys, tools, and generators', () => {
     const assertWallCoverage = (): void => {
       for (let regionY = 0; regionY < board.size - 1; regionY += 4) {
         for (let regionX = 0; regionX < board.size - 1; regionX += 4) {
+          const overlapsSafeZone = [
+            [regionX + 1, regionY + 1],
+            [regionX + 3, regionY + 1],
+            [regionX + 1, regionY + 3],
+            [regionX + 3, regionY + 3]
+          ].some(([x, y]) => board.isSafeZoneCell(x, y));
           if ((regionX === 8 && regionY === 8) ||
               (regionX === 0 && regionY === 0) ||
               (regionX === board.size - 4 && regionY === 0) ||
               (regionX === 0 && regionY === board.size - 4) ||
-              (regionX === board.size - 4 && regionY === board.size - 4)) continue;
+              (regionX === board.size - 4 && regionY === board.size - 4) ||
+              overlapsSafeZone) continue;
           assert.ok(board.walls.filter(wall =>
             wall.x >= regionX && wall.x < regionX + 4 &&
             wall.y >= regionY && wall.y < regionY + 4
@@ -391,18 +400,22 @@ describe('Impostor personal keys, tools, and generators', () => {
             const approachCells = [
               { x: generator.x - 1, y: generator.y },
               { x: generator.x - 1, y: generator.y + 1 },
-              { x: generator.x + 2, y: generator.y },
-              { x: generator.x + 2, y: generator.y + 1 },
+              { x: generator.x - 1, y: generator.y + 2 },
+              { x: generator.x + 3, y: generator.y },
+              { x: generator.x + 3, y: generator.y + 1 },
+              { x: generator.x + 3, y: generator.y + 2 },
               { x: generator.x, y: generator.y - 1 },
               { x: generator.x + 1, y: generator.y - 1 },
-              { x: generator.x, y: generator.y + 2 },
-              { x: generator.x + 1, y: generator.y + 2 }
+              { x: generator.x + 2, y: generator.y - 1 },
+              { x: generator.x, y: generator.y + 3 },
+              { x: generator.x + 1, y: generator.y + 3 },
+              { x: generator.x + 2, y: generator.y + 3 }
             ];
             assert.ok(approachCells.some(({ x, y }) =>
               x >= 0 && x < board.size && y >= 0 && y < board.size &&
               !board.isSeparatedByWall(x, y,
-                x < generator.x ? x + 1 : x > generator.x + 1 ? x - 1 : x,
-                y < generator.y ? y + 1 : y > generator.y + 1 ? y - 1 : y)
+                x < generator.x ? x + 1 : x > generator.x + 2 ? x - 1 : x,
+                y < generator.y ? y + 1 : y > generator.y + 2 ? y - 1 : y)
             ), `${generator.id} should remain reachable in size ${size}, seed ${seed}`);
           }
         };
@@ -433,12 +446,12 @@ describe('Impostor personal keys, tools, and generators', () => {
   it('keeps generator cells inaccessible to movement, including jumps', () => {
     const board = new ImpostorBoard(20);
     board.spawnGenerators();
-    const player = new Player('generator_access_player', 'GeneratorAccess', false, 2, 0);
+    const player = new Player('generator_access_player', 'GeneratorAccess', false, 3, 0);
     board.addPlayer(player);
     board.walls = [];
 
     assert.equal(board.isAdjacentToGenerator(board.generators[0], player.x, player.y), true);
-    assert.equal(board.moveImpostorPlayer(player.id, 1, 0), false);
+    assert.equal(board.moveImpostorPlayer(player.id, 2, 0), false);
     assert.equal(board.getImpostorValidMoves(player.id).some(({ x, y }) => board.isGeneratorCell(x, y)), false);
     assert.equal(board.isAdjacentToGenerator(board.generators[0], 0, 0), false);
   });
@@ -522,7 +535,7 @@ describe('Impostor personal keys, tools, and generators', () => {
     );
 
     for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
-    good.x = generator.x + 2;
+    good.x = generator.x + 3;
     good.y = generator.y;
     board.grid[good.y][good.x].hasPlayer = good.id;
     assert.equal(game.beginImpostorGeneratorRepair(good.id, generator.id), true);
@@ -532,7 +545,7 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.equal(generator.isDamaged, false);
 
     for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
-    impostor.x = generator.x + 2;
+    impostor.x = generator.x + 3;
     impostor.y = generator.y;
     impostor.impostorTool = 'wrench';
     board.grid[impostor.y][impostor.x].hasPlayer = impostor.id;
@@ -571,6 +584,57 @@ describe('Impostor personal keys, tools, and generators', () => {
     game.recordPlayerActivity(impostorId);
     mock.timers.tick(1);
     assert.equal(game.damageImpostorGenerator(impostorId, secondGenerator.id), true);
+  });
+
+  it('allows wrench repairs of sabotaged doors from both sides and awards the impostor for sealing all four', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
+    const players = [
+      { id: 'door_good', username: 'DoorGood', isGuest: false, color: '#FF3B30' },
+      { id: 'door_impostor', username: 'DoorImpostor', isGuest: false, color: '#007AFF' }
+    ];
+    const repairGame = new GameInstance('impostor_door_repair_test', 'impostor', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    games.push(repairGame);
+    const privateEvents: string[] = [];
+    repairGame.onPrivateStateChange = (_playerId, event) => privateEvents.push(event);
+    repairGame.start();
+    const board = repairGame.board as ImpostorBoard;
+    const good = board.players.get('door_good')!;
+    const [northDoor, eastDoor] = board.exits;
+    good.impostorTool = 'wrench';
+
+    board.sealImpostorExit(northDoor.id);
+    good.x = northDoor.x;
+    good.y = northDoor.y - 1;
+    assert.equal(board.isAdjacentToImpostorExit(northDoor, good.x, good.y), true);
+    assert.equal(repairGame.beginImpostorDoorRepair(good.id, northDoor.id), true);
+    mock.timers.tick(IMPOSTOR_GENERATOR_REPAIR_DURATION_MS);
+    assert.equal(northDoor.isSealed, false);
+
+    board.sealImpostorExit(eastDoor.id);
+    good.x = eastDoor.x - 1;
+    good.y = eastDoor.y;
+    assert.equal(board.isAdjacentToImpostorExit(eastDoor, good.x, good.y), true);
+    assert.equal(repairGame.beginImpostorDoorRepair(good.id, eastDoor.id), true);
+    mock.timers.tick(IMPOSTOR_GENERATOR_REPAIR_DURATION_MS);
+    assert.equal(eastDoor.isSealed, false);
+    assert.deepEqual(privateEvents.filter(event => event.startsWith('impostorDoorRepair')), [
+      'impostorDoorRepairStarted',
+      'impostorDoorRepairEnded',
+      'impostorDoorRepairStarted',
+      'impostorDoorRepairEnded'
+    ]);
+
+    const winGame = new GameInstance('impostor_doors_win_test', 'impostor', players, () => {}, GAME_INSTANCE_TEST_OPTIONS);
+    games.push(winGame);
+    winGame.start();
+    const winBoard = winGame.board as ImpostorBoard;
+    const impostorId = winGame.impostorId!;
+    for (const exit of winBoard.exits.slice(0, -1)) winBoard.sealImpostorExit(exit.id);
+    const lastDoor = winBoard.exits[winBoard.exits.length - 1];
+    assert.equal(winGame.sabotageImpostorDoor(impostorId, lastDoor.id), true);
+    assert.equal(winBoard.exits.every(exit => exit.isSealed), true);
+    assert.equal(winGame.winner, impostorId);
+    assert.equal(winGame.state, 'finished');
   });
 
   it('limits each trap type to five active traps and allows the impostor to remove one', () => {
@@ -830,49 +894,49 @@ describe('Impostor personal keys, tools, and generators', () => {
     board.moveImpostorPlayer(impostorId, middle, middle + 1);
     assert.equal(board.footprints.length, 0);
 
-    // Impostor outside safe zone stepping on (2, 2) (Step 1 -> leaves footprint)
-    impostor.x = 2;
+    // Impostor outside safe zone stepping on (4, 2) (Step 1 -> leaves footprint)
+    impostor.x = 4;
     impostor.y = 1;
-    board.grid[1][2].hasPlayer = impostorId;
-    assert.equal(board.isSafeZoneCell(2, 2), false);
+    board.grid[1][4].hasPlayer = impostorId;
+    assert.equal(board.isSafeZoneCell(4, 2), false);
 
     privateEvents.length = 0;
-    assert.equal(game.executeMove(impostorId, 2, 2), true);
+    assert.equal(game.executeMove(impostorId, 4, 2), true);
     assert.equal(board.footprints.length, 1);
-    assert.equal(board.footprints[0].x, 2);
+    assert.equal(board.footprints[0].x, 4);
     assert.equal(board.footprints[0].y, 2);
 
-    // Impostor steps on (2, 3) (Step 2 -> intermittent, skips footprint)
+    // Impostor steps on (4, 3) (Step 2 -> intermittent, skips footprint)
     mock.timers.tick(200);
-    assert.equal(game.executeMove(impostorId, 2, 3), true);
+    assert.equal(game.executeMove(impostorId, 4, 3), true);
     assert.equal(board.footprints.length, 1, 'Intermittent step does not leave footprint');
 
-    // Impostor steps on (2, 4) (Step 3 -> leaves footprint)
+    // Impostor steps on (4, 4) (Step 3 -> leaves footprint)
     mock.timers.tick(200);
-    assert.equal(game.executeMove(impostorId, 2, 4), true);
+    assert.equal(game.executeMove(impostorId, 4, 4), true);
     assert.equal(board.footprints.length, 2, 'Third step leaves footprint');
 
-    // Impostor moves further away to (2, 7).
-    // The footprint at (2, 2) is 5 tiles away (> 2 tiles) so it is emitted.
-    // The footprint at (2, 4) is 3 tiles away (> 2 tiles) so it is emitted.
-    impostor.x = 2;
+    // Impostor moves further away to (4, 7).
+    // The footprint at (4, 2) is 5 tiles away (> 2 tiles) so it is emitted.
+    // The footprint at (4, 4) is 3 tiles away (> 2 tiles) so it is emitted.
+    impostor.x = 4;
     impostor.y = 6;
-    board.grid[6][2].hasPlayer = impostorId;
+    board.grid[6][4].hasPlayer = impostorId;
     mock.timers.tick(200);
     privateEvents.length = 0;
-    assert.equal(game.executeMove(impostorId, 2, 7), true);
+    assert.equal(game.executeMove(impostorId, 4, 7), true);
 
     const emittedFps = privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').pop();
     assert.ok(emittedFps);
-    assert.ok(emittedFps.data.some((f: any) => f.x === 2 && f.y === 2));
+    assert.ok(emittedFps.data.some((f: any) => f.x === 4 && f.y === 2));
 
-    // When impostor is at (2, 4), the footprint at (2, 2) is 2 tiles away (<= 2 tiles) -> masked!
-    impostor.x = 2;
+    // When impostor is at (4, 4), the footprint at (4, 2) is 2 tiles away (<= 2 tiles) -> masked!
+    impostor.x = 4;
     impostor.y = 4;
     game.emitPrivateImpostorFootprints();
     const maskedFps = privateEvents.filter(e => e.playerId === goodId && e.event === 'impostorFootprints').pop();
     assert.ok(maskedFps);
-    assert.equal(maskedFps.data.some((f: any) => f.x === 2 && f.y === 2), false, 'Footprint within 2 tiles of impostor is masked');
+    assert.equal(maskedFps.data.some((f: any) => f.x === 4 && f.y === 2), false, 'Footprint within 2 tiles of impostor is masked');
 
     // If good player drops magnifier, they receive empty footprints
     good.impostorTool = null;

@@ -185,7 +185,7 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   public spawnGenerators(): void {
-    const last = this.size - 2;
+    const last = this.size - 3;
     this.generators = [
       { id: 'generator_northwest', sector: 'northwest', x: 0, y: 0, isDamaged: false },
       { id: 'generator_northeast', sector: 'northeast', x: last, y: 0, isDamaged: false },
@@ -196,8 +196,8 @@ export abstract class ImpostorBoardBase extends Board {
 
   public isGeneratorCell(x: number, y: number): boolean {
     return this.generators.some(generator =>
-      x >= generator.x && x <= generator.x + 1 &&
-      y >= generator.y && y <= generator.y + 1
+      x >= generator.x && x <= generator.x + 2 &&
+      y >= generator.y && y <= generator.y + 2
     );
   }
 
@@ -401,6 +401,10 @@ export abstract class ImpostorBoardBase extends Board {
     return isInsideRoom && Math.abs(exit.x - playerX) + Math.abs(exit.y - playerY) === 1;
   }
 
+  public isAdjacentToImpostorExit(exit: IImpostorExit, playerX: number, playerY: number): boolean {
+    return Math.abs(exit.x - playerX) + Math.abs(exit.y - playerY) === 1;
+  }
+
   public getImpostorValidMoves(playerId: string): Coordinate[] {
     const player = this.players.get(playerId);
     const isGhost = !!player && player.ghostModeExpiresAt > Date.now();
@@ -480,8 +484,8 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   public isAdjacentToGenerator(generator: IImpostorGenerator, x: number, y: number): boolean {
-    const distanceX = Math.max(generator.x - x, 0, x - (generator.x + 1));
-    const distanceY = Math.max(generator.y - y, 0, y - (generator.y + 1));
+    const distanceX = Math.max(generator.x - x, 0, x - (generator.x + 2));
+    const distanceY = Math.max(generator.y - y, 0, y - (generator.y + 2));
     return !this.isGeneratorCell(x, y) && distanceX + distanceY === 1;
   }
 
@@ -541,7 +545,7 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   public isSafeZoneCell(x: number, y: number): boolean {
-    const { minX, maxX, minY, maxY } = this.getProtectedCentralZoneBounds();
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     return x >= minX && x <= maxX && y >= minY && y <= maxY;
   }
 
@@ -706,21 +710,31 @@ export abstract class ImpostorBoardBase extends Board {
 
   private areGeneratorRepairApproachesOpen(): boolean {
     return this.generators.every(generator => {
+      const lastX = generator.x + 2;
+      const lastY = generator.y + 2;
       const adjacentCells = [
         { x: generator.x - 1, y: generator.y },
         { x: generator.x - 1, y: generator.y + 1 },
-        { x: generator.x + 2, y: generator.y },
-        { x: generator.x + 2, y: generator.y + 1 },
+        { x: generator.x - 1, y: lastY },
+        { x: lastX + 1, y: generator.y },
+        { x: lastX + 1, y: generator.y + 1 },
+        { x: lastX + 1, y: lastY },
         { x: generator.x, y: generator.y - 1 },
         { x: generator.x + 1, y: generator.y - 1 },
-        { x: generator.x, y: generator.y + 2 },
-        { x: generator.x + 1, y: generator.y + 2 }
+        { x: lastX, y: generator.y - 1 },
+        { x: generator.x, y: lastY + 1 },
+        { x: generator.x + 1, y: lastY + 1 },
+        { x: lastX, y: lastY + 1 }
       ];
       return adjacentCells.some(({ x, y }) =>
         this.isInsideBoard(x, y) &&
         !this.isGeneratorCell(x, y) &&
-        !this.isWallBlocking(x, y, x < generator.x ? x + 1 : x > generator.x + 1 ? x - 1 : x,
-          y < generator.y ? y + 1 : y > generator.y + 1 ? y - 1 : y)
+        !this.isWallBlocking(
+          x,
+          y,
+          x < generator.x ? x + 1 : x > lastX ? x - 1 : x,
+          y < generator.y ? y + 1 : y > lastY ? y - 1 : y
+        )
       );
     });
   }
@@ -1096,12 +1110,12 @@ export abstract class ImpostorBoardBase extends Board {
   private createExits(): IImpostorExit[] {
     const players = [...this.players.values()].filter(player => !player.id.startsWith('bot_'));
     const middle = Math.floor(this.size / 2);
-    const radius = this.getCentralRoomRadius();
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const exitRows = [
-      { x: middle, y: middle - radius },
-      { x: middle + radius, y: middle },
-      { x: middle, y: middle + radius },
-      { x: middle - radius, y: middle }
+      { x: middle, y: minY },
+      { x: maxX, y: middle },
+      { x: middle, y: maxY },
+      { x: minX, y: middle }
     ];
 
     return exitRows.map((position, index) => ({
@@ -1113,23 +1127,21 @@ export abstract class ImpostorBoardBase extends Board {
 
   private addCentralEntranceWalls(): void {
     const middle = Math.floor(this.size / 2);
-    const radius = this.getCentralRoomRadius();
-    const min = middle - radius;
-    const max = middle + radius;
-    const gateSegmentStart = middle - 1;
+    const { minX: min, maxX: max, minY, maxY } = this.getCentralRoomBounds();
+    const gateSegmentStart = middle;
     let northSouthIndex = 0;
     let eastWestIndex = 0;
-    for (let offset = 0; offset <= max - min; offset += 2) {
-      if (min + offset === gateSegmentStart) continue;
+    for (let offset = 1; offset < max - min; offset += 2) {
       const x = min + offset;
+      if (x === gateSegmentStart) continue;
       this.walls.push(
-        new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, min - 1, true),
-        new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, max, true)
+        new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, minY - 1, true),
+        new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, maxY, true)
       );
       northSouthIndex++;
       this.walls.push(
-        new Wall(`impostor_center_w_${eastWestIndex}`, 'board', min - 1, x, false),
-        new Wall(`impostor_center_e_${eastWestIndex}`, 'board', max, x, false)
+        new Wall(`impostor_center_w_${eastWestIndex}`, 'board', min - 1, minY + offset, false),
+        new Wall(`impostor_center_e_${eastWestIndex}`, 'board', max, minY + offset, false)
       );
       eastWestIndex++;
     }
@@ -1138,18 +1150,16 @@ export abstract class ImpostorBoardBase extends Board {
   private getProtectedPassages(): Set<number> {
     const protectedPassages = new Set<number>();
     const middle = Math.floor(this.size / 2);
-    const radius = this.getCentralRoomRadius();
-    const min = middle - radius;
-    const max = middle + radius;
-    const gateStart = middle - 1;
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const gateStart = middle;
     const addGatePassages = (x1: number, y1: number, x2: number, y2: number): void => {
       protectedPassages.add(this.getPassageKey({ x: x1, y: y1 }, { x: x2, y: y2 }));
     };
     for (let offset = 0; offset < 2; offset++) {
-      addGatePassages(gateStart + offset, min - 1, gateStart + offset, min);
-      addGatePassages(gateStart + offset, max, gateStart + offset, max + 1);
-      addGatePassages(min - 1, gateStart + offset, min, gateStart + offset);
-      addGatePassages(max, gateStart + offset, max + 1, gateStart + offset);
+      addGatePassages(gateStart + offset, minY - 1, gateStart + offset, minY);
+      addGatePassages(gateStart + offset, maxY, gateStart + offset, maxY + 1);
+      addGatePassages(minX - 1, gateStart + offset, minX, gateStart + offset);
+      addGatePassages(maxX, gateStart + offset, maxX + 1, gateStart + offset);
     }
     for (const generator of this.generators) {
       const { x, y } = generator;
@@ -1157,9 +1167,9 @@ export abstract class ImpostorBoardBase extends Board {
         addGatePassages(outside.x, outside.y, inside.x, inside.y);
       }
       const minX = Math.max(0, x - 1);
-      const maxX = Math.min(this.size - 1, x + 2);
+      const maxX = Math.min(this.size - 1, x + 3);
       const minY = Math.max(0, y - 1);
-      const maxY = Math.min(this.size - 1, y + 2);
+      const maxY = Math.min(this.size - 1, y + 3);
       for (let ringY = minY; ringY <= maxY; ringY++) {
         for (let ringX = minX; ringX <= maxX; ringX++) {
           if (this.isGeneratorCell(ringX, ringY)) continue;
@@ -1174,14 +1184,14 @@ export abstract class ImpostorBoardBase extends Board {
       }
     }
 
-    const cornerOffset = Math.max(1, Math.min(min - 1, Math.floor(min / 2)));
+    const cornerOffset = Math.max(1, Math.min(minX - 1, Math.floor(minX / 2)));
     const cornerFarOffset = this.size - 1 - cornerOffset;
 
     const routes = [
-      this.createRoute({ x: middle, y: middle - radius }, { x: middle, y: 0 }),
-      this.createRoute({ x: middle + radius, y: middle }, { x: this.size - 1, y: middle }),
-      this.createRoute({ x: middle, y: middle + radius }, { x: middle, y: this.size - 1 }),
-      this.createRoute({ x: middle - radius, y: middle }, { x: 0, y: middle }),
+      this.createRoute({ x: middle, y: minY }, { x: middle, y: 0 }),
+      this.createRoute({ x: maxX, y: middle }, { x: this.size - 1, y: middle }),
+      this.createRoute({ x: middle, y: maxY }, { x: middle, y: this.size - 1 }),
+      this.createRoute({ x: minX, y: middle }, { x: 0, y: middle }),
       // Direct quadrant connectors around corners to prevent full perimeter loops:
       this.createRoute({ x: middle, y: cornerOffset }, { x: cornerOffset, y: cornerOffset }),
       this.createRoute({ x: cornerOffset, y: cornerOffset }, { x: cornerOffset, y: middle }),
@@ -1205,42 +1215,44 @@ export abstract class ImpostorBoardBase extends Board {
     generator: IImpostorGenerator
   ): Array<[Coordinate, Coordinate]> {
     const { x, y } = generator;
+    const eastX = x + 3;
+    const southY = y + 3;
     switch (generator.sector) {
       case 'northwest':
         return [
-          [{ x: x + 2, y }, { x: x + 3, y }],
-          [{ x: x + 2, y: y + 1 }, { x: x + 3, y: y + 1 }],
-          [{ x, y: y + 2 }, { x, y: y + 3 }],
-          [{ x: x + 1, y: y + 2 }, { x: x + 1, y: y + 3 }],
-          [{ x: x + 3, y }, { x: x + 4, y }],
-          [{ x: x + 3, y: y + 1 }, { x: x + 4, y: y + 1 }],
-          [{ x, y: y + 3 }, { x, y: y + 4 }],
-          [{ x: x + 1, y: y + 3 }, { x: x + 1, y: y + 4 }]
+          ...[0, 1, 2].map(offset =>
+            [{ x: eastX, y: y + offset }, { x: eastX + 1, y: y + offset }] as [Coordinate, Coordinate]
+          ),
+          ...[0, 1, 2].map(offset =>
+            [{ x: x + offset, y: southY }, { x: x + offset, y: southY + 1 }] as [Coordinate, Coordinate]
+          )
         ];
       case 'northeast':
         return [
-          [{ x: x - 2, y }, { x: x - 1, y }],
-          [{ x: x - 2, y: y + 1 }, { x: x - 1, y: y + 1 }],
-          [{ x, y: y + 2 }, { x, y: y + 3 }],
-          [{ x: x + 1, y: y + 2 }, { x: x + 1, y: y + 3 }],
-          [{ x, y: y + 3 }, { x, y: y + 4 }],
-          [{ x: x + 1, y: y + 3 }, { x: x + 1, y: y + 4 }]
+          ...[0, 1, 2].map(offset =>
+            [{ x: x - 1, y: y + offset }, { x: x - 2, y: y + offset }] as [Coordinate, Coordinate]
+          ),
+          ...[0, 1, 2].map(offset =>
+            [{ x: x + offset, y: southY }, { x: x + offset, y: southY + 1 }] as [Coordinate, Coordinate]
+          )
         ];
       case 'southwest':
         return [
-          [{ x: x + 2, y }, { x: x + 3, y }],
-          [{ x: x + 2, y: y + 1 }, { x: x + 3, y: y + 1 }],
-          [{ x: x + 3, y }, { x: x + 4, y }],
-          [{ x: x + 3, y: y + 1 }, { x: x + 4, y: y + 1 }],
-          [{ x, y: y - 2 }, { x, y: y - 1 }],
-          [{ x: x + 1, y: y - 2 }, { x: x + 1, y: y - 1 }]
+          ...[0, 1, 2].map(offset =>
+            [{ x: eastX, y: y + offset }, { x: eastX + 1, y: y + offset }] as [Coordinate, Coordinate]
+          ),
+          ...[0, 1, 2].map(offset =>
+            [{ x: x + offset, y: y - 1 }, { x: x + offset, y: y - 2 }] as [Coordinate, Coordinate]
+          )
         ];
       case 'southeast':
         return [
-          [{ x: x - 2, y }, { x: x - 1, y }],
-          [{ x: x - 2, y: y + 1 }, { x: x - 1, y: y + 1 }],
-          [{ x, y: y - 2 }, { x, y: y - 1 }],
-          [{ x: x + 1, y: y - 2 }, { x: x + 1, y: y - 1 }]
+          ...[0, 1, 2].map(offset =>
+            [{ x: x - 1, y: y + offset }, { x: x - 2, y: y + offset }] as [Coordinate, Coordinate]
+          ),
+          ...[0, 1, 2].map(offset =>
+            [{ x: x + offset, y: y - 1 }, { x: x + offset, y: y - 2 }] as [Coordinate, Coordinate]
+          )
         ];
     }
   }
@@ -1257,9 +1269,9 @@ export abstract class ImpostorBoardBase extends Board {
       if (entranceKeys.includes(passageKey)) return true;
 
       const minX = Math.max(0, x - 1);
-      const maxX = Math.min(this.size - 1, x + 2);
+      const maxX = Math.min(this.size - 1, x + 3);
       const minY = Math.max(0, y - 1);
-      const maxY = Math.min(this.size - 1, y + 2);
+      const maxY = Math.min(this.size - 1, y + 3);
       const isWalkableRingCell = (cellX: number, cellY: number): boolean =>
         cellX >= minX && cellX <= maxX && cellY >= minY && cellY <= maxY &&
         !this.isGeneratorCell(cellX, cellY);
@@ -1275,8 +1287,8 @@ export abstract class ImpostorBoardBase extends Board {
       switch (generator.sector) {
         case 'northwest':
           fenceWalls.push(
-            new Wall(`${generator.id}_east_fence`, 'board', x + 3, y + 2, false),
-            new Wall(`${generator.id}_south_fence`, 'board', x + 2, y + 3, true)
+            new Wall(`${generator.id}_east_fence`, 'board', x + 4, y + 3, false),
+            new Wall(`${generator.id}_south_fence`, 'board', x + 3, y + 4, true)
           );
           break;
         case 'northeast':
@@ -1287,8 +1299,8 @@ export abstract class ImpostorBoardBase extends Board {
           break;
         case 'southwest':
           fenceWalls.push(
-            new Wall(`${generator.id}_east_fence`, 'board', x + 3, y - 2, false),
-            new Wall(`${generator.id}_north_fence`, 'board', x + 2, y - 2, true)
+            new Wall(`${generator.id}_east_fence`, 'board', x + 4, y - 2, false),
+            new Wall(`${generator.id}_north_fence`, 'board', x + 3, y - 2, true)
           );
           break;
         case 'southeast':
@@ -1380,8 +1392,8 @@ export abstract class ImpostorBoardBase extends Board {
       if (player.isInPrison) excludedCells[player.y * this.size + player.x] = 1;
     }
     for (const generator of this.generators) {
-      for (let y = generator.y; y <= generator.y + 1; y++) {
-        for (let x = generator.x; x <= generator.x + 1; x++) {
+      for (let y = generator.y; y <= generator.y + 2; y++) {
+        for (let x = generator.x; x <= generator.x + 2; x++) {
           excludedCells[y * this.size + x] = 1;
         }
       }
@@ -1468,7 +1480,7 @@ export abstract class ImpostorBoardBase extends Board {
     }
     const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const gateStart = middle - 1;
+    const gateStart = middle;
     const gateEnd = middle;
     const crossesGate = (exit: IImpostorExit): boolean => {
       if (!exit.isSealed) return false;
@@ -1499,12 +1511,13 @@ export abstract class ImpostorBoardBase extends Board {
 
   protected getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const middle = Math.floor(this.size / 2);
-    const radius = this.getCentralRoomRadius();
+    const roomSize = Math.min(8, this.size);
+    const min = Math.max(0, Math.min(this.size - roomSize, middle - 3));
     return {
-      minX: Math.max(0, middle - radius),
-      maxX: Math.min(this.size - 1, middle + radius),
-      minY: Math.max(0, middle - radius),
-      maxY: Math.min(this.size - 1, middle + radius)
+      minX: min,
+      maxX: min + roomSize - 1,
+      minY: min,
+      maxY: min + roomSize - 1
     };
   }
 
@@ -1594,13 +1607,11 @@ export abstract class ImpostorBoardBase extends Board {
   protected areAdjacentQuadrantsDirectlyConnected(): boolean {
     if (this.size < 7) return true;
     const middle = Math.floor(this.size / 2);
-    const radius = this.getCentralRoomRadius();
-    const min = middle - radius;
-    const max = middle + radius;
-    const northPt = { x: middle, y: Math.max(0, min - 2) };
-    const southPt = { x: middle, y: Math.min(this.size - 1, max + 2) };
-    const westPt = { x: Math.max(0, min - 2), y: middle };
-    const eastPt = { x: Math.min(this.size - 1, max + 2), y: middle };
+    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const northPt = { x: middle, y: Math.max(0, minY - 2) };
+    const southPt = { x: middle, y: Math.min(this.size - 1, maxY + 2) };
+    const westPt = { x: Math.max(0, minX - 2), y: middle };
+    const eastPt = { x: Math.min(this.size - 1, maxX + 2), y: middle };
 
     const maxDirectDistance = Math.floor((this.size - 1) * 1.5) + 4;
 
@@ -1640,8 +1651,8 @@ export abstract class ImpostorBoardBase extends Board {
 
     const excludedCells = new Uint8Array(totalCells);
     for (const generator of this.generators) {
-      for (let y = generator.y; y <= generator.y + 1; y++) {
-        for (let x = generator.x; x <= generator.x + 1; x++) {
+      for (let y = generator.y; y <= generator.y + 2; y++) {
+        for (let x = generator.x; x <= generator.x + 2; x++) {
           if (x >= 0 && x < this.size && y >= 0 && y < this.size) {
             excludedCells[y * this.size + x] = 1;
           }

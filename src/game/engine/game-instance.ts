@@ -48,7 +48,9 @@ export const INFECTION_MOVE_INTERVAL_MS = 80;
 export const INFECTION_MIN_PLAYERS = 3;
 export const INFECTION_MAX_PLAYERS = 6;
 export const INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS = 20_000;
+export const INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS = 3_000;
 export const INFECTION_LAST_SURVIVOR_TRAP_COOLDOWN_MS = 20_000;
+export const INFECTION_LAST_SURVIVOR_POWER_DURATION_MS = 10_000;
 export const INFECTION_LAST_SURVIVOR_HUNT_COUNTDOWN_MS = 5_000;
 export const INFECTION_LAST_SURVIVOR_BURN_DURATION_MS = 4_000;
 export const INFECTION_WALL_PLACEMENT_COOLDOWN_MS = 5_000;
@@ -62,7 +64,7 @@ export const INFECTION_SHIELD_PICKUP_COUNT = 3;
 export const INFECTION_SHIELD_DURATION_MS = 15_000;
 const IMPOSTOR_SHIELD_PICKUP_COUNT = 3;
 const IMPOSTOR_SHIELD_RESPAWN_MS = 30_000;
-type ImpostorEndReason = 'capture' | 'timer' | 'inactivity' | 'escape' | 'surrender' | 'infection' | 'emergency_meeting';
+type ImpostorEndReason = 'capture' | 'timer' | 'inactivity' | 'escape' | 'surrender' | 'infection' | 'emergency_meeting' | 'doors_sabotaged';
 
 export type ImpostorEmergencyMeeting = {
   id: string;
@@ -174,6 +176,7 @@ export class GameInstance {
   private impostorFootprintStepCount = 0;
   private impostorTrapCooldownUntil: Record<ImpostorTrapType, number> = { ice: 0, teleport: 0 };
   private readonly impostorGeneratorRepairTimers = new Map<string, NodeJS.Timeout>();
+  private readonly impostorDoorRepairTimers = new Map<string, { exitId: string; timer: NodeJS.Timeout }>();
   private readonly impostorTrapDeactivationTimers = new Map<string, NodeJS.Timeout>();
   private readonly infectionTrapCooldownUntil = new Map<string, Record<ImpostorTrapType, number>>();
   private impostorWallPlacementCooldownUntil = new Map<string, number>();
@@ -185,6 +188,7 @@ export class GameInstance {
   private readonly infectionSafeZoneTimers = new Map<string, NodeJS.Timeout>();
   private readonly infectionLastSurvivorPowerCooldownUntil =
     new Map<string, Record<InfectionLastSurvivorPower, number>>();
+  private readonly infectionLastSurvivorGeneralCooldownUntil = new Map<string, number>();
   private infectionLastSurvivorAlertSent = false;
   private infectionLastSurvivorCountdownUntil = 0;
   private infectionBurnUntil = 0;
@@ -662,6 +666,8 @@ export class GameInstance {
     this.impostorInactivityTimer = null;
     for (const timer of this.impostorGeneratorRepairTimers.values()) clearTimeout(timer);
     this.impostorGeneratorRepairTimers.clear();
+    for (const { timer } of this.impostorDoorRepairTimers.values()) clearTimeout(timer);
+    this.impostorDoorRepairTimers.clear();
     for (const timer of this.impostorTrapDeactivationTimers.values()) clearTimeout(timer);
     this.impostorTrapDeactivationTimers.clear();
     for (const timer of this.impostorEmergencyMeetingTimers) clearTimeout(timer);
@@ -779,6 +785,9 @@ export class GameInstance {
     this.impostorInactivityTimer = null;
     for (const repairPlayerId of [...this.impostorGeneratorRepairTimers.keys()]) {
       this.cancelImpostorGeneratorRepair(repairPlayerId);
+    }
+    for (const repairPlayerId of [...this.impostorDoorRepairTimers.keys()]) {
+      this.cancelImpostorDoorRepair(repairPlayerId);
     }
     this.impostorEmergencyMeetingVotes.clear();
     const meeting: ImpostorEmergencyMeeting = {
@@ -1158,18 +1167,26 @@ export class GameInstance {
         playerCount: players.filter(player => !player.isDead).length,
         isLastSurvivor: this.isLastInfectionSurvivor(playerId),
         lastSurvivorTeleportCooldownUntil:
-          this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.teleport ?? 0,
-        lastSurvivorPowerCooldowns: {
-          ghost: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.ghost ?? 0,
-          shield: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.shield ?? 0,
-          invisible: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.invisible ?? 0,
-          teleport: this.infectionLastSurvivorPowerCooldownUntil.get(playerId)?.teleport ?? 0
-        },
+          this.getInfectionLastSurvivorPowerCooldowns(playerId).teleport,
+        lastSurvivorPowerCooldowns: this.getInfectionLastSurvivorPowerCooldowns(playerId),
         lastSurvivorCountdownUntil: this.infectionLastSurvivorCountdownUntil,
         burnUntil: this.infectionBurnUntil,
         serverTime: Date.now()
       };
     }
+
+  private getInfectionLastSurvivorPowerCooldowns(
+    playerId: string
+  ): Record<InfectionLastSurvivorPower, number> {
+    const cooldowns = this.infectionLastSurvivorPowerCooldownUntil.get(playerId);
+    const generalCooldownUntil = this.infectionLastSurvivorGeneralCooldownUntil.get(playerId) ?? 0;
+    return {
+      ghost: Math.max(cooldowns?.ghost ?? 0, generalCooldownUntil),
+      shield: Math.max(cooldowns?.shield ?? 0, generalCooldownUntil),
+      invisible: Math.max(cooldowns?.invisible ?? 0, generalCooldownUntil),
+      teleport: Math.max(cooldowns?.teleport ?? 0, generalCooldownUntil)
+    };
+  }
 
   private emitInfectionState(): void {
       if (this.mode !== 'infection') return;
@@ -1219,7 +1236,8 @@ export class GameInstance {
     const player = this.board.players.get(playerId);
     const canPlaceTrap = this.mode === 'impostor'
       ? playerId === this.impostorId
-      : this.mode === 'infection' && !this.isInfected(playerId);
+      : this.mode === 'infection' && !this.isInfected(playerId) &&
+        !this.isLastInfectionSurvivor(playerId);
     if (!this.isImpostorBoardMode() || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
         this.isInfectionBurning() ||
         !canPlaceTrap || !player || player.isDead ||
@@ -1284,6 +1302,7 @@ export class GameInstance {
       this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
     }
     this.cancelImpostorGeneratorRepair(playerId);
+    this.cancelImpostorDoorRepair(playerId);
     this.cancelImpostorTrapDeactivation(playerId);
     this.recordPlayerActivity(playerId);
     this.emitPrivateImpostorTrapState();
@@ -1299,6 +1318,7 @@ export class GameInstance {
     if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
         !this.getImpostorBoard().dropTool(playerId)) return false;
     this.cancelImpostorGeneratorRepair(playerId);
+    this.cancelImpostorDoorRepair(playerId);
     this.cancelImpostorTrapDeactivation(playerId);
     this.recordPlayerActivity(playerId);
     this.emitPrivateImpostorTrapState();
@@ -1342,6 +1362,8 @@ export class GameInstance {
         this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
         this.cancelImpostorGeneratorRepair(request.targetId);
         this.cancelImpostorGeneratorRepair(request.requesterId);
+        this.cancelImpostorDoorRepair(request.targetId);
+        this.cancelImpostorDoorRepair(request.requesterId);
         this.recordPlayerActivity(request.targetId);
         this.recordPlayerActivity(request.requesterId);
         this.emitPrivateImpostorTrapState();
@@ -1411,6 +1433,8 @@ export class GameInstance {
     this.radarGraceUntil = Date.now() + IMPOSTOR_RADAR_GRACE_PERIOD_MS;
     this.cancelImpostorGeneratorRepair(targetId);
     this.cancelImpostorGeneratorRepair(request.requesterId);
+    this.cancelImpostorDoorRepair(targetId);
+    this.cancelImpostorDoorRepair(request.requesterId);
     this.recordPlayerActivity(targetId);
     this.recordPlayerActivity(request.requesterId);
     this.emitPrivateImpostorTrapState();
@@ -1475,6 +1499,76 @@ export class GameInstance {
     });
     this.emitImpostorState();
     return true;
+  }
+
+  public sabotageImpostorDoor(playerId: string, exitId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive() ||
+        playerId !== this.impostorId) return false;
+    const player = this.board.players.get(playerId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        this.getImpostorGeneratorSabotageCooldownSeconds() > 0) return false;
+    const board = this.getImpostorBoard();
+    const exitNumber = board.sealImpostorExit(exitId);
+    if (exitNumber === null) return false;
+    const now = Date.now();
+    this.impostorGeneratorSabotageCooldownUntil = now + IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS;
+    this.impostorExitSealCooldownUntil = this.impostorGeneratorSabotageCooldownUntil;
+    this.recordPlayerActivity(playerId);
+    this.emitImpostorPublicEvent('impostor_exit_sealed', {
+      exitNumber,
+      playerName: player.username
+    });
+    this.emitImpostorState();
+    if (board.exits.every(exit => exit.isSealed)) {
+      this.finishImpostorGame(this.impostorId, 'doors_sabotaged');
+    }
+    return true;
+  }
+
+  public beginImpostorDoorRepair(playerId: string, exitId: string): boolean {
+    if (this.mode !== 'impostor' || this.state !== 'playing' || this.isImpostorEmergencyMeetingActive()) return false;
+    const player = this.board.players.get(playerId);
+    const board = this.getImpostorBoard();
+    const exit = board.exits.find(item => item.id === exitId);
+    if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
+        player.impostorTool !== 'wrench' || !exit?.isSealed ||
+        !board.isAdjacentToImpostorExit(exit, player.x, player.y) ||
+        this.impostorDoorRepairTimers.has(playerId)) return false;
+    this.recordPlayerActivity(playerId);
+    const exitNumber = board.exits.indexOf(exit) + 1;
+    const timer = setTimeout(() => {
+      this.impostorDoorRepairTimers.delete(playerId);
+      this.onPrivateStateChange(playerId, 'impostorDoorRepairEnded', {});
+      const currentPlayer = this.board.players.get(playerId);
+      const currentExit = this.getImpostorBoard().exits.find(item => item.id === exitId);
+      if (this.state !== 'playing' || !currentPlayer || currentPlayer.impostorTool !== 'wrench' ||
+          currentPlayer.isDead || currentPlayer.isInPrison || currentPlayer.hasImpostorEscaped ||
+          !currentExit?.isSealed ||
+          !this.getImpostorBoard().isAdjacentToImpostorExit(currentExit, currentPlayer.x, currentPlayer.y)) return;
+      if (this.getImpostorBoard().openImpostorExit(exitId) === null) return;
+      this.emitImpostorPublicEvent('impostor_exit_opened', {
+        exitNumber,
+        playerName: currentPlayer.username
+      });
+      this.emitImpostorState();
+    }, IMPOSTOR_GENERATOR_REPAIR_DURATION_MS);
+    timer.unref();
+    this.impostorDoorRepairTimers.set(playerId, { exitId, timer });
+    this.onPrivateStateChange(playerId, 'impostorDoorRepairStarted', {
+      exitId,
+      exitNumber,
+      durationMs: IMPOSTOR_GENERATOR_REPAIR_DURATION_MS,
+      endsAt: Date.now() + IMPOSTOR_GENERATOR_REPAIR_DURATION_MS
+    });
+    return true;
+  }
+
+  private cancelImpostorDoorRepair(playerId: string): void {
+    const repair = this.impostorDoorRepairTimers.get(playerId);
+    if (!repair) return;
+    clearTimeout(repair.timer);
+    this.impostorDoorRepairTimers.delete(playerId);
+    this.onPrivateStateChange(playerId, 'impostorDoorRepairEnded', {});
   }
 
   public beginImpostorGeneratorRepair(playerId: string, generatorId: string): boolean {
@@ -2169,6 +2263,7 @@ export class GameInstance {
         ) return false;
 
         this.cancelImpostorGeneratorRepair(playerId);
+        this.cancelImpostorDoorRepair(playerId);
         const fromX = player.x;
         const fromY = player.y;
         const infectionBoard = this.mode === 'infection' ? this.getInfectionBoard() : null;
@@ -2493,17 +2588,18 @@ export class GameInstance {
       invisible: 0,
       teleport: 0
     };
-    if (cooldowns[power] > now) return false;
+    if (cooldowns[power] > now ||
+        (this.infectionLastSurvivorGeneralCooldownUntil.get(playerId) ?? 0) > now) return false;
 
     let teleport: ReturnType<InfectionBoard['teleportPlayerToOppositeEdge']> = null;
     if (power === 'ghost') {
-      player.ghostModeExpiresAt = now + INFECTION_GHOST_DURATION_MS;
+      player.ghostModeExpiresAt = now + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS;
       this.updateImpostorPrisons();
     } else if (power === 'shield') {
       player.impostorShieldActive = true;
-      player.impostorShieldExpiresAt = now + INFECTION_SHIELD_DURATION_MS;
+      player.impostorShieldExpiresAt = now + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS;
     } else if (power === 'invisible') {
-      player.invisibleUntil = now + INFECTION_INVISIBLE_DURATION_MS;
+      player.invisibleUntil = now + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS;
     } else {
       teleport = this.getInfectionBoard().teleportPlayerToOppositeEdge(playerId, random);
       if (!teleport) return false;
@@ -2515,6 +2611,10 @@ export class GameInstance {
       ...cooldowns,
       [power]: now + INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS
     });
+    this.infectionLastSurvivorGeneralCooldownUntil.set(
+      playerId,
+      now + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS
+    );
     this.recordPlayerActivity(playerId);
     if (teleport) {
       this.onStateChange('playerMoved', {
@@ -2539,8 +2639,8 @@ export class GameInstance {
     return true;
   }
 
-      public sealImpostorExit(_playerId: string, _exitId: string): boolean {
-        return false;
+      public sealImpostorExit(playerId: string, exitId: string): boolean {
+        return this.sabotageImpostorDoor(playerId, exitId);
       }
 
       public openImpostorExit(_playerId: string, _exitId: string): boolean {
@@ -3069,6 +3169,7 @@ export class GameInstance {
         this.impostorWallPlacementCooldownUntil.delete(surrenderingUserId);
         this.infectionTrapCooldownUntil.delete(surrenderingUserId);
         this.infectionLastSurvivorPowerCooldownUntil.delete(surrenderingUserId);
+        this.infectionLastSurvivorGeneralCooldownUntil.delete(surrenderingUserId);
         this.infectionSafeZoneEnteredAt.delete(surrenderingUserId);
         this.infectionSafeZoneCooldownUntil.delete(surrenderingUserId);
         this.clearInfectionSafeZoneExpiry(surrenderingUserId);

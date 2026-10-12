@@ -1078,6 +1078,26 @@ export class SocketManager {
         }
       });
 
+      socket.on('sabotageImpostorDoor', (data: { roomId: string; exitId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.exitId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.sabotageImpostorDoor(userId, data.exitId)) {
+          socket.emit('impostorDoorActionRejected');
+        }
+      });
+
+      socket.on('repairImpostorDoor', (data: { roomId: string; exitId: string }) => {
+        if (typeof data?.roomId !== 'string' || typeof data.exitId !== 'string') return;
+        const game = this.gameService.getGame(data.roomId);
+        if (!game || game.mode !== 'impostor' || data.roomId !== socket.data.currentRoomId ||
+            !game.playersList.includes(userId)) return;
+        if (!game.beginImpostorDoorRepair(userId, data.exitId)) {
+          socket.emit('impostorDoorActionRejected');
+        }
+      });
+
       socket.on('revealImpostorTrap', (data: { roomId: string; trapId: string }) => {
         if (typeof data?.roomId !== 'string' || typeof data.trapId !== 'string') return;
         const game = this.gameService.getGame(data.roomId);

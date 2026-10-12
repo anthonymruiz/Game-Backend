@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { InfectionBoard } from '../game/engine/infection-board.js';
 import {
   GameInstance,
+  INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS,
+  INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS,
+  INFECTION_LAST_SURVIVOR_POWER_DURATION_MS,
   INFECTION_LAST_SURVIVOR_BURN_DURATION_MS,
   INFECTION_WALL_PLACEMENT_COOLDOWN_MS
 } from '../game/engine/game-instance.js';
@@ -204,23 +207,24 @@ describe('Infection mode', () => {
     const game = createGame();
     const board = game.board as InfectionBoard;
     const middle = Math.floor(board.size / 2);
-    const radius = 3;
+    const min = middle - 3;
+    const max = min + 7;
     const player = [...board.players.values()].find(candidate => !candidate.isInfected);
     assert.ok(player);
 
-    assert.equal(board.isSafeZoneCell(middle + radius, middle), true);
-    assert.equal(board.isSafeZoneCell(middle + radius + 1, middle), false);
+    assert.equal(board.isSafeZoneCell(max, middle), true);
+    assert.equal(board.isSafeZoneCell(max + 1, middle), false);
     board.reshuffleImpostor(() => 0.5);
     assert.ok(board.walls.some(wall => wall.id.startsWith('impostor_center_')));
     const entrances = [
-      [middle - 1, middle - radius - 1, middle - 1, middle - radius],
-      [middle, middle - radius - 1, middle, middle - radius],
-      [middle - 1, middle + radius, middle - 1, middle + radius + 1],
-      [middle, middle + radius, middle, middle + radius + 1],
-      [middle - radius - 1, middle - 1, middle - radius, middle - 1],
-      [middle - radius - 1, middle, middle - radius, middle],
-      [middle + radius, middle, middle + radius + 1, middle],
-      [middle + radius, middle - 1, middle + radius + 1, middle - 1]
+      [middle, min - 1, middle, min],
+      [middle + 1, min - 1, middle + 1, min],
+      [middle, max, middle, max + 1],
+      [middle + 1, max, middle + 1, max + 1],
+      [min - 1, middle, min, middle],
+      [min - 1, middle + 1, min, middle + 1],
+      [max, middle, max + 1, middle],
+      [max, middle + 1, max + 1, middle + 1]
     ];
     for (let reshuffle = 0; reshuffle < 3; reshuffle++) {
       board.reshuffleImpostor(() => 0.5);
@@ -554,7 +558,7 @@ describe('Infection mode', () => {
     mock.timers.reset();
   });
 
-  it('blocks simultaneous last-survivor powers and applies independent twenty-second cooldowns', () => {
+  it('applies ten-second God powers, independent twenty-second cooldowns, and a shared three-second cooldown', () => {
     mock.timers.enable({ apis: ['Date'], now: 1_000 });
     const publicEvents: Array<{ event: string; data: any }> = [];
     const game = createGame(makePlayers(4), (event, data) => publicEvents.push({ event, data }));
@@ -569,27 +573,44 @@ describe('Infection mode', () => {
     const survivor = survivors[0]!;
 
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'ghost'), true);
-    assert.ok(survivor.ghostModeExpiresAt > Date.now());
+    assert.equal(
+      survivor.ghostModeExpiresAt,
+      Date.now() + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS
+    );
     assert.equal(
       game.getPrivateInfectionState(survivor.id)?.lastSurvivorPowerCooldowns.ghost,
-      Date.now() + 20_000
+      Date.now() + INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS
     );
+    let cooldowns = game.getPrivateInfectionState(survivor.id)?.lastSurvivorPowerCooldowns;
+    assert.equal(cooldowns?.shield, Date.now() + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
+    assert.equal(cooldowns?.invisible, Date.now() + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
+    assert.equal(cooldowns?.teleport, Date.now() + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'ghost'), false);
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'shield'), false);
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'invisible'), false);
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'teleport'), false);
 
+    mock.timers.tick(INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
     survivor.ghostModeExpiresAt = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'shield'), true);
     assert.equal(survivor.impostorShieldActive, true);
+    assert.equal(
+      survivor.impostorShieldExpiresAt,
+      Date.now() + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS
+    );
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'invisible'), false);
 
+    mock.timers.tick(INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
     survivor.impostorShieldActive = false;
     survivor.impostorShieldExpiresAt = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'invisible'), true);
-    assert.ok(survivor.invisibleUntil > Date.now());
+    assert.equal(
+      survivor.invisibleUntil,
+      Date.now() + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS
+    );
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'teleport'), false);
 
+    mock.timers.tick(INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS);
     survivor.invisibleUntil = 0;
     assert.equal(game.useInfectionLastSurvivorPower(survivor.id, 'teleport', () => 0.5), true);
     const powerEvents = publicEvents.filter(({ event, data }) =>
@@ -602,8 +623,13 @@ describe('Infection mode', () => {
     assert.deepEqual(powerEvents.map(({ data }) => data.power), [
       'ghost', 'shield', 'invisible', 'teleport'
     ]);
-    const cooldowns = game.getPrivateInfectionState(survivor.id)?.lastSurvivorPowerCooldowns;
-    assert.ok(Object.values(cooldowns ?? {}).every(until => until === Date.now() + 20_000));
+    cooldowns = game.getPrivateInfectionState(survivor.id)?.lastSurvivorPowerCooldowns;
+    assert.deepEqual(cooldowns, {
+      ghost: 21_000,
+      shield: 24_000,
+      invisible: 27_000,
+      teleport: 30_000
+    });
     game.destroy();
     mock.timers.reset();
   });
@@ -833,7 +859,7 @@ describe('Infection mode', () => {
     game.destroy();
   });
 
-  it('lets the last survivor place traps but not walls', () => {
+  it('does not let the last survivor place traps or walls', () => {
     const privateEvents: Array<{ playerId: string; event: string; data: any }> = [];
     const game = createGame(makePlayers(3));
     game.onPrivateStateChange = (playerId, event, data) =>
@@ -867,15 +893,12 @@ describe('Infection mode', () => {
       !board.isSafeZoneCell(x, y) && board.canPlaceTrap(x, y)
     );
     assert.ok(trapCell);
-    board.grid[lastSurvivor.y][lastSurvivor.x].hasPlayer = null;
-    lastSurvivor.x = trapCell.x;
-    lastSurvivor.y = trapCell.y;
-    board.grid[trapCell.y][trapCell.x].hasPlayer = lastSurvivor.id;
-    assert.equal(game.placeImpostorTrap(lastSurvivor.id, 'ice', lastSurvivor.x, lastSurvivor.y), true);
+    assert.equal(game.placeImpostorTrap(lastSurvivor.id, 'ice', trapCell.x, trapCell.y), false);
+    assert.equal(game.placeImpostorTrap(lastSurvivor.id, 'teleport', trapCell.x, trapCell.y), false);
     game.destroy();
   });
 
-  it('gives the last survivor a twenty-second cooldown for both trap types', () => {
+  it('does not allow the God-mode survivor to place ice or teleport traps', () => {
     const game = createGame(makePlayers(3));
     game.start();
     const board = game.board as InfectionBoard;
@@ -889,14 +912,15 @@ describe('Infection mode', () => {
     ).flat().filter(({ x, y }) => board.canPlaceTrap(x, y));
     assert.ok(validTrapCells.length >= 2);
 
-    for (const [index, type] of (['ice', 'teleport'] as const).entries()) {
-      assert.equal(
-        game.placeImpostorTrap(lastSurvivor.id, type, validTrapCells[index].x, validTrapCells[index].y),
-        true
-      );
-      const cooldown = game.getPrivateImpostorTrapState(lastSurvivor.id)?.cooldowns[type] ?? 0;
-      assert.ok(cooldown > 0 && cooldown <= 20);
+    for (const type of ['ice', 'teleport'] as const) {
+      assert.equal(game.placeImpostorTrap(
+        lastSurvivor.id,
+        type,
+        validTrapCells[0].x,
+        validTrapCells[0].y
+      ), false);
     }
+    assert.equal(game.getPrivateImpostorTrapState(lastSurvivor.id)?.traps.length, 0);
     game.destroy();
   });
 
