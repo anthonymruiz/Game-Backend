@@ -1,6 +1,7 @@
 import { injectable, container } from 'tsyringe';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import axios from 'axios';
 import { UserService } from './user.service.js';
@@ -65,7 +66,7 @@ export class AuthService {
     return this.userRepository.save(user);
   }
 
-  public async login(emailOrUsername: string, plainPassword?: string): Promise<{ user: User; token: string }> {
+  public async login(emailOrUsername: string, plainPassword?: string): Promise<{ user: User; token: string; refreshToken: string }> {
     const isEmail = typeof emailOrUsername === 'string' && emailOrUsername.includes('@');
     if (
       typeof emailOrUsername !== 'string' ||
@@ -77,10 +78,8 @@ export class AuthService {
       throw new Error('Invalid credentials.');
     }
 
-    let user = await this.userRepository.findByEmail(emailOrUsername.toLowerCase());
-    if (!user) {
-      user = await this.userRepository.findByUsername(emailOrUsername);
-    }
+    const identifier = isEmail ? emailOrUsername.toLowerCase() : emailOrUsername;
+    const user = await this.userRepository.findByEmailOrUsernameWithPassword(identifier);
 
     if (!user) {
       throw new Error('Invalid credentials.');
@@ -90,7 +89,10 @@ export class AuthService {
       throw new Error('Your account has been banned. Please contact support.');
     }
 
-    if (user.provider === 'local' && user.password) {
+    if (user.provider === 'local') {
+      if (!user.password) {
+        throw new Error('Invalid credentials.');
+      }
       const isPasswordValid = await bcrypt.compare(plainPassword, user.password);
       if (!isPasswordValid) {
         throw new Error('Invalid credentials.');
@@ -98,7 +100,14 @@ export class AuthService {
     }
 
     const token = this.generateJwt(user);
-    return { user, token };
+    const refreshToken = this.generateRefreshToken(user);
+    user.refreshToken = refreshToken;
+    await this.userRepository.save(user);
+
+    delete user.password;
+    delete user.refreshToken;
+
+    return { user, token, refreshToken };
   }
 
   public generateJwt(user: User | any): string {
@@ -113,8 +122,58 @@ export class AuthService {
       provider: user.provider
     };
 
-    const expiresIn = user.role === UserRole.GUEST || user.role === 'guest' ? '24h' : '100y';
+    const expiresIn = user.role === UserRole.GUEST || user.role === 'guest' ? '24h' : '1h';
     return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn });
+  }
+
+  public generateRefreshToken(user: User | any): string {
+    const payload = {
+      id: user.id,
+      sub: user.id,
+      jti: crypto.randomUUID()
+    };
+    return jwt.sign(payload, ENV.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  }
+
+  public async generateTokens(user: User): Promise<{ token: string; refreshToken: string }> {
+    const token = this.generateJwt(user);
+    const refreshToken = this.generateRefreshToken(user);
+    user.refreshToken = refreshToken;
+    await this.userRepository.save(user);
+    return { token, refreshToken };
+  }
+
+  public async refreshToken(tokenStr: string): Promise<{ token: string; refreshToken: string; user: User }> {
+    try {
+      const decoded: any = jwt.verify(tokenStr, ENV.JWT_REFRESH_SECRET);
+      const userId = decoded.id || decoded.sub;
+      if (!userId) {
+        throw new Error('Invalid token payload.');
+      }
+
+      const user = await this.userRepository.findByIdWithRefreshToken(userId);
+      if (!user) {
+        throw new Error('User not found.');
+      }
+      if (user.role === UserRole.BANNED) {
+        throw new Error('Your account has been banned.');
+      }
+      if (!user.refreshToken || user.refreshToken !== tokenStr) {
+        throw new Error('Invalid or revoked refresh token.');
+      }
+
+      const newAccessToken = this.generateJwt(user);
+      const newRefreshToken = this.generateRefreshToken(user);
+      user.refreshToken = newRefreshToken;
+      await this.userRepository.save(user);
+
+      delete user.password;
+      delete user.refreshToken;
+
+      return { token: newAccessToken, refreshToken: newRefreshToken, user };
+    } catch (err: any) {
+      throw new Error(err.message || 'Invalid or expired refresh token.');
+    }
   }
 
   private syncSocialAvatar(user: User, avatarUrl?: string): boolean {
@@ -129,7 +188,7 @@ export class AuthService {
     return true;
   }
 
-  public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
+  public async loginWithSocialProvider(provider: 'google' | 'facebook', token: string): Promise<{ user: User; jwtToken: string; refreshToken: string; isNewUser: boolean }> {
     let email: string;
     let socialName: string = '';
     let avatarUrl: string | undefined = undefined;
@@ -179,11 +238,17 @@ export class AuthService {
     }
 
     const jwtToken = this.generateJwt(user);
-    return { user, jwtToken, isNewUser };
+    const refreshToken = this.generateRefreshToken(user);
+    user.refreshToken = refreshToken;
+    await this.userRepository.save(user);
+    delete user.password;
+    delete user.refreshToken;
+
+    return { user, jwtToken, refreshToken, isNewUser };
   }
 
-  public async handleGoogleCallback(code: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
-    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/google/callback`;
+  public async handleGoogleCallback(code: string, customRedirectUri?: string): Promise<{ user: User; jwtToken: string; refreshToken: string; isNewUser: boolean }> {
+    const redirectUri = customRedirectUri || `${process.env.API_URL || 'http://localhost:3000'}/api/auth/google/callback`;
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     const client = new OAuth2Client(clientId, clientSecret, redirectUri);
@@ -231,11 +296,17 @@ export class AuthService {
     }
 
     const jwtToken = this.generateJwt(user);
-    return { user, jwtToken, isNewUser };
+    const refreshToken = this.generateRefreshToken(user);
+    user.refreshToken = refreshToken;
+    await this.userRepository.save(user);
+    delete user.password;
+    delete user.refreshToken;
+
+    return { user, jwtToken, refreshToken, isNewUser };
   }
 
-  public async handleFacebookCallback(code: string): Promise<{ user: User; jwtToken: string; isNewUser: boolean }> {
-    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/facebook/callback`;
+  public async handleFacebookCallback(code: string, customRedirectUri?: string): Promise<{ user: User; jwtToken: string; refreshToken?: string; isNewUser: boolean }> {
+    const redirectUri = customRedirectUri || `${process.env.API_URL || 'http://localhost:3000'}/api/auth/facebook/callback`;
     const appId = process.env.FACEBOOK_APP_ID;
     const appSecret = process.env.FACEBOOK_APP_SECRET;
     const { data } = await axios.get(`https://graph.facebook.com/v18.0/oauth/access_token`, {

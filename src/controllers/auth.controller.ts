@@ -19,11 +19,12 @@ export class AuthController {
     try {
       const { email, username, password } = req.body;
       const user = await this.authService.register(email, username, password, 'local');
-      const token = this.authService.generateJwt(user);
-      await this.registerDeviceSession(req, user.id, token);
+      const tokens = await this.authService.generateTokens(user);
+      await this.registerDeviceSession(req, user.id, tokens.token);
       res.status(201).json({
         message: 'User registered successfully',
-        token,
+        token: tokens.token,
+        refreshToken: tokens.refreshToken,
         user: {
           id: user.id,
           username: user.username,
@@ -46,6 +47,7 @@ export class AuthController {
       res.status(200).json({ 
         message: 'Login successful', 
         token: result.token, 
+        refreshToken: result.refreshToken,
         user: {
           id: result.user.id,
           username: result.user.username,
@@ -60,6 +62,32 @@ export class AuthController {
     }
   };
 
+  public refreshToken = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken || typeof refreshToken !== 'string') {
+        res.status(400).json({ error: 'Refresh token is required.' });
+        return;
+      }
+      const result = await this.authService.refreshToken(refreshToken);
+      res.status(200).json({
+        message: 'Token refreshed successfully',
+        token: result.token,
+        refreshToken: result.refreshToken,
+        user: {
+          id: result.user.id,
+          username: result.user.username,
+          email: result.user.email,
+          role: result.user.role,
+          avatarUrl: result.user.avatarUrl,
+          hasUsernameSet: result.user.hasUsernameSet
+        }
+      });
+    } catch (error: any) {
+      res.status(401).json({ error: error.message || 'Invalid refresh token.' });
+    }
+  };
+
   public socialLogin = async (req: Request, res: Response): Promise<void> => {
     try {
       const { provider, token } = req.body;
@@ -68,6 +96,7 @@ export class AuthController {
       res.status(200).json({ 
         message: 'Social login successful', 
         token: result.jwtToken, 
+        refreshToken: result.refreshToken,
         user: {
           id: result.user.id,
           username: result.user.username,
@@ -124,9 +153,11 @@ export class AuthController {
         hasUsernameSet: true
       };
       const token = this.authService.generateJwt(guestUser as any);
+      const refreshToken = this.authService.generateRefreshToken(guestUser as any);
       res.status(200).json({ 
         message: 'Guest login successful', 
         token, 
+        refreshToken,
         user: guestUser 
       });
     } catch (error: any) {
@@ -159,8 +190,9 @@ export class AuthController {
       `);
       return;
     }
-    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/google/callback`;
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${googleClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid%20profile%20email&prompt=select_account`;
+    const targetFrontend = this.resolveFrontendUrl(req);
+    const redirectUri = `${this.resolveBackendApiUrl(req)}/api/auth/google/callback`;
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${googleClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid%20profile%20email&prompt=select_account&state=${encodeURIComponent(targetFrontend)}`;
     res.redirect(googleAuthUrl);
   };
 
@@ -189,14 +221,15 @@ export class AuthController {
       `);
       return;
     }
-    const redirectUri = `${process.env.API_URL || 'http://localhost:3000'}/api/auth/facebook/callback`;
-    const facebookAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${facebookAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=email,public_profile`;
+    const targetFrontend = this.resolveFrontendUrl(req);
+    const redirectUri = `${this.resolveBackendApiUrl(req)}/api/auth/facebook/callback`;
+    const facebookAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${facebookAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=email,public_profile&state=${encodeURIComponent(targetFrontend)}`;
     res.redirect(facebookAuthUrl);
   };
 
   public googleCallback = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { code, error } = req.query;
+      const { code, error, state } = req.query;
       if (error || !code) {
         res.status(400).send(`
           <!DOCTYPE html>
@@ -223,8 +256,10 @@ export class AuthController {
         `);
         return;
       }
-      const result = await this.authService.handleGoogleCallback(code as string);
-      this.sendOAuthResponse(res, result);
+      const redirectUri = `${this.resolveBackendApiUrl(req)}/api/auth/google/callback`;
+      const result = await this.authService.handleGoogleCallback(code as string, redirectUri);
+      await this.registerDeviceSession(req, result.user.id, result.jwtToken);
+      this.sendOAuthResponse(res, result, req, state as string);
     } catch (error: any) {
       res.status(500).send(`Authentication error: ${error.message}`);
     }
@@ -232,7 +267,7 @@ export class AuthController {
 
   public facebookCallback = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { code, error } = req.query;
+      const { code, error, state } = req.query;
       if (error || !code) {
         res.status(400).send(`
           <!DOCTYPE html>
@@ -259,8 +294,10 @@ export class AuthController {
         `);
         return;
       }
-      const result = await this.authService.handleFacebookCallback(code as string);
-      this.sendOAuthResponse(res, result);
+      const redirectUri = `${this.resolveBackendApiUrl(req)}/api/auth/facebook/callback`;
+      const result = await this.authService.handleFacebookCallback(code as string, redirectUri);
+      await this.registerDeviceSession(req, result.user.id, result.jwtToken);
+      this.sendOAuthResponse(res, result, req, state as string);
     } catch (error: any) {
       res.status(500).send(`Authentication error: ${error.message}`);
     }
@@ -345,8 +382,73 @@ export class AuthController {
     }
   }
 
-  private sendOAuthResponse(res: Response, result: { user: any; jwtToken: string; isNewUser: boolean }) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
+  private resolveBackendApiUrl(req: Request): string {
+    if (process.env.API_URL) {
+      return process.env.API_URL;
+    }
+    const hostHeader = req.get('host');
+    if (hostHeader) {
+      const hostname = hostHeader.split(':')[0];
+      // Google OAuth explicitly blocks raw private IPs (192.168.x.x, 10.x.x.x, etc.)
+      const isPrivateIp = /^(?:192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/.test(hostname);
+      if (isPrivateIp) {
+        return 'http://localhost:3000';
+      }
+      const protocol = req.protocol || 'http';
+      return `${protocol}://${hostHeader}`;
+    }
+    return 'http://localhost:3000';
+  }
+
+  private resolveFrontendUrl(req: Request, state?: string): string {
+    // 1. If state parameter is present and valid
+    if (state && typeof state === 'string') {
+      try {
+        const decoded = decodeURIComponent(state);
+        const parsed = new URL(decoded);
+        return parsed.origin;
+      } catch {}
+    }
+
+    // 2. If query returnUrl is present
+    if (req.query?.returnUrl && typeof req.query.returnUrl === 'string') {
+      try {
+        const parsed = new URL(req.query.returnUrl as string);
+        return parsed.origin;
+      } catch {}
+    }
+
+    // 3. If referer or origin header is present
+    const referer = (req.headers.referer || req.headers.origin) as string;
+    if (referer && typeof referer === 'string') {
+      try {
+        const parsed = new URL(referer);
+        return parsed.origin;
+      } catch {}
+    }
+
+    // 4. Derive from request host (e.g. 192.168.100.4:3000 -> http://192.168.100.4:4200)
+    const hostHeader = req.get('host');
+    if (hostHeader) {
+      const hostname = hostHeader.split(':')[0];
+      if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+        const protocol = req.protocol || 'http';
+        return `${protocol}://${hostname}:4200`;
+      }
+    }
+
+    // 5. Fallback to ENV.FRONTEND_URL or localhost
+    return process.env.FRONTEND_URL || 'http://localhost:4200';
+  }
+
+  private sendOAuthResponse(
+    res: Response, 
+    result: { user: any; jwtToken: string; refreshToken?: string; isNewUser: boolean }, 
+    req: Request,
+    state?: string
+  ) {
+    const frontendUrl = this.resolveFrontendUrl(req, state);
+
     const userPayload = encodeURIComponent(JSON.stringify({
       id: result.user.id,
       username: result.user.username,
@@ -355,7 +457,7 @@ export class AuthController {
       avatarUrl: result.user.avatarUrl,
       hasUsernameSet: result.user.hasUsernameSet
     }));
-    const redirectUrl = `${frontendUrl}/auth/callback?token=${result.jwtToken}&user=${userPayload}`;
+    const redirectUrl = `${frontendUrl}/auth/callback?token=${result.jwtToken}&refreshToken=${result.refreshToken || ''}&user=${userPayload}`;
     res.redirect(redirectUrl);
   }
 }
