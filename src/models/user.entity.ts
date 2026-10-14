@@ -19,7 +19,7 @@ export class User extends AbstractBaseEntity {
   @Column({ type: 'varchar', unique: true })
   username!: string;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, select: false })
   password?: string;
 
   @Column({ type: 'varchar', nullable: true })
@@ -28,7 +28,7 @@ export class User extends AbstractBaseEntity {
   @Column({ type: 'varchar', nullable: true })
   providerId?: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true, select: false })
   refreshToken?: string;
 
   @Column({ type: 'varchar', default: UserRole.USER })

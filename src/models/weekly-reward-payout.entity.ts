@@ -1,3 +1,4 @@
+
 import { Column, Entity, Index } from 'typeorm';
 import { AbstractBaseEntity } from './base.entity.js';
 

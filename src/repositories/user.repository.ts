@@ -30,6 +30,36 @@ export class UserRepository {
     return this.ormRepository.findOne({ where: { username } });
   }
 
+  public async findByEmail(email: string): Promise<User | null> {
+    return this.ormRepository.findOne({ where: { email } });
+  }
+
+  public async findByEmailOrUsernameWithPassword(identifier: string): Promise<User | null> {
+    const isEmail = identifier.includes('@');
+    return this.ormRepository.createQueryBuilder('user')
+      .addSelect('user.password')
+      .leftJoinAndSelect('user.stats', 'stats')
+      .leftJoinAndSelect('user.preferences', 'preferences')
+      .where(isEmail ? 'user.email = :identifier' : 'user.username = :identifier', {
+        identifier: isEmail ? identifier.toLowerCase() : identifier
+      })
+      .getOne();
+  }
+
+  public async findByIdWithPassword(id: string): Promise<User | null> {
+    return this.ormRepository.createQueryBuilder('user')
+      .addSelect('user.password')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
+  public async findByIdWithRefreshToken(id: string): Promise<User | null> {
+    return this.ormRepository.createQueryBuilder('user')
+      .addSelect('user.refreshToken')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
   public async getTopPlayers(
     limit: number = 100,
     minXp?: number,
@@ -153,10 +183,6 @@ export class UserRepository {
       points: Number(row.points) || 0,
       xp: Number(row.xp) || 0
     }));
-  }
-
-  public async findByEmail(email: string): Promise<User | null> {
-    return this.ormRepository.findOne({ where: { email } });
   }
 
   public async save(user: User): Promise<User> {

@@ -34,7 +34,7 @@ export const AppDataSource = new DataSource({
   username: ENV.DB.USER,
   password: ENV.DB.PASS,
   database: ENV.DB.NAME,
-  synchronize: true,
+  synchronize: ENV.NODE_ENV === 'development',
   migrationsRun: true,
   logging: ENV.NODE_ENV === 'development',
   entities: [User, Preferences, Stats, MatchHistory, Ban, Notification, Report, SystemSettings, Friendship, DeviceSession, LevelProgressionConfig, DailyRewardClaim, PointPackage, StoreItem, UserStoreItem, PointPackagePayment, StripeWebhookEvent, RankTier, RewardsSettings, WeeklyRewardPayout, Badge, UserBadge, BadgeEventReceipt, ImpostorMatchAuditState],

@@ -9,6 +9,8 @@ import { RankTierService } from '../services/rank-tier.service.js';
 import { RewardsSettingsService } from '../services/rewards-settings.service.js';
 import { AppDataSource } from '../config/database.config.js';
 import { StoreItem } from '../models/store-item.entity.js';
+import bcrypt from 'bcryptjs';
+import { isValidAvatarUrl } from '../utils/regex.util.js';
 
 @injectable()
 export class UserController {
@@ -116,8 +118,14 @@ export class UserController {
         user.hasUsernameSet = true;
       }
 
-      if (avatarUrl !== undefined) {
+      if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== '') {
+        if (!isValidAvatarUrl(avatarUrl)) {
+          res.status(400).json({ error: 'Invalid avatar URL. Must be a valid HTTP or HTTPS URL.' });
+          return;
+        }
         user.avatarUrl = avatarUrl;
+      } else if (avatarUrl === '' || avatarUrl === null) {
+        user.avatarUrl = undefined;
       }
 
       const savedUser = await this.userRepository.save(user);
@@ -300,11 +308,25 @@ export class UserController {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
-      const user = await this.userRepository.findById(userId);
+      const user = await this.userRepository.findByIdWithPassword(userId);
       if (!user) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
+
+      if (user.provider === 'local' && user.password) {
+        const confirmPassword = req.body?.password || (req.headers['x-confirm-password'] as string);
+        if (!confirmPassword || typeof confirmPassword !== 'string') {
+          res.status(400).json({ error: 'Password confirmation is required to delete account.' });
+          return;
+        }
+        const isMatch = await bcrypt.compare(confirmPassword, user.password);
+        if (!isMatch) {
+          res.status(401).json({ error: 'Invalid password confirmation.' });
+          return;
+        }
+      }
+
       await this.userRepository.deleteUser(user);
       res.status(200).json({ message: 'Account deleted successfully' });
     } catch (error: any) {
