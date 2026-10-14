@@ -21,6 +21,7 @@ import { BadgeService } from '../services/badge.service.js';
 import { IMPOSTOR_MIN_HUMAN_PLAYERS } from '../game/engine/game-instance.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { PresenceTrackerService, IUserPresenceSnapshot } from '../services/presence-tracker.service.js';
+import { isAllowedOrigin } from '../utils/cors.util.js';
 
 const QUICK_CHAT_MESSAGE_IDS = new Set([
   'QUICK_CHAT.WELL_PLAYED',
@@ -92,7 +93,17 @@ export class SocketManager {
   
   public async initialize(httpServer: HttpServer): Promise<void> {
     this.io = new Server(httpServer, {
-      cors: { origin: '*', methods: ['GET', 'POST'] }
+      cors: {
+        origin: (origin, callback) => {
+          if (isAllowedOrigin(origin)) {
+            callback(null, true);
+          } else {
+            callback(new Error('CORS not allowed'));
+          }
+        },
+        credentials: true,
+        methods: ['GET', 'POST']
+      }
     });
 
     try {
@@ -128,6 +139,27 @@ export class SocketManager {
     const token = socket.handshake.auth?.token;
     const deviceId = socket.handshake.auth?.deviceId || (socket.handshake.headers['x-device-id'] as string);
     if (!token) return next(new Error('Authentication error: Token missing'));
+
+    // Allow guests with temporary or generated guest tokens
+    if (token === 'guest_temp_token' || token.startsWith('guest_')) {
+      const authUser = socket.handshake.auth?.user;
+      const rawId = authUser?.id || (token.startsWith('guest_') && token !== 'guest_temp_token' ? token.replace(/^guest_token_/, '') : '');
+      const guestId = rawId || `guest_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+      const guestNum = guestId.replace(/[^0-9]/g, '').slice(-4) || '1000';
+      const guestUsername = authUser?.username || `Guest_${guestNum}`;
+
+      socket.data.user = {
+        id: guestId,
+        sub: guestId,
+        username: guestUsername,
+        role: 'guest',
+        provider: 'guest',
+        avatarUrl: authUser?.avatarUrl || null
+      };
+      socket.data.deviceId = deviceId || `dev_${guestId}`;
+      return next();
+    }
+
     try {
       const decoded: any = jwt.verify(token, ENV.JWT_SECRET);
       socket.data.user = decoded;
@@ -191,8 +223,30 @@ export class SocketManager {
     }
   }
 
+  private throttleMiddleware(socket: Socket, next: (err?: any) => void): void {
+    const MAX_EVENTS_PER_SECOND = 40;
+    let count = 0;
+    let windowStart = Date.now();
+
+    socket.use(([event, ...args], nextEvent) => {
+      const now = Date.now();
+      if (now - windowStart > 1000) {
+        windowStart = now;
+        count = 0;
+      }
+      count++;
+      if (count > MAX_EVENTS_PER_SECOND) {
+        socket.emit('error', 'Too many requests. Please slow down.');
+        return;
+      }
+      nextEvent();
+    });
+    next();
+  }
+
   private setupMiddlewares(): void {
     this.io.use((socket, next) => this.authMiddleware(socket, next));
+    this.io.use((socket, next) => this.throttleMiddleware(socket, next));
   }
 
   private async updateUserPresence(userId: string, isOnline: boolean, status: PresenceStatus): Promise<void> {
@@ -271,6 +325,7 @@ export class SocketManager {
 
     const matchmakingNs = this.io.of('/matchmaking');
     matchmakingNs.use(authMw);
+    matchmakingNs.use((socket, next) => this.throttleMiddleware(socket, next));
     matchmakingNs.on('connection', (socket: Socket) => {
       const user = socket.data.user;
       if (!user) return;

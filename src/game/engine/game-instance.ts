@@ -737,6 +737,10 @@ export class GameInstance {
     return Math.max(0, Math.ceil((this.impostorGeneratorSabotageCooldownUntil - now) / 1000));
   }
 
+  public getImpostorExitSealCooldownSeconds(now: number = Date.now()): number {
+    return Math.max(0, Math.ceil((this.impostorExitSealCooldownUntil - now) / 1000));
+  }
+
   public getImpostorEmergencyMeetingSecondsRemaining(now: number = Date.now()): number {
     if (this.mode !== 'impostor' || !this.impostorEmergencyMeetingAvailableAt) return 0;
     const effectiveNow = this.isImpostorEmergencyMeetingActive() ? this.impostorEmergencyMeetingPausedAt : now;
@@ -1506,18 +1510,18 @@ export class GameInstance {
         playerId !== this.impostorId) return false;
     const player = this.board.players.get(playerId);
     if (!player || player.isDead || player.isInPrison || player.hasImpostorEscaped ||
-        this.getImpostorGeneratorSabotageCooldownSeconds() > 0) return false;
+        this.getImpostorExitSealCooldownSeconds() > 0) return false;
     const board = this.getImpostorBoard();
     const exitNumber = board.sealImpostorExit(exitId);
     if (exitNumber === null) return false;
     const now = Date.now();
-    this.impostorGeneratorSabotageCooldownUntil = now + IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS;
-    this.impostorExitSealCooldownUntil = this.impostorGeneratorSabotageCooldownUntil;
+    this.impostorExitSealCooldownUntil = now + IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS;
     this.recordPlayerActivity(playerId);
     this.emitImpostorPublicEvent('impostor_exit_sealed', {
       exitNumber,
       playerName: player.username
     });
+    this.onPrivateStateChange(this.impostorId, 'impostorRole', this.getPrivateImpostorRole(this.impostorId));
     this.emitImpostorState();
     if (board.exits.every(exit => exit.isSealed)) {
       this.finishImpostorGame(this.impostorId, 'doors_sabotaged');
@@ -2022,6 +2026,9 @@ export class GameInstance {
     publicActionCounts: Record<string, number>;
     impostorSecondsUntilChange: number;
     impostorGeneratorSabotageSecondsRemaining: number;
+    impostorExitSealCooldownUntil: number;
+    impostorExitSealSecondsRemaining: number;
+    impostorDoorSabotageSecondsRemaining: number;
     impostorExitOpenUsedBy: string[];
     impostorGoodPlayersReturned: number;
     impostorGoodPlayersTotal: number;
@@ -2036,6 +2043,9 @@ export class GameInstance {
       publicActionCounts: this.getImpostorPublicActionCounts(),
       impostorSecondsUntilChange: this.getImpostorSecondsUntilChange(),
       impostorGeneratorSabotageSecondsRemaining: this.getImpostorGeneratorSabotageCooldownSeconds(),
+      impostorExitSealCooldownUntil: this.impostorExitSealCooldownUntil,
+      impostorExitSealSecondsRemaining: this.getImpostorExitSealCooldownSeconds(),
+      impostorDoorSabotageSecondsRemaining: this.getImpostorExitSealCooldownSeconds(),
       impostorEmergencyMeeting: this.getImpostorEmergencyMeetingState(),
       impostorEmergencyMeetingSecondsRemaining: this.getImpostorEmergencyMeetingSecondsRemaining(),
       impostorRadarGraceUntil: this.radarGraceUntil,
