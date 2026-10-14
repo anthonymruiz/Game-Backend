@@ -125,3 +125,5 @@
 2026-10-01 11:42:55 [ERROR]: [PUT] /api/reports/3a0ea211-0059-4c71-b52e-e57c118eb476/status - TypeInfo not known for "ReportService"
 2026-10-01 11:43:48 [ERROR]: [POST] /api/reports - TypeInfo not known for "ReportService"
 2026-10-01 11:43:48 [ERROR]: [PUT] /api/reports/3a0ea211-0059-4c71-b52e-e57c118eb476/status - TypeInfo not known for "ReportService"
+2026-10-13 22:50:40 [ERROR]: [PUT] /api/users/profile - request entity too large
+2026-10-13 22:50:40 [ERROR]: [GET] /health - CORS not allowed

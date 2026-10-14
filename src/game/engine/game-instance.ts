@@ -1188,7 +1188,7 @@ export class GameInstance {
       ghost: Math.max(cooldowns?.ghost ?? 0, generalCooldownUntil),
       shield: Math.max(cooldowns?.shield ?? 0, generalCooldownUntil),
       invisible: Math.max(cooldowns?.invisible ?? 0, generalCooldownUntil),
-      teleport: Math.max(cooldowns?.teleport ?? 0, generalCooldownUntil)
+      teleport: cooldowns?.teleport ?? 0
     };
   }
 
@@ -2591,14 +2591,15 @@ export class GameInstance {
     const hasActivePower = player.ghostModeExpiresAt > now ||
       player.invisibleUntil > now ||
       (player.impostorShieldActive && player.impostorShieldExpiresAt > now);
-    if (hasActivePower) return false;
+    if (power !== 'teleport' && hasActivePower) return false;
     const cooldowns = this.infectionLastSurvivorPowerCooldownUntil.get(playerId) ?? {
       ghost: 0,
       shield: 0,
       invisible: 0,
       teleport: 0
     };
-    if (cooldowns[power] > now ||
+    if (cooldowns[power] > now) return false;
+    if (power !== 'teleport' &&
         (this.infectionLastSurvivorGeneralCooldownUntil.get(playerId) ?? 0) > now) return false;
 
     let teleport: ReturnType<InfectionBoard['teleportPlayerToOppositeEdge']> = null;
@@ -2621,10 +2622,12 @@ export class GameInstance {
       ...cooldowns,
       [power]: now + INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS
     });
-    this.infectionLastSurvivorGeneralCooldownUntil.set(
-      playerId,
-      now + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS
-    );
+    if (power !== 'teleport') {
+      this.infectionLastSurvivorGeneralCooldownUntil.set(
+        playerId,
+        now + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS
+      );
+    }
     this.recordPlayerActivity(playerId);
     if (teleport) {
       this.onStateChange('playerMoved', {
