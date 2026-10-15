@@ -20,6 +20,7 @@ import { ImpostorAuditService } from './impostor-audit.service.js';
 import { ImpostorMatchAuditState } from '../models/impostor-match-audit-state.entity.js';
 import { RankTierService } from './rank-tier.service.js';
 import { AdminDashboardRepository } from '../repositories/admin-dashboard.repository.js';
+import { Ban } from '../models/ban.entity.js';
 
 interface ImpostorAdminPlayer {
   id: string;
@@ -393,28 +394,55 @@ export class AdminService {
   }
 
   public async banUser(targetUserId: string): Promise<User> {
-    const targetUser = await this.userRepository.findById(targetUserId);
+    const targetUser = await this.userRepository.findByIdWithPassword(targetUserId);
     if (!targetUser) {
       throw new Error('User not found.');
     }
 
-    if (targetUser.role === UserRole.SUPERADMIN || targetUser.role === UserRole.ADMIN || targetUser.role === ('superadmin' as any)) {
+    const normalizedRole = String(targetUser.role ?? '').toLowerCase();
+    if (normalizedRole === UserRole.SUPERADMIN || normalizedRole === UserRole.ADMIN) {
       throw new Error('Cannot ban admins or superadmins.');
     }
 
     targetUser.role = UserRole.BANNED;
-    return this.userRepository.save(targetUser);
+    await this.userRepository.updateRole(targetUser.id, UserRole.BANNED);
+
+    try {
+      const banRepository = AppDataSource.getRepository(Ban);
+      const existingBan = await banRepository.findOne({ where: { userId: targetUser.id } });
+      if (!existingBan) {
+        await banRepository.save(banRepository.create({
+          userId: targetUser.id,
+          reason: 'Banned by admin',
+          expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365 * 10)
+        }));
+      }
+    } catch (error) {
+      console.warn('[AdminService] Failed to persist ban record', error);
+    }
+
+    return targetUser;
   }
 
   public async unbanUser(targetUserId: string): Promise<User> {
-    const targetUser = await this.userRepository.findById(targetUserId);
+    const targetUser = await this.userRepository.findByIdWithPassword(targetUserId);
     if (!targetUser) {
       throw new Error('User not found.');
     }
 
-    if (targetUser.role === UserRole.BANNED) {
+    const normalizedRole = String(targetUser.role ?? '').toLowerCase();
+    if (normalizedRole === UserRole.BANNED || normalizedRole === 'BANNED') {
       targetUser.role = UserRole.USER;
-      return this.userRepository.save(targetUser);
+      await this.userRepository.updateRole(targetUser.id, UserRole.USER);
+
+      try {
+        const banRepository = AppDataSource.getRepository(Ban);
+        await banRepository.delete({ userId: targetUser.id });
+      } catch (error) {
+        console.warn('[AdminService] Failed to clear ban record', error);
+      }
+
+      return targetUser;
     }
 
     return targetUser;

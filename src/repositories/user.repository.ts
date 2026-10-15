@@ -186,7 +186,31 @@ export class UserRepository {
   }
 
   public async save(user: User): Promise<User> {
+    if (user.id) {
+      const current = await this.ormRepository.findOne({
+        where: { id: user.id },
+        select: {
+          id: true,
+          password: true,
+          refreshToken: true
+        }
+      });
+
+      if (current) {
+        if (user.password === undefined) {
+          user.password = current.password;
+        }
+        if (user.refreshToken === undefined) {
+          user.refreshToken = current.refreshToken;
+        }
+      }
+    }
+
     return this.ormRepository.save(user);
+  }
+
+  public async updateRole(id: string, role: UserRole): Promise<void> {
+    await this.ormRepository.update(id, { role });
   }
 
   public async countTotal(): Promise<number> {

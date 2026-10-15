@@ -37,4 +37,40 @@ describe('ImpostorBoard', () => {
     assert.equal(board.moveImpostorPlayer(player.id, 19, 19), false);
   });
 
+  it('fully closes the safe-zone perimeter except for centered cardinal doors', () => {
+    const board = new ImpostorBoard(20);
+    const middle = Math.floor(board.size / 2);
+    const min = middle - 3;
+    const max = middle + 3;
+    const player = new Player('safe-zone-check', 'Safe Zone Check', false, middle, min - 1);
+    board.addPlayer(player);
+    board.spawnGenerators();
+    board.generateRandomImpostorWalls(undefined, () => 0.37);
+
+    assert.deepEqual(board.exits.map(({ x, y }) => ({ x, y })), [
+      { x: middle, y: min },
+      { x: max, y: middle },
+      { x: middle, y: max },
+      { x: min, y: middle }
+    ]);
+
+    const testCrossing = (outside: { x: number; y: number }, inside: { x: number; y: number }, shouldOpen: boolean) => {
+      for (const row of board.grid) for (const cell of row) cell.hasPlayer = null;
+      player.x = outside.x;
+      player.y = outside.y;
+      board.grid[player.y][player.x].hasPlayer = player.id;
+      const isOpen = board.getImpostorValidMoves(player.id)
+        .some(move => move.x === inside.x && move.y === inside.y);
+      assert.equal(isOpen, shouldOpen, `passage ${outside.x},${outside.y} -> ${inside.x},${inside.y}`);
+    };
+
+    for (let coordinate = min; coordinate <= max; coordinate++) {
+      const centered = coordinate === middle - 1 || coordinate === middle;
+      testCrossing({ x: coordinate, y: min - 1 }, { x: coordinate, y: min }, centered);
+      testCrossing({ x: coordinate, y: max + 1 }, { x: coordinate, y: max }, centered);
+      testCrossing({ x: min - 1, y: coordinate }, { x: min, y: coordinate }, centered);
+      testCrossing({ x: max + 1, y: coordinate }, { x: max, y: coordinate }, centered);
+    }
+  });
+
 });

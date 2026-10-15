@@ -42,6 +42,23 @@ export class InfectionBoard extends ImpostorBoardBase {
     return this.getCentralRoomBounds();
   }
 
+  protected override getCentralRoomBounds(): {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } {
+    const middle = Math.floor(this.size / 2);
+    const roomSize = Math.min(8, this.size);
+    const min = Math.max(0, Math.min(this.size - roomSize, middle - 3));
+    return {
+      minX: min,
+      maxX: min + roomSize - 1,
+      minY: min,
+      maxY: min + roomSize - 1,
+    };
+  }
+
   public override isSafeZoneCell(x: number, y: number): boolean {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     return x >= minX && x <= maxX && y >= minY && y <= maxY;

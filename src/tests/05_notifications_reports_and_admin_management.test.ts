@@ -95,7 +95,8 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
     const reportedAvatar = reportedUser.avatarUrl;
     reporter.avatarUrl = 'https://lh3.googleusercontent.com/reporter-avatar';
     reportedUser.avatarUrl = 'https://lh3.googleusercontent.com/reported-avatar';
-    await userRepository.save([reporter, reportedUser]);
+    await userRepository.update(reporter.id, { avatarUrl: reporter.avatarUrl });
+    await userRepository.update(reportedUser.id, { avatarUrl: reportedUser.avatarUrl });
 
     const report = await reportRepository.save(reportRepository.create({
       reporterId: reporter.id,
@@ -129,9 +130,8 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
     } finally {
       await reportRepository.delete(report.id);
       await matchRepository.delete(match.id);
-      reporter.avatarUrl = reporterAvatar;
-      reportedUser.avatarUrl = reportedAvatar;
-      await userRepository.save([reporter, reportedUser]);
+      await userRepository.update(reporter.id, { avatarUrl: reporterAvatar });
+      await userRepository.update(reportedUser.id, { avatarUrl: reportedAvatar });
     }
   });
 
@@ -249,12 +249,18 @@ describe('05 - Notifications, User Reports & Admin Management/Bans Tests', () =>
   });
 
   it('Admin should be able to unban User 2, allowing User 2 to log in again', async () => {
+    const adminLogin = await makeRequest(app, 'POST', '/api/auth/login', {
+      login: 'admin',
+      password: 'admin'
+    });
+    assert.equal(adminLogin.status, 200);
+
     const unbanRes = await makeRequest(
       app,
       'POST',
       `/api/admin/users/${user2Id}/unban`,
       {},
-      adminToken
+      adminLogin.body.token
     );
     assert.equal(unbanRes.status, 200);
 

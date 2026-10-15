@@ -29,6 +29,15 @@ function createGame(
   return new GameInstance('infection-test', 'infection', players, onStateChange, GAME_INSTANCE_TEST_OPTIONS);
 }
 
+function movePlayer(board: InfectionBoard, player: Player, x: number, y: number): void {
+  if (board.grid[player.y][player.x].hasPlayer === player.id) {
+    board.grid[player.y][player.x].hasPlayer = null;
+  }
+  player.x = x;
+  player.y = y;
+  board.grid[y][x].hasPlayer = player.id;
+}
+
 describe('Infection mode', () => {
   it('requires three participants and supports up to six', () => {
     assert.throws(() => createGame(makePlayers(2)), /3-6 participants/);
@@ -729,6 +738,7 @@ describe('Infection mode', () => {
       Array.from({ length: board.size }, (_, x) => ({ x, y }))
     ).flat().find(({ x, y }) => board.canPlaceTrap(x, y));
     assert.ok(trapCell);
+    movePlayer(board, survivor, trapCell.x, trapCell.y);
     assert.equal(game.placeImpostorTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
     assert.equal(game.getPrivateImpostorTrapState(infected.id), null);
     assert.equal(game.getPrivateImpostorTrapState(survivor.id)?.traps.length, 1);
@@ -744,6 +754,7 @@ describe('Infection mode', () => {
       (x !== trapCell.x || y !== trapCell.y) && board.canPlaceTrap(x, y)
     );
     assert.ok(secondTrapCell);
+    movePlayer(board, otherSurvivor, secondTrapCell.x, secondTrapCell.y);
     assert.equal(game.placeImpostorTrap(otherSurvivor.id, 'ice', secondTrapCell.x, secondTrapCell.y), true);
     assert.equal(game.getPrivateImpostorTrapState(otherSurvivor.id)?.traps.length, 2);
     assert.ok((game.getPrivateImpostorTrapState(otherSurvivor.id)?.cooldowns.ice ?? 0) > 0);
@@ -757,6 +768,30 @@ describe('Infection mode', () => {
     assert.equal(game.placeImpostorWall(survivor.id, wallCell.x, wallCell.y, true, 'infection-wall'), true);
     assert.equal(board.walls.length, initialWallCount + 1);
     assert.equal(game.placeImpostorWall(infected.id, wallCell.x, wallCell.y + 2, true, 'infected-wall'), false);
+    game.destroy();
+  });
+
+  it('requires infection traps to be placed under the survivor', () => {
+    const game = createGame();
+    game.start();
+    const board = game.board as InfectionBoard;
+    const survivor = [...board.players.values()].find(player => !player.isInfected);
+    assert.ok(survivor);
+
+    const trapCell = Array.from({ length: board.size }, (_, y) =>
+      Array.from({ length: board.size }, (_, x) => ({ x, y }))
+    ).flat().find(({ x, y }) =>
+      !board.isSafeZoneCell(x, y) && board.canPlaceTrap(x, y)
+    );
+    assert.ok(trapCell);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', trapCell.x, trapCell.y), false);
+
+    board.grid[survivor.y][survivor.x].hasPlayer = null;
+    survivor.x = trapCell.x;
+    survivor.y = trapCell.y;
+    board.grid[survivor.y][survivor.x].hasPlayer = survivor.id;
+
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', survivor.x, survivor.y), true);
     game.destroy();
   });
 
@@ -885,7 +920,10 @@ describe('Infection mode', () => {
 
     const trapCell = board.getImpostorValidMoves(infected.id).find(({ x, y }) => board.canPlaceTrap(x, y));
     assert.ok(trapCell);
+    const survivorPosition = { x: survivor.x, y: survivor.y };
+    movePlayer(board, survivor, trapCell.x, trapCell.y);
     assert.equal(game.placeImpostorTrap(survivor.id, 'ice', trapCell.x, trapCell.y), true);
+    movePlayer(board, survivor, survivorPosition.x, survivorPosition.y);
     assert.equal(game.executeMove(infected.id, trapCell.x, trapCell.y), true);
     assert.ok(infected.impostorFrozenUntil >= Date.now() + 9_000);
     assert.ok(infected.impostorFrozenUntil <= Date.now() + 10_000);
@@ -1372,8 +1410,10 @@ describe('Infection mode', () => {
     }
     game.startTime = Date.now() - 11_000;
 
-    // Survivor places an ice trap at (4, 5)
-    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', 4, 5), true);
+    // Survivor moves onto (4, 5) to place an ice trap, then returns to (4, 6).
+    movePlayer(board, survivor, 4, 5);
+    assert.equal(game.placeImpostorTrap(survivor.id, 'ice', survivor.x, survivor.y), true);
+    movePlayer(board, survivor, 4, 6);
     assert.equal(board.traps.length, 1);
 
     // Infected moves to (4, 5) right adjacent to survivor at (4, 6)

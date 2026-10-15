@@ -33,7 +33,7 @@ export const IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS = 60_000;
 export const IMPOSTOR_GENERATOR_REPAIR_DURATION_MS = 5_000;
 export const IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS = 3 * 60_000;
 export const IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS = 3_000;
-export const IMPOSTOR_EMERGENCY_MEETING_VOTING_MS = 60_000;
+export const IMPOSTOR_EMERGENCY_MEETING_VOTING_MS = 30_000;
 export const IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS = 7_000;
 export const IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE = 5;
 export const IMPOSTOR_ICE_TRAP_DURATION_MS = 30_000;
@@ -775,7 +775,7 @@ export class GameInstance {
 
     const activeVoters = this.playersList.filter(id => {
       const player = this.board.players.get(id);
-      return !!player && !player.isDead;
+      return !!player && !player.isDead && !id.startsWith('bot_');
     });
     const now = Date.now();
     this.impostorEmergencyMeetingAvailableAt = now + IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS;
@@ -810,13 +810,6 @@ export class GameInstance {
       if (this.state !== 'playing' || this.impostorEmergencyMeeting?.id !== meeting.id) return;
       meeting.phase = 'voting';
       meeting.phaseEndsAt = Date.now() + IMPOSTOR_EMERGENCY_MEETING_VOTING_MS;
-      for (const botId of activeVoters.filter(id => id.startsWith('bot_'))) {
-        const candidates = activeVoters.filter(id => !this.board.players.get(id)?.isDead);
-        if (candidates.length > 0) this.impostorEmergencyMeetingVotes.set(
-          botId,
-          candidates[Math.floor(Math.random() * candidates.length)]
-        );
-      }
       meeting.votesCast = this.impostorEmergencyMeetingVotes.size;
       this.emitImpostorState();
       if (meeting.votesCast >= meeting.voterCount) {
@@ -838,7 +831,8 @@ export class GameInstance {
   public voteImpostorEmergencyMeeting(playerId: string, targetId: string): boolean {
     const meeting = this.impostorEmergencyMeeting;
     if (this.mode !== 'impostor' || this.state !== 'playing' ||
-        meeting?.phase !== 'voting' || this.impostorEmergencyMeetingVotes.has(playerId)) return false;
+        meeting?.phase !== 'voting' || playerId.startsWith('bot_') ||
+        this.impostorEmergencyMeetingVotes.has(playerId)) return false;
     const voter = this.board.players.get(playerId);
     const target = this.board.players.get(targetId);
     if (!voter || voter.isDead || !target || target.isDead ||
@@ -871,7 +865,7 @@ export class GameInstance {
     for (const voterId of this.playersList) {
       if (this.impostorEmergencyMeetingVotes.has(voterId)) continue;
       const voter = this.board.players.get(voterId);
-      if (!voter || voter.isDead) continue;
+      if (!voter || voter.isDead || voterId.startsWith('bot_')) continue;
       ballots.push({
         voterId,
         voterName: voter.username,
@@ -880,9 +874,7 @@ export class GameInstance {
         targetWasImpostor: false
       });
     }
-    const goodTeamWon = ballots.some(ballot => ballot.voterId !== this.impostorId) &&
-      ballots.filter(ballot => ballot.voterId !== this.impostorId)
-        .every(ballot => ballot.targetWasImpostor);
+    const goodTeamWon = ballots.length > 0 && ballots.every(ballot => ballot.targetWasImpostor);
     meeting.phase = 'results';
     meeting.phaseEndsAt = Date.now() + IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS;
     meeting.votesCast = ballots.length;
@@ -1188,7 +1180,7 @@ export class GameInstance {
       ghost: Math.max(cooldowns?.ghost ?? 0, generalCooldownUntil),
       shield: Math.max(cooldowns?.shield ?? 0, generalCooldownUntil),
       invisible: Math.max(cooldowns?.invisible ?? 0, generalCooldownUntil),
-      teleport: cooldowns?.teleport ?? 0
+      teleport: Math.max(cooldowns?.teleport ?? 0, generalCooldownUntil)
     };
   }
 
@@ -1246,6 +1238,7 @@ export class GameInstance {
         this.isInfectionBurning() ||
         !canPlaceTrap || !player || player.isDead ||
         player.isInPrison || player.hasImpostorEscaped ||
+        (this.mode === 'infection' && (x !== player.x || y !== player.y)) ||
         (type !== 'ice' && type !== 'teleport') ||
         // Límite de 5 trampas por tipo comentado por ahora para permitir colocar todas las que quiera:
         // (this.mode === 'impostor' &&
@@ -2599,8 +2592,7 @@ export class GameInstance {
       teleport: 0
     };
     if (cooldowns[power] > now) return false;
-    if (power !== 'teleport' &&
-        (this.infectionLastSurvivorGeneralCooldownUntil.get(playerId) ?? 0) > now) return false;
+    if ((this.infectionLastSurvivorGeneralCooldownUntil.get(playerId) ?? 0) > now) return false;
 
     let teleport: ReturnType<InfectionBoard['teleportPlayerToOppositeEdge']> = null;
     if (power === 'ghost') {
@@ -2622,12 +2614,10 @@ export class GameInstance {
       ...cooldowns,
       [power]: now + INFECTION_LAST_SURVIVOR_POWER_COOLDOWN_MS
     });
-    if (power !== 'teleport') {
-      this.infectionLastSurvivorGeneralCooldownUntil.set(
-        playerId,
-        now + INFECTION_LAST_SURVIVOR_POWER_DURATION_MS + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS
-      );
-    }
+    this.infectionLastSurvivorGeneralCooldownUntil.set(
+      playerId,
+      now + INFECTION_LAST_SURVIVOR_GENERAL_COOLDOWN_MS
+    );
     this.recordPlayerActivity(playerId);
     if (teleport) {
       this.onStateChange('playerMoved', {
@@ -2653,7 +2643,7 @@ export class GameInstance {
   }
 
       public sealImpostorExit(playerId: string, exitId: string): boolean {
-        return this.sabotageImpostorDoor(playerId, exitId);
+        return false;
       }
 
       public openImpostorExit(_playerId: string, _exitId: string): boolean {

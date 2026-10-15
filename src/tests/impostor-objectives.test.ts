@@ -5,6 +5,7 @@ import {
   IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS,
   IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS,
   IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS,
+  IMPOSTOR_EMERGENCY_MEETING_VOTING_MS,
   IMPOSTOR_GENERATOR_SABOTAGE_COOLDOWN_MS,
   IMPOSTOR_GENERATOR_REPAIR_DURATION_MS,
   IMPOSTOR_MAX_ACTIVE_TRAPS_PER_TYPE,
@@ -26,7 +27,8 @@ describe('Impostor personal keys, tools, and generators', () => {
     mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
     const players = [
       { id: 'meeting_good', username: 'MeetingGood', isGuest: false, color: '#FF3B30' },
-      { id: 'meeting_impostor', username: 'MeetingImpostor', isGuest: false, color: '#007AFF' }
+      { id: 'meeting_impostor', username: 'MeetingImpostor', isGuest: false, color: '#007AFF' },
+      { id: 'bot_meeting', username: 'BotMeeting', isGuest: false, color: '#34C759' }
     ];
     const events: string[] = [];
     const game = new GameInstance('impostor_emergency_meeting_test', 'impostor', players, (event) => {
@@ -62,8 +64,10 @@ describe('Impostor personal keys, tools, and generators', () => {
 
     mock.timers.tick(IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS);
     assert.equal(game.getImpostorEmergencyMeetingState()?.phase, 'voting');
+    assert.equal(game.getImpostorEmergencyMeetingState()?.voterCount, 2);
+    assert.equal(game.voteImpostorEmergencyMeeting('bot_meeting', impostorId), false);
     assert.equal(game.getImpostorEmergencyMeetingState()?.results, undefined);
-    assert.equal(game.voteImpostorEmergencyMeeting(impostorId, goodId), true);
+    assert.equal(game.voteImpostorEmergencyMeeting(impostorId, impostorId), true);
     assert.equal(game.getImpostorEmergencyMeetingState()?.results, undefined);
     assert.equal(game.voteImpostorEmergencyMeeting(goodId, impostorId), true);
     assert.equal(game.getImpostorEmergencyMeetingState()?.phase, 'results');
@@ -73,6 +77,58 @@ describe('Impostor personal keys, tools, and generators', () => {
     assert.equal(game.state, 'finished');
     assert.equal(game.winner, 'good');
     assert.ok(events.includes('gameFinished'));
+  });
+
+  it('fails a meeting when any human vote is wrong or missing after 30 seconds', () => {
+    mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000 });
+    const players = [
+      { id: 'meeting_timeout_good', username: 'MeetingTimeoutGood', isGuest: false, color: '#FF3B30' },
+      { id: 'meeting_timeout_other', username: 'MeetingTimeoutOther', isGuest: false, color: '#007AFF' },
+      { id: 'meeting_timeout_impostor', username: 'MeetingTimeoutImpostor', isGuest: false, color: '#FFCC00' },
+      { id: 'bot_meeting_timeout', username: 'BotMeetingTimeout', isGuest: false, color: '#34C759' }
+    ];
+    const game = new GameInstance(
+      'impostor_emergency_meeting_timeout_test',
+      'impostor',
+      players,
+      () => {},
+      GAME_INSTANCE_TEST_OPTIONS
+    );
+    games.push(game);
+    game.start();
+
+    const impostorId = game.impostorId!;
+    const board = game.board as ImpostorBoard;
+    const caller = players
+      .filter(player => !player.id.startsWith('bot_') && player.id !== impostorId)
+      .map(player => board.players.get(player.id)!)[0];
+    caller.x = Math.floor(board.size / 2);
+    caller.y = Math.floor(board.size / 2);
+    for (let elapsed = 0; elapsed < IMPOSTOR_EMERGENCY_MEETING_COOLDOWN_MS; elapsed += 30_000) {
+      mock.timers.tick(30_000);
+      for (const player of players) game.recordPlayerActivity(player.id);
+    }
+    assert.equal(game.callImpostorEmergencyMeeting(caller.id), true);
+    mock.timers.tick(IMPOSTOR_EMERGENCY_MEETING_ANNOUNCEMENT_MS);
+    const goodVoters = players.filter(player =>
+      !player.id.startsWith('bot_') && player.id !== impostorId
+    );
+    const wrongTarget = goodVoters.find(player => player.id !== caller.id)!.id;
+    assert.equal(game.voteImpostorEmergencyMeeting(caller.id, wrongTarget), true);
+    assert.equal(game.getImpostorEmergencyMeetingState()?.voterCount, 3);
+
+    mock.timers.tick(IMPOSTOR_EMERGENCY_MEETING_VOTING_MS - 1);
+    assert.equal(game.getImpostorEmergencyMeetingState()?.phase, 'voting');
+    mock.timers.tick(1);
+    const meeting = game.getImpostorEmergencyMeetingState();
+    assert.equal(meeting?.phase, 'results');
+    assert.equal(meeting?.results?.goodTeamWon, false);
+    assert.equal(meeting?.results?.ballots.length, 3);
+    assert.equal(meeting?.results?.ballots.some(ballot => ballot.voterId.startsWith('bot_')), false);
+    assert.equal(meeting?.results?.ballots.some(ballot => ballot.targetId === null), true);
+    mock.timers.tick(IMPOSTOR_EMERGENCY_MEETING_RESULTS_MS);
+    assert.equal(game.state, 'finished');
+    assert.equal(game.winner, impostorId);
   });
 
   it('reveals and collects only the owner key with a radar in a powered sector', () => {

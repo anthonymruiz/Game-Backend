@@ -545,7 +545,7 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   public isSafeZoneCell(x: number, y: number): boolean {
-    const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const { minX, maxX, minY, maxY } = this.getProtectedCentralZoneBounds();
     return x >= minX && x <= maxX && y >= minY && y <= maxY;
   }
 
@@ -1126,20 +1126,13 @@ export abstract class ImpostorBoardBase extends Board {
   }
 
   private addCentralEntranceWalls(): void {
-    const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
+    const middle = Math.floor(this.size / 2);
+    const gateStart = minX + Math.floor((maxX - minX + 1) / 2) - 1;
     let northSouthIndex = 0;
     let eastWestIndex = 0;
-    const horizontalWallStarts = [
-      ...Array.from({ length: Math.max(0, middle - minX - 1) }, (_, index) => minX + index),
-      ...Array.from({ length: Math.max(0, maxX - middle - 2) }, (_, index) => middle + 2 + index)
-    ];
-    const verticalWallStarts = [
-      ...Array.from({ length: Math.max(0, middle - minY - 1) }, (_, index) => minY + index),
-      ...Array.from({ length: Math.max(0, maxY - middle - 2) }, (_, index) => middle + 2 + index)
-    ];
-
-    for (const x of horizontalWallStarts) {
+    for (let x = minX; x < maxX; x++) {
+      if (x >= gateStart - 1 && x <= gateStart + 1) continue;
       this.walls.push(
         new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, minY - 1, true),
         new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, maxY, true)
@@ -1147,7 +1140,8 @@ export abstract class ImpostorBoardBase extends Board {
       northSouthIndex++;
     }
 
-    for (const y of verticalWallStarts) {
+    for (let y = minY; y < maxY; y++) {
+      if (y >= gateStart - 1 && y <= gateStart + 1) continue;
       this.walls.push(
         new Wall(`impostor_center_w_${eastWestIndex}`, 'board', minX - 1, y, false),
         new Wall(`impostor_center_e_${eastWestIndex}`, 'board', maxX, y, false)
@@ -1160,15 +1154,16 @@ export abstract class ImpostorBoardBase extends Board {
     const protectedPassages = new Set<number>();
     const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const gateStart = middle;
+    const gateStart = minX + Math.floor((maxX - minX + 1) / 2) - 1;
     const addGatePassages = (x1: number, y1: number, x2: number, y2: number): void => {
       protectedPassages.add(this.getPassageKey({ x: x1, y: y1 }, { x: x2, y: y2 }));
     };
-    for (let offset = 0; offset < 2; offset++) {
-      addGatePassages(gateStart + offset, minY - 1, gateStart + offset, minY);
-      addGatePassages(gateStart + offset, maxY, gateStart + offset, maxY + 1);
-      addGatePassages(minX - 1, gateStart + offset, minX, gateStart + offset);
-      addGatePassages(maxX, gateStart + offset, maxX + 1, gateStart + offset);
+    for (const offset of [0, 1]) {
+      const gateCoordinate = gateStart + offset;
+      addGatePassages(gateCoordinate, minY - 1, gateCoordinate, minY);
+      addGatePassages(gateCoordinate, maxY, gateCoordinate, maxY + 1);
+      addGatePassages(minX - 1, gateCoordinate, minX, gateCoordinate);
+      addGatePassages(maxX, gateCoordinate, maxX + 1, gateCoordinate);
     }
     for (const generator of this.generators) {
       const { x, y } = generator;
@@ -1489,25 +1484,23 @@ export abstract class ImpostorBoardBase extends Board {
     }
     const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const gateStart = middle;
-    const gateEnd = middle;
     const crossesGate = (exit: IImpostorExit): boolean => {
       if (!exit.isSealed) return false;
       if (exit.x === middle && exit.y === minY) {
         return fromY !== toY && Math.min(fromY, toY) === minY - 1 &&
-          (fromX === toX) && fromX >= gateStart && fromX <= gateEnd;
+          fromX === toX && fromX === middle;
       }
       if (exit.x === maxX && exit.y === middle) {
         return fromX !== toX && Math.min(fromX, toX) === maxX &&
-          fromY === toY && fromY >= gateStart && fromY <= gateEnd;
+          fromY === toY && fromY === middle;
       }
       if (exit.x === middle && exit.y === maxY) {
         return fromY !== toY && Math.min(fromY, toY) === maxY &&
-          fromX === toX && fromX >= gateStart && fromX <= gateEnd;
+          fromX === toX && fromX === middle;
       }
       if (exit.x === minX && exit.y === middle) {
         return fromX !== toX && Math.min(fromX, toX) === minX - 1 &&
-          fromY === toY && fromY >= gateStart && fromY <= gateEnd;
+          fromY === toY && fromY === middle;
       }
       return false;
     };
@@ -1520,7 +1513,7 @@ export abstract class ImpostorBoardBase extends Board {
 
   protected getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const middle = Math.floor(this.size / 2);
-    const roomSize = Math.min(8, this.size);
+    const roomSize = Math.min(7, this.size);
     const min = Math.max(0, Math.min(this.size - roomSize, middle - 3));
     return {
       minX: min,

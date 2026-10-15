@@ -174,6 +174,7 @@ export class StoreItemService {
         END`,
         'ASC'
       )
+      .addOrderBy('user.createdAt', 'DESC')
       .addOrderBy('user.username', 'ASC')
       .setParameters({ normalizedQuery, prefix: `${normalizedQuery}%` })
       .take(30)
