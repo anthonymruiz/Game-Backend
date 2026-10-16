@@ -70,6 +70,13 @@ export class SocketManager {
     }
   }
 
+  private findResumableRoom(userId: string) {
+    const room = this.roomService.findRoomByUserId(userId);
+    if (room?.status !== RoomStatus.PLAYING) return room;
+    const game = this.gameService.getGame(room.id);
+    return game?.state === 'playing' && game.playersList.includes(userId) ? room : null;
+  }
+
   private async sendPublicRoomsToSocket(socket: Socket): Promise<void> {
     const rooms = this.roomService.getPublicRooms();
     const hasRankedRooms = rooms.some(room => room.isRanked);
@@ -339,7 +346,7 @@ export class SocketManager {
       this.trackSocketConnection(socket, userId);
 
       // Re-join any active room socket channel the user belongs to and send updated room state
-      const userRoom = this.roomService.findRoomByUserId(userId);
+      const userRoom = this.findResumableRoom(userId);
       if (userRoom) {
         socket.join(userRoom.id);
         socket.emit('roomUpdated', userRoom);
@@ -362,7 +369,7 @@ export class SocketManager {
       });
 
       socket.on('requestActiveRoom', () => {
-        const room = this.roomService.findRoomByUserId(userId);
+        const room = this.findResumableRoom(userId);
         if (room) socket.join(room.id);
         socket.emit('myActiveRoom', room || null);
       });
