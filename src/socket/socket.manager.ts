@@ -1525,7 +1525,12 @@ export class SocketManager {
       });
 
       socket.on('chatMessage', (data: { roomId: string, message: string }) => {
-        gameNs.to(data.roomId).emit('chatMessage', { sender: username, message: data.message, timestamp: new Date() });
+        gameNs.to(data.roomId).emit('chatMessage', {
+          sender: username,
+          senderId: userId,
+          message: data.message,
+          timestamp: new Date()
+        });
       });
 
       socket.on('sendQuickChat', (data: { roomId: string, messageId: string }) => {

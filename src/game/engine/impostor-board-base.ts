@@ -217,7 +217,7 @@ export abstract class ImpostorBoardBase extends Board {
   public isToolTableCell(x: number, y: number): boolean {
     if (this.tools.length === 0) return false;
     const middle = Math.floor(this.size / 2);
-    return (x === middle || x === middle + 1) && (y === middle || y === middle + 1);
+    return (x === middle - 1 || x === middle) && (y === middle - 1 || y === middle);
   }
 
   public isAdjacentToToolTable(x: number, y: number): boolean {
@@ -257,7 +257,9 @@ export abstract class ImpostorBoardBase extends Board {
     if (!player) return false;
     let tool = this.tools.find(item => item.id === toolIdOrType && !item.carriedBy);
     if (!tool) {
-      tool = this.tools.find(item => item.type === toolIdOrType && !item.carriedBy);
+      const byIdAny = this.tools.find(item => item.id === toolIdOrType);
+      const targetType = byIdAny ? byIdAny.type : toolIdOrType;
+      tool = this.tools.find(item => item.type === targetType && !item.carriedBy);
     }
     if (!tool || tool.carriedBy) return false;
     const isAdjacentDirectly = Math.abs(player.x - tool.x) <= 1 && Math.abs(player.y - tool.y) <= 1;
@@ -268,7 +270,7 @@ export abstract class ImpostorBoardBase extends Board {
     const previousTool = player.impostorTool;
     if (previousTool) {
       const previousSlot = this.tools.find(item =>
-        item.type === previousTool && item.carriedBy === playerId
+        item.carriedBy === playerId || (item.type === previousTool && item.carriedBy === playerId)
       );
       if (previousSlot) delete previousSlot.carriedBy;
     }
@@ -280,9 +282,11 @@ export abstract class ImpostorBoardBase extends Board {
   public dropTool(playerId: string): boolean {
     const player = this.players.get(playerId);
     if (!player?.impostorTool || !this.isSafeZoneCell(player.x, player.y)) return false;
-    const tool = this.tools.find(item => item.carriedBy === playerId);
-    if (!tool) throw new Error(`Carried Impostor tool slot missing for player ${playerId}.`);
-    delete tool.carriedBy;
+    const tool = this.tools.find(item => item.carriedBy === playerId) ??
+                 this.tools.find(item => item.type === player.impostorTool && item.carriedBy === playerId);
+    if (tool) {
+      delete tool.carriedBy;
+    }
     player.impostorTool = null;
     return true;
   }
@@ -1111,11 +1115,11 @@ export abstract class ImpostorBoardBase extends Board {
     const players = [...this.players.values()].filter(player => !player.id.startsWith('bot_'));
     const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const exitRows = [
-      { x: middle, y: minY },
-      { x: maxX, y: middle },
-      { x: middle, y: maxY },
-      { x: minX, y: middle }
+    const exitRows: Array<{ x: number; y: number; direction: 'north' | 'east' | 'south' | 'west' }> = [
+      { x: middle, y: minY, direction: 'north' },
+      { x: maxX, y: middle, direction: 'east' },
+      { x: middle, y: maxY, direction: 'south' },
+      { x: minX, y: middle, direction: 'west' }
     ];
 
     return exitRows.map((position, index) => ({
@@ -1128,11 +1132,15 @@ export abstract class ImpostorBoardBase extends Board {
   private addCentralEntranceWalls(): void {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
     const middle = Math.floor(this.size / 2);
-    const gateStart = minX + Math.floor((maxX - minX + 1) / 2) - 1;
+    const gateStart = middle - 1;
     let northSouthIndex = 0;
     let eastWestIndex = 0;
-    for (let x = minX; x < maxX; x++) {
-      if (x >= gateStart - 1 && x <= gateStart + 1) continue;
+
+    const xWalls: number[] = [];
+    for (let x = minX; x <= gateStart - 2; x += 2) xWalls.push(x);
+    for (let x = gateStart + 2; x <= maxX - 1; x += 2) xWalls.push(x);
+
+    for (const x of xWalls) {
       this.walls.push(
         new Wall(`impostor_center_n_${northSouthIndex}`, 'board', x, minY - 1, true),
         new Wall(`impostor_center_s_${northSouthIndex}`, 'board', x, maxY, true)
@@ -1140,8 +1148,11 @@ export abstract class ImpostorBoardBase extends Board {
       northSouthIndex++;
     }
 
-    for (let y = minY; y < maxY; y++) {
-      if (y >= gateStart - 1 && y <= gateStart + 1) continue;
+    const yWalls: number[] = [];
+    for (let y = minY; y <= gateStart - 2; y += 2) yWalls.push(y);
+    for (let y = gateStart + 2; y <= maxY - 1; y += 2) yWalls.push(y);
+
+    for (const y of yWalls) {
       this.walls.push(
         new Wall(`impostor_center_w_${eastWestIndex}`, 'board', minX - 1, y, false),
         new Wall(`impostor_center_e_${eastWestIndex}`, 'board', maxX, y, false)
@@ -1154,7 +1165,7 @@ export abstract class ImpostorBoardBase extends Board {
     const protectedPassages = new Set<number>();
     const middle = Math.floor(this.size / 2);
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const gateStart = minX + Math.floor((maxX - minX + 1) / 2) - 1;
+    const gateStart = middle - 1;
     const addGatePassages = (x1: number, y1: number, x2: number, y2: number): void => {
       protectedPassages.add(this.getPassageKey({ x: x1, y: y1 }, { x: x2, y: y2 }));
     };
@@ -1513,7 +1524,7 @@ export abstract class ImpostorBoardBase extends Board {
 
   protected getCentralRoomBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const middle = Math.floor(this.size / 2);
-    const roomSize = Math.min(7, this.size);
+    const roomSize = Math.min(6, this.size);
     const min = Math.max(0, Math.min(this.size - roomSize, middle - 3));
     return {
       minX: min,
@@ -1525,12 +1536,11 @@ export abstract class ImpostorBoardBase extends Board {
 
   protected getProtectedCentralZoneBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     const { minX, maxX, minY, maxY } = this.getCentralRoomBounds();
-    const margin = 2;
     return {
-      minX: Math.max(0, minX - margin),
-      maxX: Math.min(this.size - 1, maxX + margin),
-      minY: Math.max(0, minY - margin),
-      maxY: Math.min(this.size - 1, maxY + margin)
+      minX: Math.max(0, minX - 2),
+      maxX: Math.min(this.size - 1, maxX + 3),
+      minY: Math.max(0, minY - 2),
+      maxY: Math.min(this.size - 1, maxY + 3)
     };
   }
 

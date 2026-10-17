@@ -7,7 +7,7 @@ import { ENV } from './config/env.config.js';
 import { SocketManager } from './socket/socket.manager.js';
 import { RedisService } from './services/redis.service.js';
 import { startWeeklyRewardsScheduler } from './services/weekly-rewards.service.js';
-import { seedSuperAdmin, seedLeaderboardUsers, seedSystemSettings, seedLevelProgressionConfig, seedRankTiers, seedRewardsSettings } from './utils/seed.utils.js';
+import { seedSuperAdmin, seedAdminStoreItems, seedLeaderboardUsers, seedSystemSettings, seedLevelProgressionConfig, seedRankTiers, seedRewardsSettings } from './utils/seed.utils.js';
 import { seedBadges } from './seeds/badges.seed.js';
 
 process.on('uncaughtException', (err) => {
@@ -31,6 +31,7 @@ async function bootstrap() {
 
     await runStartupStage('User seeds', async () => {
       await seedSuperAdmin();
+      await seedAdminStoreItems();
       await seedLeaderboardUsers();
     });
     await runStartupStage('Configuration seeds', () => Promise.all([

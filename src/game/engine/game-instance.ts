@@ -1884,6 +1884,10 @@ export class GameInstance {
     this.startTurnTimer();
     if (!this.isFfaMode()) this.board.ensureMinWallPickups(2);
 
+    for (const pId of this.playersList) {
+      if (!pId.startsWith('bot_')) this.recordPlayerActivity(pId);
+    }
+
     const currentTurnPlayer = this.getCurrentPlayer();
     this.onStateChange('turnChanged', {
       currentTurn: currentTurnPlayer,
