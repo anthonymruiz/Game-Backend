@@ -11,6 +11,10 @@ import { DEFAULT_RANK_TIERS, createDefaultRankTier } from '../seeds/rank-tiers.s
 import { RewardsSettings } from '../models/rewards-settings.entity.js';
 import { DEFAULT_REWARDS_SETTINGS } from '../services/rewards-settings.service.js';
 import { DEFAULT_SYSTEM_SETTINGS } from '../services/system-settings.service.js';
+import { StoreItem } from '../models/store-item.entity.js';
+import { UserStoreItem } from '../models/user-store-item.entity.js';
+import { StoreItemService } from '../services/store-item.service.js';
+import { container } from 'tsyringe';
 
 export async function seedLevelProgressionConfig(): Promise<void> {
   const repository = AppDataSource.getRepository(LevelProgressionConfig);
@@ -138,6 +142,33 @@ export async function seedSuperAdmin(): Promise<void> {
     }
   } catch (error) {
     console.error('[SEED] Error seeding SuperAdmin:', error);
+  }
+}
+
+export async function seedAdminStoreItems(): Promise<void> {
+  try {
+    await container.resolve(StoreItemService).seedDefaultItems();
+
+    const admin = await AppDataSource.getRepository(User).findOneBy({ username: 'admin' });
+    if (!admin) return;
+
+    const products = await AppDataSource.getRepository(StoreItem).find();
+    const ownershipRepository = AppDataSource.getRepository(UserStoreItem);
+    const existingOwnerships = await ownershipRepository.find({
+      where: { userId: admin.id }
+    });
+    const ownedItemIds = new Set(existingOwnerships.map(ownership => ownership.storeItemId));
+    const missingProducts = products.filter(product => !ownedItemIds.has(product.id));
+    if (missingProducts.length === 0) return;
+
+    await ownershipRepository.save(missingProducts.map(product => ownershipRepository.create({
+      userId: admin.id,
+      storeItemId: product.id,
+      pricePointsPaid: 0
+    })));
+    console.log(`[SEED] Granted ${missingProducts.length} store item(s) to admin.`);
+  } catch (error) {
+    console.error('[SEED] Error seeding admin store items:', error);
   }
 }
 
