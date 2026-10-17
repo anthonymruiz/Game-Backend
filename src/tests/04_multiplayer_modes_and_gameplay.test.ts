@@ -126,7 +126,7 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
             ];
         for (const passage of passages) {
           const bothInCentralRoom = passage.every(({ x, y }) =>
-            Math.abs(x - middle) <= 3 && Math.abs(y - middle) <= 3
+            x >= middle - 3 && x <= middle + 2 && y >= middle - 3 && y <= middle + 2
           );
           assert.equal(bothInCentralRoom, false, `wall ${wall.id} blocks a central-room passage`);
           const bothInSafeZone = passage.every(({ x, y }) =>
@@ -418,15 +418,15 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     board.generateRandomImpostorWalls(16, () => 0.5, 6);
 
     const centerWalls = board.walls.filter(wall => wall.id.startsWith('impostor_center_'));
-    assert.equal(centerWalls.length, 12);
-    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_n_')).length, 3);
-    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_s_')).length, 3);
-    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_e_')).length, 3);
-    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_w_')).length, 3);
+    assert.equal(centerWalls.length, 8);
+    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_n_')).length, 2);
+    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_s_')).length, 2);
+    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_e_')).length, 2);
+    assert.equal(centerWalls.filter(wall => wall.id.startsWith('impostor_center_w_')).length, 2);
     assert.equal(board.exits.length, 4);
     const middle = Math.floor(board.size / 2);
     const min = middle - 3;
-    const max = middle + 3;
+    const max = middle + 2;
     for (let position = min; position <= max; position++) {
       const isGatePosition = position === middle - 1 || position === middle;
       assert.equal(board.isPassageBlocked(position, min - 1, position, min), !isGatePosition);
@@ -859,7 +859,8 @@ describe('04 - Multiplayer Modes (FFA, 2v2) & Core Game Mechanics Tests', () => 
     assert.equal(impostorBoard.exits.length, 4);
     assert.equal(new Set(impostorBoard.exits.map(exit => `${exit.x},${exit.y}`)).size, 4);
     assert.ok(impostorBoard.exits.every(exit =>
-      Math.abs(exit.x - middle) === 3 || Math.abs(exit.y - middle) === 3
+      (Math.abs(exit.x - middle) >= 2 && Math.abs(exit.x - middle) <= 3) ||
+      (Math.abs(exit.y - middle) >= 2 && Math.abs(exit.y - middle) <= 3)
     ));
     assert.equal(game.board.boosts.length, 0);
     assert.equal(impostorBoard.keys.length, 3);

@@ -246,22 +246,22 @@ describe('Infection mode', () => {
       ...Array.from({ length: max - min + 1 }, (_, offset) => ({
         from: { x: min + offset, y: min - 1 },
         to: { x: min + offset, y: min },
-        isEntrance: min + offset === middle || min + offset === middle + 1
+        isEntrance: min + offset === middle - 1 || min + offset === middle
       })),
       ...Array.from({ length: max - min + 1 }, (_, offset) => ({
         from: { x: min + offset, y: max + 1 },
         to: { x: min + offset, y: max },
-        isEntrance: min + offset === middle || min + offset === middle + 1
+        isEntrance: min + offset === middle - 1 || min + offset === middle
       })),
       ...Array.from({ length: max - min + 1 }, (_, offset) => ({
         from: { x: min - 1, y: min + offset },
         to: { x: min, y: min + offset },
-        isEntrance: min + offset === middle || min + offset === middle + 1
+        isEntrance: min + offset === middle - 1 || min + offset === middle
       })),
       ...Array.from({ length: max - min + 1 }, (_, offset) => ({
         from: { x: max + 1, y: min + offset },
         to: { x: max, y: min + offset },
-        isEntrance: min + offset === middle || min + offset === middle + 1
+        isEntrance: min + offset === middle - 1 || min + offset === middle
       }))
     ];
     for (let reshuffle = 0; reshuffle < 3; reshuffle++) {

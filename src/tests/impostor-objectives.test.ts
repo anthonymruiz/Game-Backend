@@ -329,13 +329,13 @@ describe('Impostor personal keys, tools, and generators', () => {
     board.spawnTools();
     board.walls = [];
 
+    assert.equal(board.isToolTableCell(middle - 1, middle - 1), true);
     assert.equal(board.isToolTableCell(middle, middle), true);
-    assert.equal(board.isToolTableCell(middle + 1, middle + 1), true);
-    assert.equal(board.isToolTableCell(middle - 1, middle), false);
-    // Player moves to cell adjacent to table (middle - 1, middle) successfully
-    assert.equal(board.moveImpostorPlayer(player.id, middle - 1, middle), true);
-    // Player cannot step onto the tool table cell (middle, middle)
-    assert.equal(board.moveImpostorPlayer(player.id, middle, middle), false);
+    assert.equal(board.isToolTableCell(middle - 2, middle), false);
+    // Player moves to cell adjacent to table (middle - 2, middle - 1) successfully
+    assert.equal(board.moveImpostorPlayer(player.id, middle - 2, middle - 1), true);
+    // Player cannot step onto the tool table cell (middle - 1, middle - 1)
+    assert.equal(board.moveImpostorPlayer(player.id, middle - 1, middle - 1), false);
     assert.ok(board.getImpostorValidMoves(player.id).every(({ x, y }) =>
       !board.isToolTableCell(x, y)
     ));

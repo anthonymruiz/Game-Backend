@@ -41,8 +41,8 @@ describe('ImpostorBoard', () => {
     const board = new ImpostorBoard(20);
     const middle = Math.floor(board.size / 2);
     const min = middle - 3;
-    const max = middle + 3;
-    const player = new Player('safe-zone-check', 'Safe Zone Check', false, middle, min - 1);
+    const max = middle + 2;
+    const player = new Player('safe-zone-check', 'Safe Zone Check', false, middle - 1, min - 1);
     board.addPlayer(player);
     board.spawnGenerators();
     board.generateRandomImpostorWalls(undefined, () => 0.37);
